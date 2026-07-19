@@ -1,0 +1,15 @@
+{
+  "name": "p2p-upi-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "P2P UPI Payment Gateway - monorepo root (single-command dev startup)",
+  "scripts": {
+    "dev": "concurrently -n api,worker,admin,trader,merchant,checkout -c blue,magenta,red,green,cyan,yellow \"npm --prefix backend run dev\" \"npm --prefix backend run worker\" \"npm --prefix frontend/admin run dev\" \"npm --prefix frontend/trader run dev\" \"npm --prefix frontend/merchant run dev\" \"npm --prefix frontend/checkout run dev\"",
+    "dev:backend": "concurrently -n api,worker -c blue,magenta \"npm --prefix backend run dev\" \"npm --prefix backend run worker\"",
+    "dev:frontends": "concurrently -n admin,trader,merchant,checkout -c red,green,cyan,yellow \"npm --prefix frontend/admin run dev\" \"npm --prefix frontend/trader run dev\" \"npm --prefix frontend/merchant run dev\" \"npm --prefix frontend/checkout run dev\"",
+    "install:all": "npm install && npm --prefix backend install && npm --prefix frontend/admin install && npm --prefix frontend/trader install && npm --prefix frontend/merchant install && npm --prefix frontend/checkout install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

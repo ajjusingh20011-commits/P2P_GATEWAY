@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <color name="launcher_bg">#1B5E3B</color>
+  <color name="green_primary">#1B5E3B</color>
+  <color name="green_medium">#2E7D52</color>
+  <color name="green_light">#4CAF7D</color>
+  <color name="white">#FFFFFF</color>
+  <color name="text_primary">#1A1A1A</color>
+  <color name="text_secondary">#666666</color>
+  <color name="text_hint">#999999</color>
+  <color name="bg_white">#FFFFFF</color>
+  <color name="bg_light">#F5F5F5</color>
+  <color name="blue_primary">#1565C0</color>
+  <color name="blue_light">#E3F2FD</color>
+  <color name="divider">#E0E0E0</color>
+</resources>

@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes pop {
+  0% { transform: scale(0.3); opacity: 0; }
+  60% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ============================================================================
+   Shared design tokens — same palette/fonts as the trader/admin/merchant
+   panels so the checkout feels like the same product. Light-only (this is a
+   focused, calm payment page: no theme toggle, no dashboard chrome).
+   Checkout accent = teal (#14b8c4).
+   ========================================================================== */
+:root {
+  --bg: #f4f6f8;
+  --card: #ffffff;
+  --text: #1e293b;
+  --muted: #94a3b8;
+  --accent: #14b8c4;
+  --cardborder: rgba(0, 0, 0, 0.06);
+  --input-border: rgba(0, 0, 0, 0.12);
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+  --radius: 18px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Surfaces */
+.co-card {
+  background: var(--card);
+  border: 1px solid var(--cardborder);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius);
+}
+.co-inset {
+  background: var(--bg);
+  border: 1px solid var(--cardborder);
+  border-radius: var(--radius);
+}
+.co-tile {
+  background: var(--card);
+  border: 1px solid var(--cardborder);
+  border-radius: 12px;
+}
+
+/* Primary CTA — matches the panels' accent button */
+.co-btn-primary {
+  background: var(--accent);
+  color: #ffffff;
+  border-radius: 12px;
+  transition: filter 0.2s;
+}
+.co-btn-primary:hover { filter: brightness(1.06); }
+
+/* Muted interactive text (exit / support / cancel) */
+.co-muted { color: var(--muted); transition: color 0.2s; }
+.co-muted:hover { color: var(--text); }
+
+/* Accent link */
+.co-link { color: var(--accent); }
+
+/* Themed input with a teal focus ring */
+.co-input {
+  border: 1px solid var(--input-border);
+  border-radius: 12px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.co-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(20, 184, 196, 0.18);
+}

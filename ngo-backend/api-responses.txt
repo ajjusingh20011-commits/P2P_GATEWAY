@@ -1,0 +1,506 @@
+https://dashboard.paytm.com/login/?redirectUrl=transactions
+<!doctype html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Dashboard | Paytm</title><meta name="google-site-verification" content="bsvEgS1ugCmYZo3T7jMYsm4JC01jObN5KFs5HoC14u8"/><link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" media="none" nonce="8IBTHwOdqNKAWeKl7plt8g=="/><script nonce="8IBTHwOdqNKAWeKl7plt8g==">(function () {
+        const nonce = '8IBTHwOdqNKAWeKl7plt8g==';
+        
+        // Create global TrustedScriptURL policy with origin allowlist
+        if (window.trustedTypes && window.trustedTypes.createPolicy) {
+          var TRUSTED_ORIGINS = [
+            'https://www.googletagmanager.com',
+            'https://www.google-analytics.com',
+            'https://webappsstatic.paytm.com',
+            'https://browser.sentry-cdn.com',
+            'https://accounts-staging.paytm.in',
+            'https://accounts.paytm.com',
+            'https://accounts.paytmpayments.com',
+            'https://accounts-staging.paytmpayments.com'
+          ];
+          window.trustedScriptURLPolicy = window.trustedTypes.createPolicy('global-script-url', {
+            createScriptURL: function(url) {
+              var str = String(url);
+              // Allow relative URLs (same-origin webpack chunks, etc.)
+              if (str.startsWith('/') || str.startsWith('./') || str.startsWith('../') || !str.includes('://')) {
+                return str;
+              }
+              // Allow same-origin absolute URLs
+              if (str.startsWith(window.location.origin + '/')) {
+                return str;
+              }
+              for (var i = 0; i < TRUSTED_ORIGINS.length; i++) {
+                if (str.startsWith(TRUSTED_ORIGINS[i] + '/')) {
+                  return str;
+                }
+              }
+              throw new TypeError('TrustedTypes policy: blocked untrusted script URL: ' + str);
+            }
+          });
+        }
+        
+        var originalCreateElement = document.createElement;
+        document.createElement = function (tagName) {
+          var element = originalCreateElement.call(this, tagName);
+          if (tagName && (tagName.toLowerCase() === 'script' || tagName.toLowerCase() === 'link' || tagName.toLowerCase() === 'style') && !element.hasAttribute('nonce')) {
+            element.setAttribute('nonce', '8IBTHwOdqNKAWeKl7plt8g==');
+          }
+          return element;
+        };
+        
+        // Override script src setter to use TrustedScriptURL
+        var originalScriptSrcSetter = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src').set;
+        Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+          set: function(value) {
+            if (window.trustedScriptURLPolicy) {
+              return originalScriptSrcSetter.call(this, window.trustedScriptURLPolicy.createScriptURL(value));
+            } else {
+              return originalScriptSrcSetter.call(this, value);
+            }
+          },
+          get: Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src').get
+        });
+        
+        // Also override insertBefore and appendChild to ensure nonces are added
+        var originalInsertBefore = Node.prototype.insertBefore;
+        Node.prototype.insertBefore = function(newNode, referenceNode) {
+          if (newNode.tagName && (newNode.tagName.toLowerCase() === 'script' || newNode.tagName.toLowerCase() === 'link' || newNode.tagName.toLowerCase() === 'style') && !newNode.hasAttribute('nonce')) {
+            newNode.setAttribute('nonce', '8IBTHwOdqNKAWeKl7plt8g==');
+          }
+          return originalInsertBefore.call(this, newNode, referenceNode);
+        };
+        
+        var originalAppendChild = Node.prototype.appendChild;
+        Node.prototype.appendChild = function(newNode) {
+          if (newNode.tagName && (newNode.tagName.toLowerCase() === 'script' || newNode.tagName.toLowerCase() === 'link' || newNode.tagName.toLowerCase() === 'style') && !newNode.hasAttribute('nonce')) {
+            newNode.setAttribute('nonce', '8IBTHwOdqNKAWeKl7plt8g==');
+          }
+          return originalAppendChild.call(this, newNode);
+        };
+      })();</script><script nonce="8IBTHwOdqNKAWeKl7plt8g==">(function (w, d, s, l, i) {
+        w[l] = w[l] || [];
+        w[l].push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
+        var f = d.getElementsByTagName(s)[0],
+          j = d.createElement(s),
+          dl = l != 'dataLayer' ? '&l=' + l : '';
+        j.async = true;
+        j.src = 'https://www.googletagmanager.com/gtm.js?id=' + i + dl;
+        f.parentNode.insertBefore(j, f);
+      })(window, document, 'script', 'dataLayer', 'GTM-PHZLMR');</script><script nonce="8IBTHwOdqNKAWeKl7plt8g==" async src="https://webappsstatic.paytm.com/hawkeyeweb/hawkeye_1.2.0.min.js" crossorigin="anonymous"></script><script defer="defer" src="552.aa13ccd8.umd.js" nonce="8IBTHwOdqNKAWeKl7plt8g=="></script><script defer="defer" src="main.684b379d.umd.js" nonce="8IBTHwOdqNKAWeKl7plt8g=="></script><link href="main.62188883.min.css" rel="stylesheet"><script >bazadebezolkohpepadr="1660141533"</script><script type="text/javascript" src="https://dashboard.paytm.com/akam/13/62f3bc0e"  defer></script></head><body><noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-PHZLMR" height="0" width="0" style="display: none; visibility: hidden"></iframe></noscript><app-login></app-login><noscript><img src="https://dashboard.paytm.com/akam/13/pixel_62f3bc0e?a=dD0zODZlYmRkNDYxZGJlNGFjZTQ1NDc2YThhODg5ZDNlNTU1NmNhYzQ5JmpzPW9mZg==" style="visibility: hidden; position: absolute; left: -999px; top: -999px;" /></noscript></body></html>
+
+https://dashboard.paytm.com/redirect?redirectUrl=transactions
+
+
+https://dashboard.paytm.com/next/transactions
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="test-tag" content="desktop-test-tag-value" />
+    <title>
+        Dashboard|Paytm
+    </title>
+    
+        <link rel="preconnect" href="https://staticgw1.paytm.in" />
+    
+    <link rel="preconnect" href="https://www.google-analytics.com" />
+    <link rel="preconnect" href="https://www.google.com" />
+    <link rel="preconnect" href="https://www.google.co.in" />
+    <link rel="preconnect" href="https://sig-staging.paytm.com" />
+    <link rel="preconnect" href="http://assetscdn1.paytm.com" />
+    <link rel="preconnect" href="http://www.googleadservices.com" />
+    <link href="https://fonts.googleapis.com/css?family=Nunito+Sans:300,400,600,700,800&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css?family=Inter:400,600,700,800&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css?family=Product+Sans:400&display=swap" rel="stylesheet"/>
+
+    <script nonce="8IBTHwOdqNKAWeKl7plt8g==">
+        (function() {
+            var originalCreateElement = document.createElement;
+            document.createElement = function(tagName) {
+                var element = originalCreateElement.call(this, tagName);
+                if (tagName && (tagName.toLowerCase() === 'script' || tagName.toLowerCase() === 'link' || tagName.toLowerCase() === 'style') && !element.hasAttribute('nonce')) {
+                    element.setAttribute('nonce', '8IBTHwOdqNKAWeKl7plt8g==');
+                }
+                return element;
+            };
+        })();
+    </script>
+    <!-- Asyn font loading -->
+    <!-- <link href="https://cdn.quilljs.com/1.0.0/quill.snow.css" rel="stylesheet"> -->
+    <!-- <script type="text/javascript">
+        WebFontConfig = {
+            google: {
+                families: ['Nunito+Sans:300,400,600,700,800&display=swap']
+            }
+        };
+        (function () {
+            var wf = document.createElement('script');
+            wf.src = ('https:' == document.location.protocol ? 'https' : 'http') +
+                '://ajax.googleapis.com/ajax/libs/webfont/1.5.18/webfont.js';
+            wf.type = 'text/javascript';
+            wf.async = 'true';
+            var s = document.getElementsByTagName('script')[0];
+            s.parentNode.insertBefore(wf, s);
+        })();
+    </script>  -->
+    <!-- hotjar tracking script -->
+    <script nonce="8IBTHwOdqNKAWeKl7plt8g==">
+        (function (h, o, t, j, a, r) {
+            h.hj = h.hj || function () { (h.hj.q = h.hj.q || []).push(arguments) };
+            h._hjSettings = { hjid: 2137993, hjsv: 6 };
+            a = o.getElementsByTagName('head')[0];
+            r = o.createElement('script'); r.async = 1;
+            r.src = t + h._hjSettings.hjid + j + h._hjSettings.hjsv;
+            a.appendChild(r);
+        })(window, document, 'https://static.hotjar.com/c/hotjar-', '.js?sv=');
+    </script>
+    <style nonce="8IBTHwOdqNKAWeKl7plt8g==">
+        /* scaffolding and top loader css */
+
+        .app,
+        .h100,
+        body,
+        html {
+            height: 100%
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            outline: 0;
+            box-sizing: border-box;
+            font-style: normal
+        }
+
+        html {
+            -ms-text-size-adjust: 100%;
+            -webkit-text-size-adjust: 100%;
+            -webkit-tap-highlight-color: rgba(201, 224, 253, 0);
+            font-size: 62.5%
+        }
+
+        body {
+            background: #fff;
+        }
+
+        .hiddenDefault {
+            visibility: hidden;
+            opacity: 0;
+        }
+
+        .app,
+        html,
+        body {
+            height: 100%;
+        }
+
+        ol,
+        ul {
+            list-style-type: none
+        }
+
+        .max-wrap {
+            max-width: 100%;
+            margin: 0 auto;
+            width: 100%
+        }
+
+        .grid {
+            position: relative;
+            display: -webkit-flex;
+            display: flex;
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+            -webkit-flex-flow: row wrap;
+            flex-flow: row wrap
+        }
+
+        .justify-between {
+            -webkit-justify-content: space-between;
+            justify-content: space-between
+        }
+
+        .align-center {
+            -webkit-align-items: center;
+            align-items: center;
+            -webkit-align-self: center;
+            align-self: center
+        }
+
+        #app {
+            flex-direction: column;
+            min-height: 100%;
+        }
+
+        .wrapper {
+            min-height: calc(100% - 64px - 72px);
+            padding-bottom: 35px;
+        }
+
+
+        header {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            height: 64px;
+            background: #fff;
+            padding: 0 25px;
+            /* opacity: 0; */
+            transition: all 100ms cubic-bezier(0, 0, .2, 1) .15s;
+            z-index: 20;
+            border-bottom: 1px solid #e6ebf3;
+        }
+
+
+
+        .wrapper-content1 {
+            background: #fff;
+            min-height: 400px;
+            height: auto;
+            border-radius: 2px;
+            position: relative;
+            padding-left: 260px;
+        }
+
+        .skl {
+            padding-top: 60px;
+        }
+
+        .lg {
+            width: 74px;
+            height: 24px;
+            background: rgba(246, 248, 252, 0.55);
+        }
+
+        .placeholder-slider {
+            width: 100%;
+            min-height: 3px;
+            animation-duration: .3s;
+            animation-fill-mode: forwards;
+            animation-iteration-count: infinite;
+            animation-name: placeHolderShimmer;
+            animation-timing-function: linear;
+            background: #f6f7f8;
+            background: linear-gradient(to right, #48baf5 0, #012c71 35%, #48baf5 59%);
+            background-size: 400px 300px;
+            margin-bottom: 1px;
+            position: relative;
+            z-index: 1111;
+        }
+
+        @keyframes bganimation {
+            0% {
+                background-position: 0% 50%
+            }
+
+            50% {
+                background-position: 100% 50%
+            }
+
+            100% {
+                background-position: 0% 50%
+            }
+        }
+
+        @keyframes placeHolderShimmer {
+            0% {
+                background-position: -200px 0
+            }
+
+            100% {
+                background-position: 200px 0
+            }
+        }
+
+        .nav1 {
+            position: fixed;
+            left: 0;
+            height: calc(100% - 64px);
+            max-width: 260px;
+            min-width: 56px;
+            top: 64px;
+            width: 100%;
+            z-index: 1;
+            padding-bottom: 72px;
+            border-right: 1px solid #e6ebf3;
+            overflow: auto;
+        }
+
+        .circle {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            background: rgba(246, 248, 252, 0.55);
+            border-radius: 50%
+        }
+
+
+
+        .anim {
+            background: linear-gradient(to left, rgba(9, 30, 66, 0.04), rgba(244, 245, 247, 0.63), rgba(9, 30, 66, 0.04));
+            background-repeat: no-repeat;
+            background-size: 400%;
+            animation: bganimation 1s linear infinite;
+        }
+
+        .nv {
+            position: relative;
+            margin-left: 24px;
+        }
+
+        .nv:before {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            content: '';
+            left: -36px;
+            top: 0;
+            bottom: 0;
+            margin: auto;
+            z-index: 1;
+            background: rgba(9, 30, 66, 0.04);
+            position: absolute;
+        }
+
+        .phold {
+            height: 24px;
+            margin-top: 30px;
+            border-radius: 4px;
+        }
+    </style>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="google-site-verification" content="bsvEgS1ugCmYZo3T7jMYsm4JC01jObN5KFs5HoC14u8" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    
+                         <script nonce="8IBTHwOdqNKAWeKl7plt8g==">
+                 // Set webpack nonce for CSP compliance with style-loader
+                 window.__webpack_nonce__ = '8IBTHwOdqNKAWeKl7plt8g==';
+                 
+                 // Configure GTM to use nonce for all dynamically injected scripts
+                 window.gtag_nonce = '8IBTHwOdqNKAWeKl7plt8g==';
+                 
+                 try {
+                    /* Access this variable to access mode, version etc in other files like this.
+                      const { platform, environment, version, branch, commithash } = window.BUILD_INFO; */
+                    window._BUILD_INFO = JSON.parse(' {"publicPath":"/","platform":"desktop","environment":"prod","version":"bpay-v2.26.2-12600-g3c054ccac0","branch":"HEAD","commithash":"3c054ccac0d9234f299712887583de5062149bc9","Release":"06.07.2026","buildTimeIso":"2026-07-06T17:08:59.681Z","buildTimeReadable":"Monday, 6 July 2026 at 17:08:59 UTC","nodeVersion":"v24.0.2","nodeEnv":"production","osPlatform":"linux","osArch":"arm64","npmVersion":"11.3.0","packageVersion":"2.18.1"}');
+                } catch (error) {
+                    window._BUILD_INFO = {};
+                }
+            </script>
+            <!-- <script async src="https://webappsstatic.paytm.com/hawkeyeweb/hawkeye_1.2.0.min.js" crossorigin="anonymous"></script> -->
+<link rel="icon" href="/favicon.ico"><script defer src="/main.9473dc004648b1cbab15.min.js" nonce="8IBTHwOdqNKAWeKl7plt8g=="></script><script >bazadebezolkohpepadr="1660141533"</script><script type="text/javascript" src="https://dashboard.paytm.com/akam/13/62f3bc0e"  defer></script></head>
+
+<body>
+
+    <ump-app-root></ump-app-root>
+    <div id="umpContainer">
+        <div class="placeholder-slider"></div>
+        <div class="">
+            <header class="visible">
+                <div class="max-wrap grid justify-between align-center h100">
+                    <nav class="grid justify-between align-center h100">
+                        <div>
+                            <span class="circle anim"></span>
+                        </div>
+                    </nav>
+                </div>
+            </header>
+            <div class="wrapper">
+                <nav class="nav1" style="padding: 20px 40px;">
+                    <div class="phold anim nv"></div>
+                    <div class="phold anim nv"></div>
+                    <div class="phold anim nv"></div>
+                    <div class="phold anim nv"></div>
+                    <div class="phold anim nv"></div>
+                    <div class="phold anim nv"></div>
+                </nav>
+                <div class="wrapper-content1 skl max-wrap">
+                    <div class="grid justify-between" style="padding: 0px 40px 0;">
+                        <div class="phold anim" style="width: 100%"></div>
+                    </div>
+                    <div class="grid justify-between" style="padding: 0px 40px 0;">
+                        <div class="phold anim" style="width: 100%; height: 260px;"></div>
+                    </div>
+                    <noscript>
+                        <h1 class="noScript-header1">Please enable javascript to access this site.</h1>
+                    </noscript>
+                    <div class="hiddendefault" style="display: none"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Seller panel polling script -->
+    <!-- <script type="text/javascript" src="https://assetscdn1.paytm.com/dslr/pollingJs-1.4.0-alpha.js"></script> -->
+    <!-- End Seller panel polling script -->
+
+    <script nonce="8IBTHwOdqNKAWeKl7plt8g==">
+        (function (i, s, o, g, r, a, m) {
+            i['GoogleAnalyticsObject'] = r;
+            (i[r] =
+                i[r] ||
+                function () {
+                    (i[r].q = i[r].q || []).push(arguments);
+                }),
+                (i[r].l = 1 * new Date());
+            (a = s.createElement(o)), (m = s.getElementsByTagName(o)[0]);
+            a.defer = true;
+            a.src = g;
+            m.parentNode.insertBefore(a, m);
+        })(window, document, 'script', 'https://www.google-analytics.com/analytics.js', 'ga');
+
+            // ga('create', 'UA-36768858-24', 'auto');
+
+            // personal tracking Id: 'UA-101990405-1'
+            // production tracking Id: 'UA-36768858-24'
+    </script>
+
+    <!-- Google Tag Manager -->
+    <script nonce="8IBTHwOdqNKAWeKl7plt8g==">
+        //    window.addEventListener('load', function() {
+        (function (w, d, s, l, i) {
+            w[l] = w[l] || [];
+            w[l].push({
+                'gtm.start': new Date().getTime(),
+                event: 'gtm.js'
+            });
+            var f = d.getElementsByTagName(s)[0],
+                j = d.createElement(s),
+                dl = l != 'dataLayer' ? '&l=' + l : '';
+            j.defer = true;
+            j.src = 'https://www.googletagmanager.com/gtm.js?id=' + i + dl;
+            f.parentNode.insertBefore(j, f);
+        })(window, document, 'script', 'dataLayer', 'GTM-PHZLMR');
+//   });
+    </script>
+    <!-- End Google Tag Manager -->
+
+    <!-- Google Tag Manager (noscript) -->
+    <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-PHZLMR" height="0" width="0"
+            style="display:none;visibility:hidden"></iframe></noscript>
+    <!-- End Google Tag Manager (noscript) -->
+    <script nonce="8IBTHwOdqNKAWeKl7plt8g==">
+        try {
+            window.APP_DATA = JSON.parse('PUSH_APP_DATA');
+        } catch (e) {
+            window.APP_DATA = {};
+        }
+    </script>
+    
+        <script nomodule nonce="8IBTHwOdqNKAWeKl7plt8g==">
+            ! function () {
+                var e = document,
+                    t = e.createElement("script");
+                if (!("noModule" in t) && "onbeforeload" in t) {
+                    var n = !1;
+                    e.addEventListener("beforeload", function (e) {
+                        if (e.target === t) n = !0;
+                        else if (!e.target.hasAttribute("nomodule") || !n) return;
+                        e.preventDefault()
+                    }, !0), t.type = "module", t.src = ".", e.head.appendChild(t), t.remove()
+                }
+            }();
+        </script>
+
+<noscript><img src="https://dashboard.paytm.com/akam/13/pixel_62f3bc0e?a=dD0zODZlYmRkNDYxZGJlNGFjZTQ1NDc2YThhODg5ZDNlNTU1NmNhYzQ5JmpzPW9mZg==" style="visibility: hidden; position: absolute; left: -999px; top: -999px;" /></noscript></body>
+
+</html>
+
+

@@ -1,0 +1,38 @@
+{
+  "token": "found",
+  "allCookies": [
+    "_gid",
+    "XSRF-TOKEN",
+    "_ga",
+    "_gid",
+    "signalSDKVisitorId",
+    "bm_sz",
+    "_fbp",
+    "_abck",
+    "_hjSessionUser_2137993",
+    "_gcl_au",
+    "_hjSession_2137993",
+    "_dc_gtm_UA-48995472-3",
+    "_gat",
+    "_ga_LSKTYTR270",
+    "_ga_Z4F7L25N51",
+    "_ga_NF9V3YTCLK",
+    "_ga",
+    "_gat_UA-48995472-3",
+    "_ga_Z4F7L25N51"
+  ],
+  "format1": {
+    "start": "2026-07-02 00:00:00",
+    "end": "2026-07-09 23:59:59"
+  },
+  "format2": {
+    "start": "2026-07-02 00:00:00",
+    "end": "2026-07-09 23:59:59"
+  },
+  "status2": 500,
+  "response2": "{\"internal_error\":\"DateTimeParseException: Text '2026-07-02 00:00:00' could not be parsed at index 10\"}",
+  "statusNoDate": 200,
+  "responseNoDate": "{\"resultInfo\":{\"resultStatus\":\"F\",\"resultCode\":\"PARAM_ILLEGAL\",\"resultCodeId\":\"00000004\",\"resultMsg\":\"The value of orderCreatedStartTime can not be blank.\"}}",
+  "statusV1": 404,
+  "responseV1": "{\"timestamp\":1783605284280,\"status\":404,\"error\":\"Not Found\",\"message\":\"No message available\",\"path\":\"/api/v1/txn/list\"}"
+}

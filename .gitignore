@@ -1,0 +1,10 @@
+# Root-level ignores (each component also has its own .gitignore)
+node_modules/
+.env
+.env.local
+*.log
+.DS_Store
+.idea/
+.vscode/
+dist/
+build/

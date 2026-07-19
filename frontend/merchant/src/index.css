@@ -1,0 +1,151 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   Panel theme layer (light default + dark), scoped to .tf-scope.
+   Same design system as the trader/admin panels — identical tokens, keyframes,
+   scrollbar, reduced-motion, tooltip. Merchant accent = purple (#8b5cf6).
+   Applied via a data-theme attribute on the panel root (MerchantLayout).
+   ========================================================================== */
+.tf-scope {
+  --bg: #f4f6f8;
+  --card: #ffffff;
+  --sidebar: #ffffff;
+  --cardborder: rgba(0, 0, 0, 0.04);
+  --text: #1e293b;
+  --muted: #94a3b8;
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+  --hover: rgba(0, 0, 0, 0.03);
+  --headbar: #ffffff;
+  --accent: #8b5cf6;
+  --input-bg: rgba(0, 0, 0, 0.03);
+  --input-border: rgba(0, 0, 0, 0.08);
+
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  transition: background-color 0.3s, color 0.3s;
+}
+
+.tf-scope[data-theme="dark"] {
+  --bg: #0f172a;
+  --card: #1e293b;
+  --sidebar: #0b1220;
+  --cardborder: rgba(255, 255, 255, 0.06);
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  --hover: rgba(255, 255, 255, 0.05);
+  --headbar: #0b1220;
+  --accent: #8b5cf6;
+  --input-bg: rgba(255, 255, 255, 0.05);
+  --input-border: rgba(255, 255, 255, 0.1);
+}
+
+/* Card surface */
+.tf-card {
+  background: var(--card);
+  border: 1px solid var(--cardborder);
+  box-shadow: var(--shadow);
+  border-radius: 18px;
+  transition: background-color 0.3s, box-shadow 0.3s, border-color 0.3s;
+}
+
+/* Responsive stat grid (auto-fit) */
+.tf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 18px;
+}
+
+/* Sidebar nav item — soft tinted active state (merchant purple) */
+.tf-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  transition: 0.2s;
+}
+.tf-nav:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.tf-nav.active {
+  background: rgba(139, 92, 246, 0.12);
+  color: #8b5cf6;
+  font-weight: 600;
+}
+
+/* Slim-header icon buttons */
+.tf-hbtn {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--hover);
+  border: none;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  transition: 0.2s;
+}
+.tf-hbtn:hover {
+  color: var(--text);
+}
+
+/* Floating badge animation (staggered per card via inline animationDelay) */
+@keyframes tf-float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-8px) rotate(-5deg); }
+}
+.tf-badge {
+  animation: tf-float 3s ease-in-out infinite;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tf-badge { animation: none; }
+}
+
+/* Thin subtle scrollbar */
+.tf-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+}
+.tf-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+.tf-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 99px;
+}
+.tf-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* Tooltip for collapsed-sidebar items */
+.tf-tip { position: relative; }
+.tf-tip:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--text);
+  color: var(--card);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 9px;
+  border-radius: 7px;
+  white-space: nowrap;
+  z-index: 50;
+  pointer-events: none;
+  box-shadow: var(--shadow);
+}
