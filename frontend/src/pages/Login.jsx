@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { apiCall } from '../config/api'
+import { apiCall, SOCKET_URL } from '../config/api'
 import { theme } from '../theme'
 
 export default function Login() {
@@ -162,7 +162,7 @@ export default function Login() {
             textAlign: 'center',
           }}
         >
-          Connects to <span style={{ color: theme.accent }}>localhost:3000</span>
+          Connects to <span style={{ color: theme.accent }}>{SOCKET_URL.replace(/^https?:\/\//, '')}</span>
         </div>
       </div>
     </div>

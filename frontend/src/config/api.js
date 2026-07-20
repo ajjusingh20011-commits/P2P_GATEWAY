@@ -1,5 +1,5 @@
-const BASE_URL = 'http://localhost:3000/api'
-const SOCKET_URL = 'http://localhost:3000'
+const BASE_URL = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}/api`
+const SOCKET_URL = import.meta.env.VITE_WS_URL || 'http://localhost:3000'
 
 export function authHeaders() {
   const token = localStorage.getItem('token')

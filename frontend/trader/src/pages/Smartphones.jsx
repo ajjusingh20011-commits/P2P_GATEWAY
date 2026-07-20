@@ -5,7 +5,7 @@ import { IconPlus, IconChevron, IconDots } from '../components/icons';
 // NOTE: There is no backend endpoint for a trader's smartphones, so this page
 // stays on mock data. Do not wire it to the API until an endpoint exists.
 import { smartphones } from '../utils/mock';
-import { generateLicense } from '../lib/ngoApi';
+import { generateLicense, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All statuses' },
@@ -147,7 +147,7 @@ export default function Smartphones() {
   useEffect(() => {
     if (pairStep !== 'code') return undefined;
 
-    const socket = io('http://localhost:3000');
+    const socket = io(NGO_SOCKET_ORIGIN);
     socket.emit('join', NGO_ID);
     socket.on('device-registered', (data) => {
       closePairing();

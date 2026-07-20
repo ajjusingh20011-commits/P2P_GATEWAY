@@ -1,4 +1,5 @@
-const NGO_BASE = 'http://localhost:3000/api'
+const NGO_BASE = import.meta.env.VITE_NGO_API_BASE_URL || 'http://localhost:3000/api'
+export const NGO_SOCKET_ORIGIN = NGO_BASE.replace(/\/api\/?$/, '')
 const NGO_CREDENTIALS = {
   email: 'staff@bright.org',
   password: 'staff123'
