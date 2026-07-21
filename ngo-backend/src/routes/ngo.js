@@ -20,7 +20,13 @@ function resolveNgoId(req) {
   if (req.user.role === ROLES.ADMIN && req.query.ngoId) {
     return req.query.ngoId;
   }
-  return req.user.ngoId;
+  if (req.user.ngoId) {
+    return req.user.ngoId;
+  }
+  if (req.body.ngoId) {
+    return req.body.ngoId;
+  }
+  return null;
 }
 
 function paginate(req) {

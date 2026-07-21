@@ -5,14 +5,15 @@ const NGO_CREDENTIALS = {
   password: 'staff123'
 }
 
-async function getNGOToken() {
+async function getNGOAuth() {
   try {
     // Check if we have a valid stored token
     const stored = localStorage.getItem('ngo_token')
     const expiry = localStorage.getItem('ngo_token_expiry')
+    const storedNgoId = localStorage.getItem('ngo_id')
 
-    if (stored && expiry && Date.now() < parseInt(expiry)) {
-      return stored
+    if (stored && expiry && Date.now() < parseInt(expiry) && storedNgoId) {
+      return { token: stored, ngoId: storedNgoId }
     }
 
     // Login to get fresh token
@@ -26,19 +27,29 @@ async function getNGOToken() {
 
     if (data.success) {
       const token = data.data.token
+      // The backend now includes ngoId on the login response's user object
+      // (see authService.signToken) — fall back to the old hardcoded demo
+      // NGO id only if that's ever missing.
+      const ngoId = data.data.user?.ngoId || '6a4be25836583c99fa079802'
       // Store token with 6 hour expiry
       localStorage.setItem('ngo_token', token)
       localStorage.setItem(
         'ngo_token_expiry',
         Date.now() + 6 * 60 * 60 * 1000
       )
-      return token
+      localStorage.setItem('ngo_id', ngoId)
+      return { token, ngoId }
     }
-    return null
+    return { token: null, ngoId: null }
   } catch (err) {
     console.error('NGO login failed:', err)
-    return null
+    return { token: null, ngoId: null }
   }
+}
+
+async function getNGOToken() {
+  const { token } = await getNGOAuth()
+  return token
 }
 
 export async function saveAPKAccount(data) {
@@ -246,8 +257,8 @@ export async function syncAccount(accountId) {
 }
 
 export async function generateLicense() {
-  const token = await getNGOToken();
-  const ngoId = '6a4be25836583c99fa079802';
+  const { token, ngoId } = await getNGOAuth()
+  if (!token) throw new Error('Cannot connect to NGO server')
   const res = await fetch(
     `${NGO_BASE}/apk/generate-license`,
     {
@@ -265,8 +276,8 @@ export async function generateLicense() {
 }
 
 export async function getDevices() {
-  const token = await getNGOToken();
-  const ngoId = '6a4be25836583c99fa079802';
+  const { token, ngoId } = await getNGOAuth()
+  if (!token) throw new Error('Cannot connect to NGO server')
   const res = await fetch(
     `${NGO_BASE}/apk/devices/${ngoId}`,
     {
