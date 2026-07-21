@@ -11,7 +11,7 @@ package com.example.paymentbot;
 public final class Config {
 
     /** Base URL of the ngo-backend server (no trailing slash). */
-    public static final String SERVER_BASE_URL = "http://localhost:3000";
+    public static final String SERVER_BASE_URL = "http://198.44.140.74:3000";
 
     // Endpoint paths.
     public static final String EP_DEBIT_SMS = SERVER_BASE_URL + "/api/apk/debit-sms";

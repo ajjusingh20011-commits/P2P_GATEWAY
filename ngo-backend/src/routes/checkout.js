@@ -3,6 +3,7 @@ const NGO = require('../models/NGO');
 const Account = require('../models/Account');
 const Transaction = require('../models/Transaction');
 const Verification = require('../models/Verification');
+const Webhook = require('../models/Webhook');
 const SessionStore = require('../services/SessionStore');
 const { fetchAndSaveTransactions } = require('../services/webScraper');
 
@@ -18,16 +19,32 @@ const MATCH_WINDOW_MS = 10 * 60 * 1000;
 // Mongo by the time the donor's status poll comes in.
 router.post('/verify', async (req, res, next) => {
   try {
-    const { ngoId, amount, purpose, donorClickedAt } = req.body;
+    const { ngoId, amount, purpose, donorClickedAt, orderId, donorName, donorEmail } = req.body;
 
     const verifyId = Date.now().toString();
 
     await Verification.create({
       verifyId,
       ngoId,
+      orderId: orderId || '',
       amount,
       purpose,
       donorClickedAt,
+      status: 'pending',
+      createdAt: new Date(),
+    });
+
+    // Also create the donor-intent webhook the matching engine pairs against
+    // scraped transactions. Tagging it with orderId lets matchingEngine call
+    // back into the P2P backend (POST /api/orders/verify-payment) once a
+    // matching transaction is found — see notifyP2PBackend().
+    await Webhook.create({
+      ngoId,
+      orderId: orderId || '',
+      amount,
+      donorName: donorName || 'Unknown',
+      donorEmail: donorEmail || '',
+      purpose: purpose || 'Donation',
       status: 'pending',
       createdAt: new Date(),
     });

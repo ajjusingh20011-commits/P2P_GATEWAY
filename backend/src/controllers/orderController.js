@@ -13,6 +13,7 @@
  */
 
 const Joi = require('joi');
+const axios = require('axios');
 
 const db = require('../models');
 const config = require('../config');
@@ -170,7 +171,9 @@ const checkoutOpened = asyncHandler(async (req, res) => {
 // claimed_paid with their proof, and notifies admin + trader. NO settlement
 // here — an admin must review/confirm.
 const claimPaid = asyncHandler(async (req, res) => {
-  const order = await findOrder(req.params.id);
+  const order = await findOrder(req.params.id, {
+    include: [{ model: db.PaymentDetail, as: 'paymentDetail' }],
+  });
   if (!order) return fail(res, 404, 'Order not found');
   if (!['pending', 'checkout_open'].includes(order.status)) {
     return ok(res, { success: true, status: order.status, order: orderView(order) });
@@ -189,6 +192,28 @@ const claimPaid = asyncHandler(async (req, res) => {
     customer_confirmed_at: new Date(),
     screenshot_path: req.body?.screenshot_path || order.screenshot_path,
   });
+
+  // Notify NGO backend to start verification. Best-effort — the customer's
+  // claim is already saved above; a down NGO backend must not block checkout.
+  try {
+    await axios.post(
+      (process.env.NGO_BACKEND_URL || 'http://localhost:3000') + '/api/checkout/verify',
+      {
+        orderId: order.uuid,
+        amount: order.amount_inr.toString(),
+        ngoId: order.merchant_id.toString(),
+        traderUPI: order.paymentDetail?.upi_id || '',
+        donorClickedAt: new Date().toISOString(),
+        utr: utrNumber || '',
+        confirmationType,
+      },
+      { timeout: 5000 }
+    );
+    console.log('NGO verify triggered for order:', order.uuid);
+  } catch (e) {
+    console.log('NGO notify failed:', e.message);
+    // Don't block - continue even if NGO fails.
+  }
 
   emitToAdmin('order:claimed_paid', { order_id: order.uuid, gateway_order_id: order.gateway_order_id, amount_inr: order.amount_inr, deposit_type: order.deposit_type });
   if (order.trader_id) emitToTrader(order.trader_id, 'order:claimed_paid', { order_id: order.uuid, gateway_order_id: order.gateway_order_id, amount_inr: order.amount_inr });
@@ -278,6 +303,86 @@ const newUpi = asyncHandler(async (req, res) => {
   return ok(res, { order: view });
 });
 
+/* --------------------- POST /verify-payment (internal) -------------------- */
+// Server-to-server callback FROM the NGO backend once it has independently
+// matched a scraped bank/UPI transaction to the donor intent created in
+// claimPaid above (see matchingEngine.js notifyP2PBackend). Auto-settles the
+// order without an admin review step.
+const verifyPayment = asyncHandler(async (req, res) => {
+  try {
+    const { orderId, utr, payerName, payerUPI, verified, verifiedAt } = req.body;
+
+    if (!verified) {
+      return res.json({ success: false, message: 'Payment not verified' });
+    }
+
+    const order = await findOrder(orderId);
+    if (!order) {
+      return res.json({ success: false, message: 'Order not found' });
+    }
+
+    // Only update if order is pending or claimed.
+    if (!['pending', 'checkout_open', 'claimed_paid'].includes(order.status)) {
+      return res.json({ success: true, message: 'Order already processed', status: order.status });
+    }
+
+    // Update order to completed. NOTE: 'completed' is not a valid Order.status
+    // value (see models/order.model.js STATUSES) — using 'success', the
+    // existing terminal "paid & settled" status.
+    await order.update({
+      status: 'success',
+      utr_number: utr || order.utr_number,
+      payer_name: payerName || '',
+      payer_upi: payerUPI || '',
+      confirmed_at: verifiedAt || new Date(),
+      auto_verified: true,
+    });
+
+    // Emit socket notifications.
+    emitToAdmin('order:completed', {
+      order_id: order.uuid,
+      gateway_order_id: order.gateway_order_id,
+      amount_inr: order.amount_inr,
+      utr,
+      payer_name: payerName,
+      auto_verified: true,
+    });
+
+    if (order.trader_id) {
+      emitToTrader(order.trader_id, 'order:completed', {
+        order_id: order.uuid,
+        amount_inr: order.amount_inr,
+        utr,
+        payer_name: payerName,
+      });
+    }
+
+    emitToMerchant(order.merchant_id, 'order:completed', {
+      order_id: order.uuid,
+      amount_inr: order.amount_inr,
+    });
+
+    emitToOrder(order.uuid, 'order:completed', {
+      order_id: order.uuid,
+      status: 'success',
+      utr,
+      payer_name: payerName,
+    });
+
+    console.log('Order auto-verified:', orderId, 'UTR:', utr);
+
+    return res.json({
+      success: true,
+      message: 'Order verified and closed!',
+      orderId: order.uuid,
+      status: 'success',
+    });
+  } catch (err) {
+    console.error('verifyPayment error:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 /* ------------------------------- GET / ------------------------------------ */
 // Role-scoped listing: admin=all, merchant=own, trader=assigned.
 const list = asyncHandler(async (req, res) => {
@@ -304,4 +409,4 @@ const list = asyncHandler(async (req, res) => {
   return ok(res, { orders: rows.map(orderView), pagination: { page, limit, total: count } });
 });
 
-module.exports = { create, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, markPaid, cancel };
+module.exports = { create, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, markPaid, cancel, verifyPayment };

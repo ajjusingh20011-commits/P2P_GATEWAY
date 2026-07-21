@@ -71,6 +71,11 @@ module.exports = (sequelize) => {
       admin_rate: { type: DataTypes.DECIMAL(10, 4), allowNull: true },
       trader_deduction_usdt: { type: DataTypes.DECIMAL(20, 8), allowNull: true },
       admin_receives_usdt: { type: DataTypes.DECIMAL(20, 8), allowNull: true },
+
+      // Set by the NGO backend's auto-settlement callback (verifyPayment).
+      payer_name: { type: DataTypes.STRING(191), allowNull: true },
+      payer_upi: { type: DataTypes.STRING(191), allowNull: true },
+      auto_verified: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     },
     {
       sequelize,

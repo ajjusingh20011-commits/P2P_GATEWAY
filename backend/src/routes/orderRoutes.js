@@ -30,6 +30,11 @@ router.post('/:id/claim-paid', orderController.claimPaid);
 router.post('/:id/paid', orderController.markPaid);
 router.post('/:id/confirm', orderController.confirm);
 router.post('/:id/customer-confirm', orderController.markPaid);
+// Internal callback: NGO backend -> P2P backend once it verifies a payment.
+// SECURITY: unauthenticated — anyone who can reach it can settle any order
+// with a fabricated UTR. Restrict before production (shared-secret header,
+// IP allowlist, or a service-account verifyToken check).
+router.post('/verify-payment', orderController.verifyPayment);
 router.post('/:id/cancel', verifyToken, checkRole('trader', 'admin'), orderController.cancel);
 router.post('/:id/expire', verifyToken, checkRole('trader', 'admin'), orderController.expire);
 router.post('/:id/dispute', verifyToken, orderController.dispute);

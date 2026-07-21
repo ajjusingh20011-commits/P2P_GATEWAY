@@ -9,6 +9,10 @@ const webhookSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    // Set when this donor intent originated from the P2P gateway's checkout
+    // flow (POST /api/checkout/verify) — lets the matching engine call back
+    // into the P2P backend once the donation is verified. Empty otherwise.
+    orderId: { type: String, default: '', index: true },
     donorName: { type: String, default: '' },
     donorEmail: { type: String, default: '' },
     donorPhone: { type: String, default: '' },

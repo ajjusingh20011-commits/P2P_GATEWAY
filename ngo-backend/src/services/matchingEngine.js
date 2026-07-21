@@ -1,3 +1,4 @@
+const axios = require('axios');
 const Webhook = require('../models/Webhook');
 const Transaction = require('../models/Transaction');
 const NGO = require('../models/NGO');
@@ -23,6 +24,36 @@ function normalizeAmount(amount) {
 function emit(io, ngoId, event, payload) {
   if (io && ngoId) {
     io.to(String(ngoId)).emit(event, payload);
+  }
+}
+
+/**
+ * Notifies the P2P backend that a donation it's waiting on has been verified,
+ * so it can auto-close the matching order. Only fires when the webhook (donor
+ * intent) carries an `orderId` — i.e. it originated from the P2P checkout
+ * flow via POST /api/checkout/verify, not a standalone NGO donation.
+ * Best-effort: failures are logged, never thrown (must not block matching).
+ */
+async function notifyP2PBackend(webhook, txn) {
+  if (!webhook.orderId) return;
+  try {
+    await axios.post(
+      (process.env.P2P_BACKEND_URL || 'http://localhost:4000') +
+        '/api/orders/verify-payment',
+      {
+        orderId: webhook.orderId,
+        utr: txn.utr || '',
+        amount: webhook.amount,
+        payerName: webhook.donorName || 'Unknown',
+        payerUPI: txn.payerUpiId || '',
+        verified: true,
+        verifiedAt: new Date().toISOString(),
+      },
+      { timeout: 5000 }
+    );
+    console.log('P2P order closed:', webhook.orderId);
+  } catch (e) {
+    console.log('P2P callback failed:', e.message);
   }
 }
 
@@ -95,6 +126,7 @@ async function checkMatch(rawEvent, io) {
       await webhook.save();
 
       emit(io, rawEvent.ngoId, 'newDonation', entry);
+      await notifyP2PBackend(webhook, txn);
       return entry;
     }
 
@@ -173,6 +205,7 @@ async function matchWebhook(webhook, io) {
   await webhook.save();
 
   emit(io, webhook.ngoId, 'newDonation', entry);
+  await notifyP2PBackend(webhook, txn);
   return entry;
 }
 
