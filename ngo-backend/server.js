@@ -25,15 +25,10 @@ const app = express();
 // ---------------------------------------------------------------------------
 app.use(
   cors({
-    origin: [
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'http://localhost:5175',
-      'http://localhost:3000',
-      // Fallback dev port: 5175 is used by the sibling "merchant" app in the
-      // root concurrently stack, so the NGO dashboard falls back to 5180.
-      'http://localhost:5180',
-    ],
+    origin: function(origin, callback) {
+      // Allow all origins for now
+      callback(null, true);
+    },
     credentials: true,
   })
 );
