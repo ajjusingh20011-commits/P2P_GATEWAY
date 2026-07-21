@@ -2,15 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import { Card, Badge, Button, SearchInput, Select, PageHeader } from '../components/ui';
 import { IconPlus, IconChevron, IconDots } from '../components/icons';
-// NOTE: There is no backend endpoint for a trader's smartphones, so this page
-// stays on mock data. Do not wire it to the API until an endpoint exists.
-import { smartphones } from '../utils/mock';
-import { generateLicense, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
+import { getDevices, generateLicense, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All statuses' },
-  { value: 'online', label: 'Online' },
-  { value: 'offline', label: 'Offline' },
+  { value: 'active', label: 'Active' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'inactive', label: 'Inactive' },
 ];
 
 const NGO_ID = '6a4be25836583c99fa079802';
@@ -103,7 +101,7 @@ const popupStyles = {
 };
 
 export default function Smartphones() {
-  const [filters, setFilters] = useState({ status: 'all', name: '', connection: '' });
+  const [filters, setFilters] = useState({ status: 'all', name: '' });
   const [menuOpen, setMenuOpen] = useState(false);
 
   // PaymentBot pairing popup: null (closed) -> 'install' -> 'code'.
@@ -111,6 +109,26 @@ export default function Smartphones() {
   const [licenseKey, setLicenseKey] = useState('');
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  const [devices, setDevices] = useState([]);
+  const [loadingDevices, setLoadingDevices] = useState(true);
+
+  async function loadDevices() {
+    try {
+      setLoadingDevices(true);
+      const list = await getDevices();
+      setDevices(list || []);
+    } catch (e) {
+      console.error('Failed to load devices:', e);
+      setDevices([]);
+    } finally {
+      setLoadingDevices(false);
+    }
+  }
+
+  useEffect(() => {
+    loadDevices();
+  }, []);
 
   const startPairing = () => {
     setMenuOpen(false);
@@ -152,6 +170,7 @@ export default function Smartphones() {
     socket.on('device-registered', (data) => {
       closePairing();
       alert(data.deviceName + ' connected!');
+      loadDevices();
     });
 
     return () => socket.disconnect();
@@ -160,13 +179,17 @@ export default function Smartphones() {
   const set = (k) => (v) => setFilters((f) => ({ ...f, [k]: v }));
 
   const filtered = useMemo(() => {
-    return smartphones.filter((s) => {
-      if (filters.status !== 'all' && (filters.status === 'online') !== s.online) return false;
-      if (filters.name && !s.name.toLowerCase().includes(filters.name.toLowerCase())) return false;
-      if (filters.connection && !s.connectionType.toLowerCase().includes(filters.connection.toLowerCase())) return false;
+    return devices.filter((s) => {
+      if (filters.status !== 'all' && s.status !== filters.status) return false;
+      if (filters.name) {
+        const q = filters.name.toLowerCase();
+        if (!(s.deviceName || '').toLowerCase().includes(q) && !(s.deviceModel || '').toLowerCase().includes(q)) {
+          return false;
+        }
+      }
       return true;
     });
-  }, [filters]);
+  }, [devices, filters]);
 
   return (
     <div>
@@ -174,34 +197,38 @@ export default function Smartphones() {
         title="Smartphones"
         subtitle="Devices connected to your account"
         actions={
-          <div className="relative">
-            <Button onClick={() => setMenuOpen((v) => !v)}>
-              <IconPlus className="h-4 w-4" />
-              Add Smartphone
-              <IconChevron className="h-4 w-4" />
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={loadDevices} disabled={loadingDevices}>
+              {loadingDevices ? 'Refreshing…' : 'Refresh'}
             </Button>
-            {menuOpen && (
-              <div className="absolute right-0 z-10 mt-1 w-48 rounded-lg border border-gray-800 bg-gray-900 py-1 shadow-xl">
-                {['PaymentBot'].map((o) => (
-                  <button
-                    key={o}
-                    onClick={startPairing}
-                    className="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-800"
-                  >
-                    {o}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="relative">
+              <Button onClick={() => setMenuOpen((v) => !v)}>
+                <IconPlus className="h-4 w-4" />
+                Add Smartphone
+                <IconChevron className="h-4 w-4" />
+              </Button>
+              {menuOpen && (
+                <div className="absolute right-0 z-10 mt-1 w-48 rounded-lg border border-gray-800 bg-gray-900 py-1 shadow-xl">
+                  {['PaymentBot'].map((o) => (
+                    <button
+                      key={o}
+                      onClick={startPairing}
+                      className="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-800"
+                    >
+                      {o}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         }
       />
 
       <Card className="mb-4 p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Select value={filters.status} onChange={set('status')} options={STATUS_OPTIONS} />
-          <SearchInput value={filters.name} onChange={set('name')} placeholder="Name" />
-          <SearchInput value={filters.connection} onChange={set('connection')} placeholder="Connection type" />
+          <SearchInput value={filters.name} onChange={set('name')} placeholder="Search by name or model" />
         </div>
       </Card>
 
@@ -211,9 +238,9 @@ export default function Smartphones() {
             <thead>
               <tr className="border-b border-gray-800 text-left text-xs uppercase tracking-wide text-gray-500">
                 <th className="px-4 py-3 font-medium">Smartphone Name</th>
-                <th className="px-4 py-3 font-medium">Connection Type</th>
-                <th className="px-4 py-3 font-medium">Details</th>
-                <th className="px-4 py-3 font-medium">Created</th>
+                <th className="px-4 py-3 font-medium">Model</th>
+                <th className="px-4 py-3 font-medium">Registration Code</th>
+                <th className="px-4 py-3 font-medium">Last Seen</th>
                 <th className="px-4 py-3 font-medium text-right">Actions</th>
               </tr>
             </thead>
@@ -222,15 +249,17 @@ export default function Smartphones() {
                 <tr key={s.id} className="text-gray-200 hover:bg-gray-800/40">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <span className={`h-2 w-2 rounded-full ${s.online ? 'bg-emerald-500' : 'bg-gray-500'}`} />
-                      <span className="font-medium">{s.name}</span>
+                      <span className={`h-2 w-2 rounded-full ${s.status === 'active' ? 'bg-emerald-500' : 'bg-gray-500'}`} />
+                      <span className="font-medium">{s.deviceName || 'Unnamed device'}</span>
                     </div>
                   </td>
+                  <td className="px-4 py-3">{s.deviceModel || '—'}</td>
                   <td className="px-4 py-3">
-                    <Badge color="green">{s.connectionType}</Badge>
+                    <Badge color="gray">{s.licenseKey || '—'}</Badge>
                   </td>
-                  <td className="px-4 py-3">{s.details}</td>
-                  <td className="px-4 py-3 text-xs text-gray-400">{s.createdAt}</td>
+                  <td className="px-4 py-3 text-xs text-gray-400">
+                    {s.lastSeen ? new Date(s.lastSeen).toLocaleString() : 'Never'}
+                  </td>
                   <td className="px-4 py-3 text-right">
                     <button className="text-gray-500 hover:text-gray-200">
                       <IconDots className="h-4 w-4" />
@@ -241,7 +270,7 @@ export default function Smartphones() {
               {filtered.length === 0 && (
                 <tr>
                   <td colSpan={5} className="py-10 text-center text-sm text-gray-500">
-                    No smartphones match your filters
+                    {loadingDevices ? 'Loading devices…' : 'No smartphones match your filters'}
                   </td>
                 </tr>
               )}

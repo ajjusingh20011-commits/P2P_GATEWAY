@@ -7,37 +7,42 @@ const NGO_CREDENTIALS = {
 
 async function getNGOAuth() {
   try {
-    // Check if we have a valid stored token
     const stored = localStorage.getItem('ngo_token')
     const expiry = localStorage.getItem('ngo_token_expiry')
     const storedNgoId = localStorage.getItem('ngo_id')
 
-    if (stored && expiry && Date.now() < parseInt(expiry) && storedNgoId) {
+    if (stored && expiry &&
+        Date.now() < parseInt(expiry) &&
+        storedNgoId &&
+        storedNgoId !== 'null' &&
+        storedNgoId !== 'undefined') {
       return { token: stored, ngoId: storedNgoId }
     }
 
-    // Login to get fresh token
+    // Clear stale cache — covers a token cached before ngoId existed on the
+    // user record, or one cached with the literal string 'null'/'undefined'.
+    localStorage.removeItem('ngo_token')
+    localStorage.removeItem('ngo_token_expiry')
+    localStorage.removeItem('ngo_id')
+
     const res = await fetch(`${NGO_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(NGO_CREDENTIALS)
     })
-
     const data = await res.json()
-
     if (data.success) {
       const token = data.data.token
-      // The backend now includes ngoId on the login response's user object
-      // (see authService.signToken) — fall back to the old hardcoded demo
-      // NGO id only if that's ever missing.
-      const ngoId = data.data.user?.ngoId || '6a4be25836583c99fa079802'
-      // Store token with 6 hour expiry
+      const user = data.data.user
+      const ngoId = user?.ngoId ||
+                    user?.ngo_id ||
+                    null
       localStorage.setItem('ngo_token', token)
-      localStorage.setItem(
-        'ngo_token_expiry',
-        Date.now() + 6 * 60 * 60 * 1000
-      )
-      localStorage.setItem('ngo_id', ngoId)
+      localStorage.setItem('ngo_token_expiry',
+        String(Date.now() + 6 * 60 * 60 * 1000))
+      if (ngoId) {
+        localStorage.setItem('ngo_id', ngoId)
+      }
       return { token, ngoId }
     }
     return { token: null, ngoId: null }
