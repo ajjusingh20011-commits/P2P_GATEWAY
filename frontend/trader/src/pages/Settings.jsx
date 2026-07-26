@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react';
+import { UserRound, ShieldCheck, Wallet, Globe2, Send } from 'lucide-react';
 import { Card, Badge, Button, Select, PageHeader } from '../components/ui';
 import { IconWallet } from '../components/icons';
 import { useAuth } from '../context/AuthContext';
 import { authApi } from '../services/api';
 import { toast } from '../components/Toaster';
+
+function hexA(hex, alpha) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
 
 const labelStyle = { display: 'block', color: 'var(--muted)', fontSize: 13, marginBottom: 6 };
 const inputStyle = {
@@ -27,13 +33,25 @@ const rowStyle = {
   padding: '12px 16px',
 };
 
-function Section({ title, description, badge, children }) {
+function Section({ title, description, badge, icon: Icon, accent = '#4f46e5', children }) {
   return (
     <Card className="p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 15, margin: 0 }}>{title}</h2>
-          {description && <p style={{ color: 'var(--muted)', fontSize: 13, margin: '3px 0 0' }}>{description}</p>}
+        <div className="flex items-start gap-2.5">
+          {Icon && (
+            <span
+              style={{
+                width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center',
+                justifyContent: 'center', flexShrink: 0, background: hexA(accent, 0.14), color: accent,
+              }}
+            >
+              <Icon size={17} />
+            </span>
+          )}
+          <div>
+            <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 15, margin: 0 }}>{title}</h2>
+            {description && <p style={{ color: 'var(--muted)', fontSize: 13, margin: '3px 0 0' }}>{description}</p>}
+          </div>
         </div>
         {badge}
       </div>
@@ -132,7 +150,7 @@ function TwoFactorSection() {
   };
 
   return (
-    <Section title="Two-Factor Authentication" description="Extra security for your account">
+    <Section title="Two-Factor Authentication" description="Extra security for your account" icon={ShieldCheck} accent="#22c55e">
       <div style={rowStyle}>
         <div>
           <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, margin: 0 }}>
@@ -289,9 +307,9 @@ export default function Settings() {
     <div>
       <PageHeader title="Settings" subtitle="Account preferences and security" />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Deposit address — no per-trader wallet endpoint exists yet. */}
-        <Section title="Deposit Address" description="Your USDT (TRC20) wallet" badge={<Badge color="gray">Not configured</Badge>}>
+        <Section title="Deposit Address" description="Your USDT (TRC20) wallet" badge={<Badge color="gray">Not configured</Badge>} icon={Wallet} accent="#f59e0b">
           <div style={rowStyle}>
             <IconWallet className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--muted)' }} />
             <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>
@@ -301,7 +319,7 @@ export default function Settings() {
         </Section>
 
         {/* Preferences — neither field has a backend effect today. */}
-        <Section title="Preferences" description="Language and timezone" badge={comingSoon}>
+        <Section title="Preferences" description="Language and timezone" badge={comingSoon} icon={Globe2} accent="#3b82f6">
           <div className="space-y-4">
             <div>
               <label style={labelStyle}>Language</label>
@@ -316,7 +334,7 @@ export default function Settings() {
 
         {/* Account — email display is real (from the authenticated session);
             password change has no backend route, so only that part is marked. */}
-        <Section title="Account" description="Login and password">
+        <Section title="Account" description="Login and password" icon={UserRound} accent="#8b5cf6">
           <div className="space-y-4">
             <div>
               <label style={labelStyle}>Email</label>
@@ -340,7 +358,7 @@ export default function Settings() {
         {/* Telegram bots — no connect endpoint exists; telegram_chat_id is an
             admin-set field the outbound alert service reads, not something a
             trader can self-link today. */}
-        <Section title="Telegram Bots" description="Connect automation and alert bots" badge={comingSoon}>
+        <Section title="Telegram Bots" description="Connect automation and alert bots" badge={comingSoon} icon={Send} accent="#14b8c4">
           <div className="space-y-3">
             <div style={rowStyle}>
               <div>
