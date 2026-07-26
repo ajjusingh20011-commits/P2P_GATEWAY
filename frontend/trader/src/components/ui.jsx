@@ -334,7 +334,7 @@ export function Th({ children, align = 'left', className = '' }) {
 
 /* Shared modal shell — overlay + centered card + optional title/subtitle/footer.
  * Click-outside and Escape both close. Pages own their own body content. */
-export function Modal({ open, onClose, title, subtitle, width = 460, children, footer }) {
+export function Modal({ open, onClose, title, subtitle, width = 460, children, footer, headerRight }) {
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
@@ -363,9 +363,12 @@ export function Modal({ open, onClose, title, subtitle, width = 460, children, f
         {(title || onClose) && (
           <div className="flex items-center justify-between" style={{ marginBottom: subtitle ? 4 : 14 }}>
             <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0, color: 'var(--text)' }}>{title}</h3>
-            <button onClick={onClose} className="tf-hbtn" aria-label="Close">
-              <IconX className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-1.5">
+              {headerRight}
+              <button onClick={onClose} className="tf-hbtn" aria-label="Close">
+                <IconX className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         )}
         {subtitle && <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 14px' }}>{subtitle}</p>}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Card, Badge, Button, Toggle, SearchInput, Select, PageHeader } from '../components/ui';
+import { Card, Badge, Button, Toggle, SearchInput, Select, PageHeader, Modal, BankBadge, LivenessBadge } from '../components/ui';
 import {
-  IconPlus, IconEdit, IconTrash, IconX, IconChevron, IconRobot, IconWarning, IconDots, IconDetails, IconLock, IconGlobe,
+  IconPlus, IconEdit, IconTrash, IconChevron, IconRobot, IconWarning, IconDots, IconDetails, IconLock, IconGlobe,
 } from '../components/icons';
 import { maskUpi, ACCOUNT_TYPES } from '../utils/mock';
 import { traderApi } from '../services/api';
@@ -79,39 +79,32 @@ const apiError = (e) =>
 const upiHasAt = (v = '') => v.includes('@') && v.trim().length > 0;
 
 // ---------------------------------------------------------------------------
-// Modal shell
+// Modal shell — the shared ui.jsx Modal now renders every dialog on this page
+// (Add/Edit). This is a pure wrapper swap: no OTP/liveness/save logic lives
+// in this component, so migrating it touches no state machine.
 // ---------------------------------------------------------------------------
-function Modal({ title, onClose, children, headerRight }) {
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-xl border border-gray-800 bg-gray-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-gray-800 p-4">
-          <h2 className="font-semibold text-white">{title}</h2>
-          <div className="flex items-center gap-2">
-            {headerRight}
-            <button onClick={onClose} className="text-gray-500 hover:text-white" aria-label="Close">
-              <IconX className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4">{children}</div>
-      </div>
-    </div>
-  );
-}
-
 function Field({ label, children, hint }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-gray-400">{label}</span>
+      <span className="mb-1 block text-xs font-medium" style={{ color: 'var(--muted)' }}>{label}</span>
       {children}
       {hint}
     </label>
   );
 }
 
-const inputCls =
-  'w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500';
+const inputStyle = {
+  width: '100%',
+  borderRadius: 8,
+  border: '1px solid var(--input-border)',
+  background: 'var(--input-bg)',
+  padding: '8px 12px',
+  fontSize: 14,
+  color: 'var(--text)',
+  outline: 'none',
+};
+const inputStyleInvalid = { ...inputStyle, border: '1px solid #ef4444' };
+const inputStyleValid = { ...inputStyle, border: '1px solid #22c55e' };
 
 // ---------------------------------------------------------------------------
 // Collapsible per-window limit section (Fix 3). OFF by default.
@@ -127,14 +120,14 @@ function LimitWindow({ title, on, onToggle, amount, onAmount, ops, onOps, showDa
         <div className="space-y-3 border-t border-gray-800 p-3">
           {showDate && (
             <Field label="Start date">
-              <input type="date" className={inputCls} value={date} onChange={(e) => onDate(e.target.value)} />
+              <input type="date" style={inputStyle} value={date} onChange={(e) => onDate(e.target.value)} />
             </Field>
           )}
           <Field label="Disable upon reaching amount (INR)">
-            <input type="number" min="0" className={inputCls} value={amount} onChange={(e) => onAmount(e.target.value)} placeholder="e.g. 100000" />
+            <input type="number" min="0" style={inputStyle} value={amount} onChange={(e) => onAmount(e.target.value)} placeholder="e.g. 100000" />
           </Field>
           <Field label="Disable after N operations">
-            <input type="number" min="0" className={inputCls} value={ops} onChange={(e) => onOps(e.target.value)} placeholder="e.g. 200" />
+            <input type="number" min="0" style={inputStyle} value={ops} onChange={(e) => onOps(e.target.value)} placeholder="e.g. 200" />
           </Field>
           <p className="text-xs text-gray-500">Current period: {Number(currentPeriod || 0).toFixed(2)} INR</p>
         </div>
@@ -270,10 +263,10 @@ function LimitsForm({ form, set, caps, setCaps, usage }) {
 
       <div className="grid grid-cols-2 gap-3 pt-1">
         <Field label="Minimum amount per transaction">
-          <input type="number" min="0" className={inputCls} value={form.min_amount} onChange={(e) => set('min_amount', e.target.value)} placeholder="100" />
+          <input type="number" min="0" style={inputStyle} value={form.min_amount} onChange={(e) => set('min_amount', e.target.value)} placeholder="100" />
         </Field>
         <Field label="Maximum amount per transaction">
-          <input type="number" min="0" className={inputCls} value={form.max_amount} onChange={(e) => set('max_amount', e.target.value)} placeholder="100000" />
+          <input type="number" min="0" style={inputStyle} value={form.max_amount} onChange={(e) => set('max_amount', e.target.value)} placeholder="100000" />
         </Field>
       </div>
 
@@ -490,7 +483,7 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
       {step === 2 && (
         <div className="space-y-3">
           <Field label="Smartphone">
-            <select value={form.ngo_device_id} onChange={(e) => set('ngo_device_id', e.target.value)} className={inputCls}>
+            <select value={form.ngo_device_id} onChange={(e) => set('ngo_device_id', e.target.value)} style={inputStyle}>
               <option value="">
                 {devicesLoading ? 'Loading devices…' : ngoDevices.length === 0 ? 'No devices' : 'Not linked to a device yet'}
               </option>
@@ -510,7 +503,7 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
 
           <Field label="Title / Name">
             <input
-              className={`${inputCls} ${form.account_name.length > 0 && !nameValid ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : ''}`}
+              style={form.account_name.length > 0 && !nameValid ? inputStyleInvalid : inputStyle}
               value={form.account_name}
               onChange={(e) => set('account_name', e.target.value)}
               placeholder="e.g. Rahul Sharma"
@@ -523,7 +516,7 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
           <Field label="UPI ID">
             <div className="relative">
               <input
-                className={`${inputCls} pr-9 ${upiInvalid ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : upiValid ? 'border-emerald-500' : ''}`}
+                style={{ ...(upiInvalid ? inputStyleInvalid : upiValid ? inputStyleValid : inputStyle), paddingRight: 36 }}
                 value={form.upi_id}
                 onChange={(e) => set('upi_id', e.target.value)}
                 placeholder="name@bank"
@@ -539,7 +532,7 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
 
           <Field label="Organization name">
             <input
-              className={inputCls}
+              style={inputStyle}
               value={form.organization_name}
               onChange={(e) => set('organization_name', e.target.value)}
               placeholder="e.g. Sharma Enterprises"
@@ -808,7 +801,7 @@ function WebLoginForm({ onClose, onSaved }) {
     <div>
       <div className="space-y-3">
         <Field label="Platform">
-          <select className={inputCls} value={form.platform} disabled={busy} onChange={(e) => set('platform', e.target.value)}>
+          <select style={inputStyle} value={form.platform} disabled={busy} onChange={(e) => set('platform', e.target.value)}>
             <option value="">Select platform…</option>
             {WEB_PLATFORMS.map((p) => (
               <option key={p.label} value={p.value}>{p.label}</option>
@@ -818,7 +811,7 @@ function WebLoginForm({ onClose, onSaved }) {
 
         <Field label="UPI ID">
           <input
-            className={inputCls}
+            style={inputStyle}
             value={form.upiId}
             disabled={busy}
             onChange={(e) => set('upiId', e.target.value)}
@@ -828,7 +821,7 @@ function WebLoginForm({ onClose, onSaved }) {
 
         <Field label="Display Name">
           <input
-            className={inputCls}
+            style={inputStyle}
             value={form.displayName}
             disabled={busy}
             onChange={(e) => set('displayName', e.target.value)}
@@ -839,7 +832,7 @@ function WebLoginForm({ onClose, onSaved }) {
         <Field label="Login Email">
           <input
             type="email"
-            className={inputCls}
+            style={inputStyle}
             value={form.loginEmail}
             disabled={busy}
             onChange={(e) => set('loginEmail', e.target.value)}
@@ -850,7 +843,7 @@ function WebLoginForm({ onClose, onSaved }) {
         <Field label="Login Password">
           <input
             type="password"
-            className={inputCls}
+            style={inputStyle}
             value={form.loginPassword}
             disabled={busy}
             onChange={(e) => set('loginPassword', e.target.value)}
@@ -860,7 +853,7 @@ function WebLoginForm({ onClose, onSaved }) {
 
         <Field label="Phone Number">
           <input
-            className={inputCls}
+            style={inputStyle}
             value={form.loginPhone}
             disabled={busy}
             onChange={(e) => set('loginPhone', e.target.value)}
@@ -902,7 +895,7 @@ function AddAccountModal({ presetBank, onClose, onSaved }) {
   const [tab, setTab] = useState('apk'); // 'apk' | 'web'
 
   return (
-    <Modal title="Add Payment Detail" onClose={onClose}>
+    <Modal open title="Add Payment Detail" onClose={onClose}>
       {/* Icon tabs: android (APK, teal) / globe (Web, coral). Icon on top,
           text below, teal underline on the active tab. */}
       <div className="flex" style={{ borderBottom: '1px solid var(--cardborder)' }}>
@@ -1049,6 +1042,7 @@ function EditModal({ detail, onClose, onSaved, onDeleted }) {
 
   return (
     <Modal
+      open
       title="Edit Payment Detail"
       onClose={onClose}
       headerRight={
@@ -1063,18 +1057,18 @@ function EditModal({ detail, onClose, onSaved, onDeleted }) {
     >
       <div className="space-y-3">
         <Field label="Title / Name">
-          <input className={inputCls} value={form.account_name} onChange={(e) => set('account_name', e.target.value)} />
+          <input style={inputStyle} value={form.account_name} onChange={(e) => set('account_name', e.target.value)} />
         </Field>
         <Field label="UPI ID">
           <input
-            className={`${inputCls} ${form.upi_id.length > 0 && !upiValid ? 'border-red-500' : upiValid ? 'border-emerald-500' : ''}`}
+            style={form.upi_id.length > 0 && !upiValid ? inputStyleInvalid : upiValid ? inputStyleValid : inputStyle}
             value={form.upi_id}
             onChange={(e) => set('upi_id', e.target.value)}
           />
           <span className="mt-1 block text-xs text-gray-500">Must contain “@” (example: name@bank)</span>
         </Field>
         <Field label="Organization name">
-          <input className={inputCls} value={form.organization_name} onChange={(e) => set('organization_name', e.target.value)} />
+          <input style={inputStyle} value={form.organization_name} onChange={(e) => set('organization_name', e.target.value)} />
         </Field>
 
         <div className="pt-1">
