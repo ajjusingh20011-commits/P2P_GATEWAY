@@ -8,7 +8,8 @@ import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../hooks/useSocket';
 import { Toaster, toast } from '../components/Toaster';
 import { traderApi } from '../services/api';
-import { inr, balance, counts } from '../utils/mock';
+import { getDevices } from '../lib/ngoApi';
+import { inr, balance } from '../utils/mock';
 
 /**
  * Shell for all authenticated trader pages: sidebar + top bar + routed content.
@@ -49,6 +50,42 @@ export default function TraderLayout() {
 
   useEffect(() => { refreshProfile(); }, [refreshProfile]);
 
+  // Sidebar "Buy USDT" badge — real awaiting-processing pool count (same
+  // `counts.awaiting_processing` field BuyUsdt.jsx's own tabs already read).
+  // Polled independently on a slower cadence since a nav badge doesn't need
+  // BuyUsdt.jsx's 8s freshness, so this doesn't couple the shell to that page.
+  const [buyUsdtCount, setBuyUsdtCount] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      traderApi
+        .payoutRequests()
+        .then((res) => { if (alive) setBuyUsdtCount(res.data?.data?.counts?.awaiting_processing ?? null); })
+        .catch(() => { if (alive) setBuyUsdtCount(null); });
+    };
+    load();
+    const id = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  // Sidebar "Smartphones" badge — count of devices currently online, from
+  // the same heartbeat field Smartphones.jsx's own poll already reads. This
+  // is a real live count, so 0 legitimately renders as "0" (unlike the
+  // Notifications badge below, which stays hidden because its backing field
+  // is dead, not just currently zero).
+  const [onlineDeviceCount, setOnlineDeviceCount] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      getDevices()
+        .then((devices) => { if (alive) setOnlineDeviceCount((devices || []).filter((d) => d.online).length); })
+        .catch(() => { if (alive) setOnlineDeviceCount(null); });
+    };
+    load();
+    const id = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
   // Toggle Activity: persist to the backend, then flip local state. Optimistic
   // with revert on failure so routing always matches what the trader sees.
   const toggleOnline = useCallback(async (next) => {
@@ -88,7 +125,11 @@ export default function TraderLayout() {
         balance={displayBalance}
         online={online}
         onToggleOnline={toggleOnline}
-        badges={{ notifications: counts.notifications, smartphones: counts.smartphones }}
+        // No `notifications` key here — its only real source
+        // (traderApi.notifications()) reads a confirmed-dead table, so the
+        // badge stays hidden (CountBadge renders nothing for a null/absent
+        // value) rather than showing a fabricated number.
+        badges={{ smartphones: onlineDeviceCount, buyUsdt: buyUsdtCount }}
       />
 
       <div className="flex flex-1 flex-col overflow-hidden">

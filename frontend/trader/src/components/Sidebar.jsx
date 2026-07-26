@@ -1,31 +1,33 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { ChevronsLeft, ChevronsRight, Wallet } from 'lucide-react';
+import {
+  ChevronsLeft,
+  ChevronsRight,
+  Wallet,
+  LayoutDashboard,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Landmark,
+  Bell,
+  Smartphone,
+  Download,
+  Settings as SettingsIcon,
+  LogOut,
+  Activity,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Toggle } from './ui';
 import { usdt } from '../utils/mock';
-import {
-  IconDashboard,
-  IconSell,
-  IconDetails,
-  IconBuy,
-  IconBell,
-  IconPhone,
-  IconDownload,
-  IconSettings,
-  IconLogout,
-  IconActivity,
-} from './icons';
 
 const NAV = [
-  { to: '/dashboard', label: 'Dashboard', icon: IconDashboard },
-  { to: '/trades', label: 'Sell USDT', icon: IconSell },
-  { to: '/offers', label: 'Details', icon: IconDetails },
-  { to: '/buy-usdt', label: 'Buy USDT', icon: IconBuy, badge: 'buyUsdt' },
-  { to: '/notifications', label: 'Notifications', icon: IconBell, badge: 'notifications' },
-  { to: '/smartphones', label: 'Smartphones', icon: IconPhone, badge: 'smartphones' },
-  { to: '/downloads', label: 'Downloads', icon: IconDownload, disabled: true },
-  { to: '/settings', label: 'Settings', icon: IconSettings },
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/trades', label: 'Sell USDT', icon: ArrowUpRight },
+  { to: '/offers', label: 'Details', icon: Landmark },
+  { to: '/buy-usdt', label: 'Buy USDT', icon: ArrowDownLeft, badge: 'buyUsdt' },
+  { to: '/notifications', label: 'Notifications', icon: Bell, badge: 'notifications' },
+  { to: '/smartphones', label: 'Smartphones', icon: Smartphone, badge: 'smartphones' },
+  { to: '/downloads', label: 'Downloads', icon: Download, disabled: true },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
 
 function CountBadge({ value }) {
@@ -118,12 +120,12 @@ export default function Sidebar({ balance, online, onToggleOnline, badges = {} }
       {/* Activity — full toggle expanded, status icon collapsed */}
       {collapsed ? (
         <div className="tf-tip flex justify-center" data-tip={online ? 'Online' : 'Offline'} style={{ padding: '9px 0', marginBottom: 4 }}>
-          <IconActivity className="h-[18px] w-[18px]" style={{ color: online ? '#14b8c4' : 'var(--muted)' }} />
+          <Activity className="h-[18px] w-[18px]" style={{ color: online ? '#14b8c4' : 'var(--muted)' }} />
         </div>
       ) : (
         <div className="flex items-center justify-between" style={{ padding: '9px 14px', marginBottom: 4 }}>
           <span className="flex items-center gap-2" style={{ color: 'var(--muted)', fontSize: 13, fontWeight: 500 }}>
-            <IconActivity className="h-4 w-4" />
+            <Activity className="h-4 w-4" />
             Activity
           </span>
           <div className="flex items-center gap-2">
@@ -186,7 +188,7 @@ export default function Sidebar({ balance, online, onToggleOnline, badges = {} }
           data-tip={collapsed ? 'Logout' : undefined}
           style={{ color: '#ef4444', ...collapsedNavStyle }}
         >
-          <IconLogout className="h-[19px] w-[19px]" />
+          <LogOut className="h-[19px] w-[19px]" />
           {!collapsed && 'Logout'}
         </button>
       </div>
