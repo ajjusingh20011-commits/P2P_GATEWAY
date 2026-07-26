@@ -48,7 +48,7 @@ export function StatCard({ label, value, sub, icon: Icon, accent = 'teal', index
       <div className="flex items-start justify-between">
         <div>
           <p style={{ color: 'var(--muted)', fontWeight: 500, fontSize: 13, margin: '0 0 7px' }}>{label}</p>
-          <p style={{ color: 'var(--text)', fontWeight: 800, fontSize: 26, margin: 0, letterSpacing: '-.5px' }}>{value}</p>
+          <p style={{ color: 'var(--text)', fontWeight: 800, fontSize: 23, margin: 0, letterSpacing: '-.4px' }}>{value}</p>
           {sub && <p style={{ color: 'var(--muted)', fontSize: 11, margin: '7px 0 0' }}>{sub}</p>}
         </div>
         {Icon && (
@@ -383,7 +383,7 @@ export function PageHeader({ title, subtitle, actions }) {
   return (
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h1 style={{ color: 'var(--text)', fontWeight: 800, fontSize: 23, margin: 0, letterSpacing: '-.5px' }}>{title}</h1>
+        <h1 style={{ color: 'var(--text)', fontWeight: 800, fontSize: 28, margin: 0, letterSpacing: '-.8px' }}>{title}</h1>
         {subtitle && <p style={{ color: 'var(--muted)', fontSize: 14, margin: '4px 0 0' }}>{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
