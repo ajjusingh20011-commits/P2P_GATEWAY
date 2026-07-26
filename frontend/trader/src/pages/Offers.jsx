@@ -723,13 +723,13 @@ function WebLoginForm({ onClose, onSaved }) {
       <div>
         <div className="space-y-5">
           <div className="text-center py-4">
-            <p className="text-sm text-gray-300 mb-1">
+            <p className="text-sm mb-1" style={{ color: 'var(--text)' }}>
               {connecting ? 'Verifying...' : 'Enter the OTP sent to your registered mobile number'}
             </p>
           </div>
 
           <div>
-            <label className="mb-2 block text-xs font-medium text-gray-400">6-Digit OTP</label>
+            <label className="mb-2 block text-xs font-medium" style={{ color: 'var(--muted)' }}>6-Digit OTP</label>
             <input
               type="text"
               inputMode="numeric"
@@ -738,12 +738,8 @@ function WebLoginForm({ onClose, onSaved }) {
               onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, ''))}
               placeholder="Enter 6-digit OTP"
               disabled={connecting}
-              className="w-full rounded-lg border bg-gray-800 px-4 py-3 text-center text-2xl font-semibold tracking-[8px] text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-              style={{
-                background: '#161b22',
-                borderColor: '#30363d',
-                color: '#e6edf3',
-              }}
+              className="w-full rounded-lg px-4 py-3 text-center text-2xl font-semibold tracking-[8px] outline-none"
+              style={{ border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)' }}
             />
           </div>
 
@@ -768,14 +764,15 @@ function WebLoginForm({ onClose, onSaved }) {
           <button
             onClick={handleResendOTP}
             disabled={connecting}
-            className="text-sm font-medium text-emerald-400 hover:text-emerald-300 disabled:text-gray-500"
+            className="text-sm font-medium disabled:opacity-50"
+            style={{ color: '#22c55e' }}
           >
             Resend OTP
           </button>
         </div>
 
-        <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-gray-500">
-          <IconLock className="h-3.5 w-3.5 text-emerald-400" />
+        <div className="mt-3 flex items-center justify-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}>
+          <IconLock className="h-3.5 w-3.5" style={{ color: '#22c55e' }} />
           <span>256-bit encrypted</span>
         </div>
       </div>
@@ -865,8 +862,8 @@ function WebLoginForm({ onClose, onSaved }) {
         <Button onClick={handleWebLoginSave} disabled={busy}>{loading ? 'Connecting...' : 'Save'}</Button>
       </div>
 
-      <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-gray-500">
-        <IconLock className="h-3.5 w-3.5 text-emerald-400" />
+      <div className="mt-3 flex items-center justify-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}>
+        <IconLock className="h-3.5 w-3.5" style={{ color: '#22c55e' }} />
         <span>256-bit encrypted</span>
       </div>
     </div>
