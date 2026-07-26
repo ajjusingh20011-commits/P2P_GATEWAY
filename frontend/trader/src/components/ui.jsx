@@ -3,7 +3,8 @@
  * Theme-aware: colors are driven by the CSS variables defined on `.tf-scope`
  * in index.css, so every primitive follows the light/dark toggle automatically.
  */
-import { IconSearch, IconChevron } from './icons';
+import { useEffect } from 'react';
+import { IconSearch, IconChevron, IconX } from './icons';
 
 /* Map a named accent (legacy usage) or a hex string to a hex color. */
 const ACCENT_HEX = {
@@ -217,6 +218,158 @@ export function Pagination({ page, perPage, total, onPage }) {
         >
           Next
         </button>
+      </div>
+    </div>
+  );
+}
+
+/*
+ * Per-provider visual identity for BankBadge. Logo files aren't available
+ * yet — every entry renders as a colored initials fallback. To switch one
+ * provider over to a real logo later, add a `logo` (image src / data URI) to
+ * that entry; nothing else changes.
+ */
+const BANK_VISUALS = {
+  gpay: { initials: 'G', hex: '#4285f4' },
+  paytm: { initials: 'P', hex: '#00a7e1' },
+  phonepe: { initials: 'Ph', hex: '#5f259f' },
+  airtel: { initials: 'A', hex: '#ed1c24' },
+  bharat_pe: { initials: 'B', hex: '#8b5cf6' },
+};
+
+export function BankBadge({ type, label, size = 28 }) {
+  const visual = BANK_VISUALS[type];
+  const hex = visual?.hex || accentHex();
+  const initials = visual?.initials || (label || type || '?').slice(0, 2).toUpperCase();
+  return (
+    <span
+      title={label || type}
+      className="inline-flex flex-shrink-0 items-center justify-center overflow-hidden font-bold"
+      style={{ width: size, height: size, borderRadius: Math.round(size * 0.32), background: hexA(hex, 0.14), color: hex, fontSize: Math.round(size * 0.4) }}
+    >
+      {visual?.logo ? (
+        <img src={visual.logo} alt={label || type} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+      ) : (
+        initials
+      )}
+    </span>
+  );
+}
+
+const LIVENESS_META = {
+  active: { label: 'Active', hex: '#22c55e' },
+  resting: { label: 'Resting', hex: '#f59e0b' },
+  dead: { label: 'Dead', hex: '#ef4444' },
+};
+
+export function LivenessBadge({ state, className = '' }) {
+  const m = LIVENESS_META[state] || { label: state || '—', hex: '#94a3b8' };
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${className}`}
+      style={{ background: hexA(m.hex, 0.14), color: m.hex }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: m.hex, flexShrink: 0 }} />
+      {m.label}
+    </span>
+  );
+}
+
+/* Placeholder only — no success-score metric is computed anywhere in the
+ * backend yet. Renders a neutral dash, never a fabricated number. */
+export function ScoreCircle({ size = 40 }) {
+  return (
+    <span
+      title="Coming soon — this metric isn't tracked yet"
+      className="inline-flex flex-shrink-0 items-center justify-center font-semibold"
+      style={{ width: size, height: size, borderRadius: '50%', border: '2px dashed var(--cardborder)', color: 'var(--muted)', fontSize: Math.round(size * 0.32) }}
+    >
+      —
+    </span>
+  );
+}
+
+export function EmptyState({ icon: Icon, title = 'Nothing here yet', message, className = '' }) {
+  return (
+    <div className={`flex flex-col items-center justify-center gap-2 py-14 text-center ${className}`}>
+      {Icon && <Icon className="h-7 w-7" style={{ color: 'var(--muted)' }} />}
+      <p style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14, margin: 0 }}>{title}</p>
+      {message && <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0, maxWidth: 320 }}>{message}</p>}
+    </div>
+  );
+}
+
+export function LoadingState({ label = 'Loading…' }) {
+  return (
+    <p className="py-14 text-center text-sm" style={{ color: 'var(--muted)' }}>
+      {label}
+    </p>
+  );
+}
+
+/* Thin table shell: overflow-x wrapper + consistent width, so wide tables
+ * never cause the page body to scroll sideways. Column/row markup stays with
+ * each page — the data shape differs too much per page for a shared column API. */
+export function DataTable({ children, minWidth }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm" style={minWidth ? { minWidth } : undefined}>
+        {children}
+      </table>
+    </div>
+  );
+}
+
+export function Th({ children, align = 'left', className = '' }) {
+  return (
+    <th
+      className={`px-4 py-3 text-xs font-medium uppercase tracking-wide ${className}`}
+      style={{ textAlign: align, color: 'var(--muted)', borderBottom: '1px solid var(--cardborder)' }}
+    >
+      {children}
+    </th>
+  );
+}
+
+/* Shared modal shell — overlay + centered card + optional title/subtitle/footer.
+ * Click-outside and Escape both close. Pages own their own body content. */
+export function Modal({ open, onClose, title, subtitle, width = 460, children, footer }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose?.();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      onMouseDown={onClose}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,.5)' }}
+    >
+      <div
+        onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="tf-card tf-scroll"
+        style={{ width, maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', padding: 22 }}
+      >
+        {(title || onClose) && (
+          <div className="flex items-center justify-between" style={{ marginBottom: subtitle ? 4 : 14 }}>
+            <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0, color: 'var(--text)' }}>{title}</h3>
+            <button onClick={onClose} className="tf-hbtn" aria-label="Close">
+              <IconX className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+        {subtitle && <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 14px' }}>{subtitle}</p>}
+        {children}
+        {footer && <div style={{ marginTop: 18 }}>{footer}</div>}
       </div>
     </div>
   );
