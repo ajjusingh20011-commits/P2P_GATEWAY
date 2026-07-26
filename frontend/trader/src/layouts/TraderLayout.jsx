@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Outlet } from 'react-router-dom';
-import { Sun, Moon } from 'lucide-react';
+import { Sun, Moon, Menu } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import NotificationBell from '../components/NotificationBell';
 import HeaderSearch from '../components/HeaderSearch';
@@ -33,6 +33,17 @@ export default function TraderLayout() {
     localStorage.setItem('panel-theme', theme);
   }, [theme]);
   const isLight = theme === 'light';
+
+  // Sidebar collapse — the single collapse control lives in the header, so the
+  // state is owned here and shared with the (now presentational) Sidebar.
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    const saved = localStorage.getItem('sidebar-collapsed');
+    if (saved != null) setCollapsed(saved === 'true');
+  }, []);
+  useEffect(() => {
+    localStorage.setItem('sidebar-collapsed', String(collapsed));
+  }, [collapsed]);
 
   // Load the trader's real is_online + balance on mount so the sidebar/toggle
   // reflect the DB (not the mock 0 fallback).
@@ -123,8 +134,7 @@ export default function TraderLayout() {
     <div className="tf-scope flex" style={{ height: '100vh', overflow: 'hidden' }} data-theme={theme}>
       <Sidebar
         balance={displayBalance}
-        online={online}
-        onToggleOnline={toggleOnline}
+        collapsed={collapsed}
         // No `notifications` key here — its only real source
         // (traderApi.notifications()) reads a confirmed-dead table, so the
         // badge stays hidden (CountBadge renders nothing for a null/absent
@@ -133,47 +143,62 @@ export default function TraderLayout() {
       />
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Slim top bar */}
+        {/* Top bar */}
         <header
           className="flex items-center justify-between"
-          style={{ padding: '12px 22px', background: 'var(--headbar)', borderBottom: '1px solid var(--cardborder)', transition: 'background-color .3s' }}
+          style={{ height: 72, flexShrink: 0, padding: '0 24px', background: 'var(--headbar)', borderBottom: '1px solid var(--cardborder)', transition: 'background-color .3s' }}
         >
-          <div className="flex items-center gap-2" style={{ fontSize: 13, fontWeight: 500, color: connected ? '#22c55e' : 'var(--muted)' }}>
-            <span
-              className="inline-block h-2 w-2 rounded-full"
-              style={{ background: connected ? '#22c55e' : 'var(--muted)' }}
-            />
-            {connected ? 'Realtime connected' : 'Realtime offline'}
+          {/* Left — single collapse control + search */}
+          <div className="flex items-center gap-2.5" style={{ flex: 1, minWidth: 0 }}>
+            <button className="tf-hbtn" onClick={() => setCollapsed((c) => !c)} aria-label="Toggle sidebar" title="Toggle sidebar">
+              <Menu size={18} />
+            </button>
+            <HeaderSearch />
           </div>
 
+          {/* Right — online pill (toggles the trader's routing state), theme, bell, user */}
           <div className="flex items-center gap-2.5">
-            {/* Search — live lookup over the trader's orders + payment details */}
-            <HeaderSearch />
-
-            {/* Notifications — real /trader/notifications feed */}
-            <NotificationBell socket={socket} />
+            <button
+              onClick={() => toggleOnline(!online)}
+              title={online ? 'Receiving orders — click to go offline' : 'Offline — click to go online'}
+              className="flex items-center gap-2"
+              style={{
+                height: 32, borderRadius: 999, padding: '0 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                border: online ? '1px solid #abefc6' : '1px solid var(--cardborder)',
+                background: online ? '#ecfdf3' : 'var(--hover)',
+                color: online ? '#067647' : 'var(--muted)',
+              }}
+            >
+              <span
+                style={{ width: 7, height: 7, borderRadius: '50%', background: online ? '#12b76a' : 'var(--muted)', boxShadow: online ? '0 0 0 4px rgba(18,183,106,.14)' : 'none' }}
+              />
+              {online ? 'Online & receiving' : 'Offline'}
+            </button>
 
             {/* Theme toggle */}
             <button className="tf-hbtn" onClick={() => setTheme(isLight ? 'dark' : 'light')} aria-label="Toggle theme">
               {isLight ? <Sun size={18} /> : <Moon size={18} />}
             </button>
 
+            {/* Notifications — real /trader/notifications feed */}
+            <NotificationBell socket={socket} />
+
             {/* User */}
-            <div className="text-right" style={{ lineHeight: 1.2 }}>
-              <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, margin: 0 }}>{user?.email || 'trader@p2p.com'}</p>
-              <p style={{ color: 'var(--muted)', fontSize: 11, margin: 0, textTransform: 'capitalize' }}>{user?.role || 'trader'}</p>
-            </div>
             <span
-              className="flex items-center justify-center font-semibold text-white"
-              style={{ width: 34, height: 34, borderRadius: '50%', background: '#10b981', fontSize: 13 }}
+              className="flex items-center justify-center font-semibold"
+              style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 13 }}
             >
               {(user?.email || 'T')[0].toUpperCase()}
             </span>
+            <div style={{ lineHeight: 1.2 }}>
+              <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, margin: 0 }}>{user?.email || 'trader@p2p.com'}</p>
+              <p style={{ color: 'var(--muted)', fontSize: 11, margin: 0, textTransform: 'capitalize' }}>{user?.role || 'trader'}</p>
+            </div>
           </div>
         </header>
 
         {/* Routed page */}
-        <main className="tf-scroll flex-1 overflow-y-auto" style={{ padding: '20px 22px' }}>
+        <main className="tf-scroll flex-1 overflow-y-auto" style={{ padding: '24px 24px 40px' }}>
           <Outlet context={{ online, setOnline: toggleOnline, connected }} />
         </main>
       </div>
