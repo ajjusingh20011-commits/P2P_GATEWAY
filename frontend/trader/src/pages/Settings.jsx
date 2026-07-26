@@ -5,12 +5,37 @@ import { useAuth } from '../context/AuthContext';
 import { authApi } from '../services/api';
 import { toast } from '../components/Toaster';
 
-function Section({ title, description, children }) {
+const labelStyle = { display: 'block', color: 'var(--muted)', fontSize: 13, marginBottom: 6 };
+const inputStyle = {
+  width: '100%',
+  borderRadius: 10,
+  border: '1px solid var(--input-border)',
+  background: 'var(--input-bg)',
+  padding: '10px 14px',
+  fontSize: 13,
+  color: 'var(--text)',
+  outline: 'none',
+};
+const rowStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  borderRadius: 10,
+  border: '1px solid var(--cardborder)',
+  background: 'var(--hover)',
+  padding: '12px 16px',
+};
+
+function Section({ title, description, badge, children }) {
   return (
     <Card className="p-5">
-      <div className="mb-4">
-        <h2 className="font-semibold text-white">{title}</h2>
-        {description && <p className="mt-0.5 text-sm text-gray-400">{description}</p>}
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 15, margin: 0 }}>{title}</h2>
+          {description && <p style={{ color: 'var(--muted)', fontSize: 13, margin: '3px 0 0' }}>{description}</p>}
+        </div>
+        {badge}
       </div>
       {children}
     </Card>
@@ -18,6 +43,8 @@ function Section({ title, description, children }) {
 }
 
 // Two-Factor Authentication panel: enable (QR + verify + backup codes) / disable.
+// Real, working, backed by authApi's /auth/2fa/* routes — the only section on
+// this page that isn't a "coming soon" placeholder.
 function TwoFactorSection() {
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(false);
@@ -104,34 +131,35 @@ function TwoFactorSection() {
     toast('Backup codes copied.', 'success');
   };
 
-  const inputCls =
-    'w-full rounded-lg border border-gray-700 bg-gray-800 px-3.5 py-2.5 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500';
-
   return (
     <Section title="Two-Factor Authentication" description="Extra security for your account">
-      <div className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
+      <div style={rowStyle}>
         <div>
-          <p className="text-sm font-medium text-gray-100">
+          <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, margin: 0 }}>
             2FA {loading ? '…' : enabled ? 'enabled' : 'disabled'}
           </p>
-          <p className="text-xs text-gray-500">Authenticator app (TOTP)</p>
+          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '3px 0 0' }}>Authenticator app (TOTP)</p>
         </div>
         <Badge color={enabled ? 'green' : 'gray'}>{loading ? '…' : enabled ? 'ON' : 'OFF'}</Badge>
       </div>
 
       {/* One-time backup codes shown right after enabling. */}
       {backupCodes && (
-        <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4">
+        <div className="mt-4 rounded-lg p-4" style={{ border: '1px solid rgba(34,197,94,.3)', background: 'rgba(34,197,94,.08)' }}>
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-medium text-emerald-300">Save your backup codes</p>
+            <p style={{ color: '#22c55e', fontSize: 13, fontWeight: 600, margin: 0 }}>Save your backup codes</p>
             <Button variant="ghost" onClick={copyCodes}>Copy</Button>
           </div>
-          <p className="mb-3 text-xs text-gray-400">
+          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 12px' }}>
             Store these somewhere safe. Each code can be used once if you lose your device.
           </p>
           <ul className="grid grid-cols-2 gap-2">
             {backupCodes.map((c) => (
-              <li key={c} className="rounded-md border border-gray-800 bg-gray-950 px-3 py-1.5 text-center font-mono text-sm text-gray-200">
+              <li
+                key={c}
+                className="rounded-md px-3 py-1.5 text-center font-mono text-sm"
+                style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)', color: 'var(--text)' }}
+              >
                 {c}
               </li>
             ))}
@@ -151,21 +179,25 @@ function TwoFactorSection() {
       {/* Setup in progress: QR + secret + verify. */}
       {setup && (
         <div className="mt-4 space-y-4">
-          <p className="text-sm text-gray-300">
+          <p style={{ color: 'var(--text)', fontSize: 13, margin: 0 }}>
             Scan this QR code with your authenticator app, then enter the 6-digit code to confirm.
           </p>
           {setup.qr_code && (
             <img
               src={setup.qr_code}
               alt="2FA QR code"
-              className="h-44 w-44 rounded-lg border border-gray-800 bg-white p-2"
+              className="h-44 w-44 rounded-lg bg-white p-2"
+              style={{ border: '1px solid var(--cardborder)' }}
             />
           )}
           {setup.secret && (
             <div>
-              <label className="mb-1.5 block text-xs text-gray-400">Manual entry key</label>
+              <label style={labelStyle}>Manual entry key</label>
               <div className="flex items-center gap-2">
-                <code className="flex-1 truncate rounded-lg border border-gray-800 bg-gray-950 px-3 py-2 font-mono text-sm text-gray-300">
+                <code
+                  className="flex-1 truncate rounded-lg px-3 py-2 font-mono text-sm"
+                  style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)', color: 'var(--text)' }}
+                >
                   {setup.secret}
                 </code>
                 <Button variant="ghost" onClick={() => navigator.clipboard?.writeText(setup.secret)}>
@@ -175,7 +207,7 @@ function TwoFactorSection() {
             </div>
           )}
           <div>
-            <label className="mb-1.5 block text-sm text-gray-400">Verification code</label>
+            <label style={labelStyle}>Verification code</label>
             <input
               type="text"
               inputMode="numeric"
@@ -183,7 +215,7 @@ function TwoFactorSection() {
               value={enableCode}
               onChange={(e) => setEnableCode(e.target.value.replace(/\D/g, ''))}
               placeholder="000000"
-              className={inputCls}
+              style={inputStyle}
             />
           </div>
           <div className="flex items-center gap-2">
@@ -201,7 +233,7 @@ function TwoFactorSection() {
       {!loading && enabled && !backupCodes && (
         <div className="mt-4 space-y-4">
           <div>
-            <label className="mb-1.5 block text-sm text-gray-400">Authenticator code</label>
+            <label style={labelStyle}>Authenticator code</label>
             <input
               type="text"
               inputMode="numeric"
@@ -209,18 +241,18 @@ function TwoFactorSection() {
               value={disableCode}
               onChange={(e) => setDisableCode(e.target.value.replace(/\D/g, ''))}
               placeholder="000000"
-              className={inputCls}
+              style={inputStyle}
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-sm text-gray-400">Password</label>
+            <label style={labelStyle}>Password</label>
             <input
               type="password"
               autoComplete="current-password"
               value={disablePassword}
               onChange={(e) => setDisablePassword(e.target.value)}
               placeholder="Enter your password"
-              className={inputCls}
+              style={inputStyle}
             />
           </div>
           <Button
@@ -246,77 +278,83 @@ const TIMEZONES = [
   { value: 'gmt+0400', label: 'GMT+04:00 (Gulf)' },
 ];
 
+const comingSoon = <Badge color="gray">Coming soon</Badge>;
+
 export default function Settings() {
   const { user } = useAuth();
   const [language, setLanguage] = useState('en');
   const [timezone, setTimezone] = useState('gmt+0530');
-  const depositAddress = 'TXk9...demoTRC20walletAddress...8fQ2';
 
   return (
     <div>
       <PageHeader title="Settings" subtitle="Account preferences and security" />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Deposit address */}
-        <Section title="Deposit Address" description="Your USDT (TRC20) wallet">
-          <div className="flex items-center gap-3 rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
-            <IconWallet className="h-5 w-5 text-emerald-400" />
-            <span className="flex-1 truncate font-mono text-sm text-gray-300">{depositAddress}</span>
-            <Badge color="green">TRC20</Badge>
-            <Button variant="ghost" onClick={() => navigator.clipboard?.writeText(depositAddress)}>
-              Copy
-            </Button>
+        {/* Deposit address — no per-trader wallet endpoint exists yet. */}
+        <Section title="Deposit Address" description="Your USDT (TRC20) wallet" badge={<Badge color="gray">Not configured</Badge>}>
+          <div style={rowStyle}>
+            <IconWallet className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--muted)' }} />
+            <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>
+              No deposit wallet is configured for your account yet. Contact support to have one set up.
+            </p>
           </div>
         </Section>
 
-        {/* Preferences */}
-        <Section title="Preferences" description="Language and timezone">
+        {/* Preferences — neither field has a backend effect today. */}
+        <Section title="Preferences" description="Language and timezone" badge={comingSoon}>
           <div className="space-y-4">
             <div>
-              <label className="mb-1.5 block text-sm text-gray-400">Language</label>
-              <Select value={language} onChange={setLanguage} options={LANGUAGES} />
+              <label style={labelStyle}>Language</label>
+              <Select value={language} onChange={setLanguage} options={LANGUAGES} disabled />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm text-gray-400">Timezone</label>
-              <Select value={timezone} onChange={setTimezone} options={TIMEZONES} />
+              <label style={labelStyle}>Timezone</label>
+              <Select value={timezone} onChange={setTimezone} options={TIMEZONES} disabled />
             </div>
           </div>
         </Section>
 
-        {/* Account */}
+        {/* Account — email display is real (from the authenticated session);
+            password change has no backend route, so only that part is marked. */}
         <Section title="Account" description="Login and password">
           <div className="space-y-4">
             <div>
-              <label className="mb-1.5 block text-sm text-gray-400">Email</label>
+              <label style={labelStyle}>Email</label>
               <input
                 readOnly
                 value={user?.email || 'trader@p2p.com'}
-                className="w-full cursor-not-allowed rounded-lg border border-gray-800 bg-gray-950 px-3.5 py-2.5 text-sm text-gray-400"
+                className="cursor-not-allowed"
+                style={{ ...inputStyle, background: 'var(--hover)', color: 'var(--muted)' }}
               />
             </div>
-            <Button variant="ghost">Change password</Button>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" disabled>Change password</Button>
+              {comingSoon}
+            </div>
           </div>
         </Section>
 
-        {/* Security / 2FA */}
+        {/* Security / 2FA — the one real, working section on this page. */}
         <TwoFactorSection />
 
-        {/* Telegram bots */}
-        <Section title="Telegram Bots" description="Connect automation and alert bots">
+        {/* Telegram bots — no connect endpoint exists; telegram_chat_id is an
+            admin-set field the outbound alert service reads, not something a
+            trader can self-link today. */}
+        <Section title="Telegram Bots" description="Connect automation and alert bots" badge={comingSoon}>
           <div className="space-y-3">
-            <div className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
+            <div style={rowStyle}>
               <div>
-                <p className="text-sm font-medium text-gray-100">PayIn Bot</p>
-                <p className="text-xs text-gray-500">Automation confirmations</p>
+                <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, margin: 0 }}>PayIn Bot</p>
+                <p style={{ color: 'var(--muted)', fontSize: 11, margin: '3px 0 0' }}>Automation confirmations</p>
               </div>
-              <Button variant="ghost">Connect</Button>
+              <Button variant="ghost" disabled>Connect</Button>
             </div>
-            <div className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
+            <div style={rowStyle}>
               <div>
-                <p className="text-sm font-medium text-gray-100">Notification Bot</p>
-                <p className="text-xs text-gray-500">Real-time alerts</p>
+                <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, margin: 0 }}>Notification Bot</p>
+                <p style={{ color: 'var(--muted)', fontSize: 11, margin: '3px 0 0' }}>Real-time alerts</p>
               </div>
-              <Button variant="ghost">Open link</Button>
+              <Button variant="ghost" disabled>Open link</Button>
             </div>
           </div>
         </Section>

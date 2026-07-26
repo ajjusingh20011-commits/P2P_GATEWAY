@@ -120,13 +120,14 @@ export function SearchInput({ value, onChange, placeholder = 'Search…', classN
   );
 }
 
-export function Select({ value, onChange, options, className = '' }) {
+export function Select({ value, onChange, options, disabled = false, className = '' }) {
   return (
-    <div className={`relative ${className}`}>
+    <div className={`relative ${className}`} style={disabled ? { opacity: 0.6 } : undefined}>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full appearance-none rounded-xl py-2 pl-3 pr-9 text-sm outline-none focus:ring-2"
+        disabled={disabled}
+        className="w-full appearance-none rounded-xl py-2 pl-3 pr-9 text-sm outline-none focus:ring-2 disabled:cursor-not-allowed"
         style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text)' }}
       >
         {options.map((o) => (
