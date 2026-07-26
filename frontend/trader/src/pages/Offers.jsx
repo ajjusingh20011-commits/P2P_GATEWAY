@@ -1179,22 +1179,25 @@ const platformLabel = (p) => platformNames[p] || p || 'UPI';
 // manual pause, a genuine OTP request, and a dead session all wrote the same
 // status value — statusReason now disambiguates it, so the label (and the
 // OTP box's visibility, see showingOtp above) reflects the real cause.
+// `color` matches the shared Badge component's palette — rendered via
+// <Badge color={meta.color}>{meta.label}</Badge> everywhere this is used,
+// instead of a hand-rolled span, so "gray" already resolves through Badge's
+// own token-aware BADGE_HEX map rather than a hardcoded dark-mode class.
 const NGO_STATUS_META = {
-  live: { label: 'Live', badge: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' },
-  pending: { label: 'Connecting…', badge: 'border-amber-500/30 bg-amber-500/10 text-amber-300' },
-  failed: { label: 'Connection failed', badge: 'border-red-500/30 bg-red-500/10 text-red-300' },
+  live: { label: 'Live', color: 'green' },
+  pending: { label: 'Connecting…', color: 'amber' },
+  failed: { label: 'Connection failed', color: 'red' },
 };
 const PAUSED_REASON_META = {
-  manual_pause: { label: 'Paused', badge: 'border-gray-700 bg-gray-800 text-gray-400' },
-  otp_required: { label: 'Waiting for OTP', badge: 'border-amber-500/30 bg-amber-500/10 text-amber-300' },
-  session_expired: { label: 'Session expired', badge: 'border-red-500/30 bg-red-500/10 text-red-300' },
+  manual_pause: { label: 'Paused', color: 'gray' },
+  otp_required: { label: 'Waiting for OTP', color: 'amber' },
+  session_expired: { label: 'Session expired', color: 'red' },
 };
 const ngoStatusMeta = (status, statusReason) => {
   if (status === 'paused') {
-    return PAUSED_REASON_META[statusReason]
-      || { label: 'Paused', badge: 'border-gray-700 bg-gray-800 text-gray-400' };
+    return PAUSED_REASON_META[statusReason] || { label: 'Paused', color: 'gray' };
   }
-  return NGO_STATUS_META[status] || { label: status || 'Unknown', badge: 'border-gray-700 bg-gray-800 text-gray-500' };
+  return NGO_STATUS_META[status] || { label: status || 'Unknown', color: 'gray' };
 };
 
 // ---------------------------------------------------------------------------
@@ -1221,14 +1224,19 @@ function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggle
 
   return (
     <Card className="flex flex-col">
-      <div className="flex items-center justify-between border-b border-gray-800 p-4">
+      <div className="flex items-center justify-between p-4" style={{ borderBottom: '1px solid var(--cardborder)' }}>
         <div className="flex items-center gap-2">
-          <h2 className="font-semibold text-white">Offers</h2>
-          <span className="text-gray-600" title="Payment methods you accept, grouped by provider.">
+          <h2 className="font-semibold" style={{ color: 'var(--text)' }}>Offers</h2>
+          <span style={{ color: 'var(--muted)' }} title="Payment methods you accept, grouped by provider.">
             <IconDetails className="h-4 w-4" />
           </span>
         </div>
-        <button onClick={() => onAdd(null)} className="rounded-lg border border-gray-700 p-1.5 text-gray-300 hover:bg-gray-800" aria-label="Add offer">
+        <button
+          onClick={() => onAdd(null)}
+          className="tf-hbtn"
+          style={{ width: 30, height: 30, border: '1px solid var(--cardborder)' }}
+          aria-label="Add offer"
+        >
           <IconPlus className="h-4 w-4" />
         </button>
       </div>
@@ -1240,15 +1248,13 @@ function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggle
           {filtered.map((g) => {
             const anyActive = g.items.some((d) => d.is_active_detail);
             return (
-              <div key={g.type} className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+              <div key={g.type} className="rounded-lg p-3" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <span className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${CIRCLE[g.meta.color] || CIRCLE.gray}`}>
-                      {initials(g.meta.label)}
-                    </span>
+                    <BankBadge type={g.type} label={g.meta.label} size={36} />
                     <div>
-                      <p className="text-sm font-medium text-gray-100">{g.meta.label}</p>
-                      <p className="text-xs text-gray-500">INR · market rate</p>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{g.meta.label}</p>
+                      <p className="text-xs" style={{ color: 'var(--muted)' }}>INR · market rate</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1256,22 +1262,28 @@ function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggle
                     <div className="relative">
                       <button
                         onClick={() => setMenu(menu === g.type ? null : g.type)}
-                        className="text-gray-500 hover:text-gray-200"
+                        className="tf-hbtn"
+                        style={{ width: 28, height: 28 }}
                         aria-label="Offer menu"
                       >
                         <IconDots className="h-4 w-4" />
                       </button>
                       {menu === g.type && (
-                        <div className="absolute right-0 z-10 mt-1 w-40 rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-xl">
+                        <div
+                          className="absolute right-0 z-10 mt-1 w-40 rounded-lg py-1"
+                          style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
+                        >
                           <button
                             onClick={() => { onBulkToggle(g.items, true); setMenu(null); }}
-                            className="block w-full px-3 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                            className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"
+                            style={{ color: 'var(--text)' }}
                           >
                             Enable all details
                           </button>
                           <button
                             onClick={() => { onBulkToggle(g.items, false); setMenu(null); }}
-                            className="block w-full px-3 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                            className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"
+                            style={{ color: 'var(--text)' }}
                           >
                             Disable all details
                           </button>
@@ -1287,11 +1299,12 @@ function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggle
                     {g.items.map((d) => (
                       <span
                         key={d.id}
-                        className={`rounded-md border px-2 py-0.5 text-xs ${
+                        className="rounded-md px-2 py-0.5 text-xs"
+                        style={
                           d.is_active_detail
-                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                            : 'border-gray-700 bg-gray-800 text-gray-500'
-                        }`}
+                            ? { border: '1px solid rgba(34,197,94,.3)', background: 'rgba(34,197,94,.1)', color: '#22c55e' }
+                            : { border: '1px solid var(--cardborder)', background: 'var(--card)', color: 'var(--muted)' }
+                        }
                       >
                         {d.account_name || maskUpi(d.upi_id)}
                       </span>
@@ -1320,15 +1333,13 @@ function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggle
               const live = a.status === 'live';
               const meta = ngoStatusMeta(a.status, a.statusReason);
               return (
-                <div key={`ngo-${a._id}`} className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+                <div key={`ngo-${a._id}`} className="rounded-lg p-3" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500/20 text-xs font-bold text-emerald-300">
-                        {(a.platform || '?').slice(0, 2).toUpperCase()}
-                      </span>
+                      <BankBadge type={a.platform} label={platformLabel(a.platform)} size={36} />
                       <div>
-                        <p className="text-sm font-medium text-gray-100">{platformLabel(a.platform)}</p>
-                        <p className="text-xs text-gray-500">INR · NGO account</p>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{platformLabel(a.platform)}</p>
+                        <p className="text-xs" style={{ color: 'var(--muted)' }}>INR · NGO account</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1339,13 +1350,11 @@ function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggle
                   </div>
 
                   <div className="mt-3 flex items-end justify-between gap-2">
-                    <div className="flex flex-wrap gap-1.5">
-                      <span className="rounded-md border border-gray-700 bg-gray-800 px-2 py-0.5 text-xs text-gray-300">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="rounded-md px-2 py-0.5 text-xs" style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', color: 'var(--text)' }}>
                         {a.displayName}
                       </span>
-                      <span className={`rounded-md border px-2 py-0.5 text-xs ${meta.badge}`}>
-                        {meta.label}
-                      </span>
+                      <Badge color={meta.color}>{meta.label}</Badge>
                     </div>
                     <div className="flex items-center gap-2">
                       <LimitBadge d={a} />
@@ -1357,7 +1366,7 @@ function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggle
             })}
 
           {filtered.length === 0 && ngoAccounts.length === 0 && (
-            <p className="py-10 text-center text-sm text-gray-500">
+            <p className="py-10 text-center text-sm" style={{ color: 'var(--muted)' }}>
               {groups.length === 0 ? 'No offers yet — add a payment detail to create one.' : 'No offers match your search.'}
             </p>
           )}
