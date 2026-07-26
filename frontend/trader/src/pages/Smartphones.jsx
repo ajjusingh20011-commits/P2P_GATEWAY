@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
-import { Card, Badge, Button, SearchInput, Select, PageHeader, Modal, DataTable, Th, EmptyState, LoadingState } from '../components/ui';
+import { Card, Badge, Button, SearchInput, Select, PageHeader, Modal, EmptyState, LoadingState } from '../components/ui';
 import { IconPlus, IconChevron, IconDots, IconEdit, IconTrash } from '../components/icons';
 import { getDevices, generateLicense, renameDevice, deleteDevice, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 import { traderApi } from '../services/api';
@@ -258,99 +258,29 @@ export default function Smartphones() {
         </div>
       </Card>
 
-      <Card style={{ padding: 0, overflow: 'hidden' }}>
-        <DataTable minWidth={900}>
-          <thead>
-            <tr>
-              <Th>Smartphone Name</Th>
-              <Th>Model</Th>
-              <Th>Registration Code</Th>
-              <Th>Linked Details</Th>
-              <Th>Last Seen</Th>
-              <Th align="right">Actions</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((s) => {
-              const linked = detailsByDevice[s.id] || [];
-              const expanded = expandedDeviceId === s.id;
-              return (
-              <tr key={s.id} data-device-id={s.id} className="tf-row-hover" style={{ borderBottom: '1px solid var(--cardborder)', color: 'var(--text)' }}>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="h-2 w-2 flex-shrink-0 rounded-full"
-                      style={{ background: s.online ? '#22c55e' : 'var(--muted)' }}
-                      title={s.online ? 'Online — heartbeat within the last 15s' : 'Offline — no recent heartbeat'}
-                    />
-                    {renamingId === s.id ? (
-                      <div className="flex items-center gap-1">
-                        <input
-                          autoFocus
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveRename(s);
-                            if (e.key === 'Escape') cancelRename();
-                          }}
-                          disabled={renaming}
-                          className="rounded px-2 py-0.5 text-sm outline-none"
-                          style={{ border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)' }}
-                        />
-                        <button
-                          onClick={() => saveRename(s)}
-                          disabled={renaming || !renameValue.trim()}
-                          className="text-xs font-medium disabled:opacity-50"
-                          style={{ color: '#22c55e' }}
-                        >
-                          Save
-                        </button>
-                        <button onClick={cancelRename} disabled={renaming} className="text-xs" style={{ color: 'var(--muted)' }}>
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="font-medium">{s.deviceName || 'Unnamed device'}</span>
-                    )}
-                  </div>
-                </td>
-                <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{s.deviceModel || '—'}</td>
-                <td className="px-4 py-3">
-                  <Badge color="gray">{s.licenseKey || '—'}</Badge>
-                </td>
-                <td className="px-4 py-3">
-                  {linked.length === 0 ? (
-                    <span className="text-xs" style={{ color: 'var(--muted)' }}>—</span>
-                  ) : (
-                    <div className="relative inline-block">
-                      <button
-                        onClick={() => setExpandedDeviceId(expanded ? null : s.id)}
-                        className="rounded-full px-2 py-0.5 text-xs"
-                        style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)', color: 'var(--text)' }}
-                        title="Click to see linked payment details"
-                      >
-                        {linked.length} account{linked.length === 1 ? '' : 's'} linked
-                      </button>
-                      {expanded && (
-                        <div
-                          className="absolute left-0 z-10 mt-1 w-56 rounded-lg p-2"
-                          style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
-                        >
-                          {linked.map((d) => (
-                            <div key={d.id} className="truncate px-1 py-0.5 text-xs" style={{ color: 'var(--text)' }}>
-                              {d.account_name || 'Untitled'} — <span style={{ color: 'var(--muted)' }}>{d.upi_id}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>
-                  {s.lastSeen ? new Date(s.lastSeen).toLocaleString() : 'Never'}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <div className="relative inline-block">
+      {filtered.length === 0 ? (
+        <Card style={{ padding: 0, overflow: 'hidden' }}>
+          {loadingDevices ? <LoadingState label="Loading devices…" /> : <EmptyState title="No smartphones match your filters" />}
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((s) => {
+            const linked = detailsByDevice[s.id] || [];
+            const expanded = expandedDeviceId === s.id;
+            return (
+              <Card key={s.id} data-device-id={s.id} className="p-4" style={{ position: 'relative' }}>
+                <div className="flex items-center justify-between">
+                  <span
+                    className="flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold"
+                    style={{
+                      background: s.online ? 'rgba(34,197,94,.14)' : 'var(--hover)',
+                      color: s.online ? '#22c55e' : 'var(--muted)',
+                    }}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.online ? '#22c55e' : 'var(--muted)' }} />
+                    {s.online ? 'Online' : 'Offline'}
+                  </span>
+                  <div className="relative">
                     <button
                       onClick={() => setRowMenuId(rowMenuId === s.id ? null : s.id)}
                       className="tf-hbtn"
@@ -381,24 +311,83 @@ export default function Smartphones() {
                       </div>
                     )}
                   </div>
-                </td>
-              </tr>
-              );
-            })}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={6}>
-                  {loadingDevices ? (
-                    <LoadingState label="Loading devices…" />
+                </div>
+
+                <div className="mt-3">
+                  {renamingId === s.id ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveRename(s);
+                          if (e.key === 'Escape') cancelRename();
+                        }}
+                        disabled={renaming}
+                        className="rounded px-2 py-0.5 text-sm outline-none"
+                        style={{ border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)' }}
+                      />
+                      <button
+                        onClick={() => saveRename(s)}
+                        disabled={renaming || !renameValue.trim()}
+                        className="text-xs font-medium disabled:opacity-50"
+                        style={{ color: '#22c55e' }}
+                      >
+                        Save
+                      </button>
+                      <button onClick={cancelRename} disabled={renaming} className="text-xs" style={{ color: 'var(--muted)' }}>
+                        Cancel
+                      </button>
+                    </div>
                   ) : (
-                    <EmptyState title="No smartphones match your filters" />
+                    <h3 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 15, margin: 0 }}>{s.deviceName || 'Unnamed device'}</h3>
                   )}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </DataTable>
-      </Card>
+                  <p style={{ color: 'var(--muted)', fontSize: 12, margin: '3px 0 0' }}>{s.deviceModel || '—'}</p>
+                </div>
+
+                <div className="mt-3">
+                  <Badge color="gray">{s.licenseKey || '—'}</Badge>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 overflow-hidden" style={{ borderRadius: 10, border: '1px solid var(--cardborder)' }}>
+                  <div className="p-2.5" style={{ borderRight: '1px solid var(--cardborder)' }}>
+                    <p style={{ color: 'var(--muted)', fontSize: 10, margin: 0 }}>Last seen</p>
+                    <p style={{ color: 'var(--text)', fontSize: 12, fontWeight: 600, margin: '3px 0 0' }}>
+                      {s.lastSeen ? new Date(s.lastSeen).toLocaleString() : 'Never'}
+                    </p>
+                  </div>
+                  <div className="relative p-2.5">
+                    <p style={{ color: 'var(--muted)', fontSize: 10, margin: 0 }}>Linked details</p>
+                    {linked.length === 0 ? (
+                      <p style={{ color: 'var(--text)', fontSize: 12, fontWeight: 600, margin: '3px 0 0' }}>—</p>
+                    ) : (
+                      <button
+                        onClick={() => setExpandedDeviceId(expanded ? null : s.id)}
+                        style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 700, margin: '3px 0 0', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+                      >
+                        {linked.length} account{linked.length === 1 ? '' : 's'}
+                      </button>
+                    )}
+                    {expanded && (
+                      <div
+                        className="absolute left-0 z-10 mt-1 w-56 rounded-lg p-2"
+                        style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
+                      >
+                        {linked.map((d) => (
+                          <div key={d.id} className="truncate px-1 py-0.5 text-xs" style={{ color: 'var(--text)' }}>
+                            {d.account_name || 'Untitled'} — <span style={{ color: 'var(--muted)' }}>{d.upi_id}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
 
       <Modal open={pairStep === 'install'} onClose={closePairing} title="Install PaymentBot" width={360}>
         <div style={{ textAlign: 'center' }}>
