@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
-import { Card, Badge, Button, SearchInput, Select, PageHeader } from '../components/ui';
+import { Card, Badge, Button, SearchInput, Select, PageHeader, Modal, DataTable, Th, EmptyState, LoadingState } from '../components/ui';
 import { IconPlus, IconChevron, IconDots, IconEdit, IconTrash } from '../components/icons';
 import { getDevices, generateLicense, renameDevice, deleteDevice, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 import { traderApi } from '../services/api';
@@ -17,93 +17,6 @@ const STATUS_OPTIONS = [
 // Devices are considered online only while a heartbeat/event has landed
 // within this window — matches the ~4s HeartbeatService interval with slack.
 const ONLINE_POLL_MS = 15 * 1000;
-
-// Reuses the exact popup look already established for this pairing flow
-// (dark card, emerald accent, big letter-spaced code) — no new visual style.
-const popupStyles = {
-  modal: {
-    position: 'fixed',
-    top: 0, left: 0,
-    width: '100%', height: '100%',
-    background: 'rgba(0,0,0,0.7)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 9999,
-  },
-  modalBox: {
-    background: '#111827',
-    border: '1px solid #1f2937',
-    borderRadius: '16px',
-    padding: '32px',
-    width: '360px',
-    textAlign: 'center',
-  },
-  modalTitle: {
-    color: '#e6edf3',
-    fontSize: '18px',
-    fontWeight: '600',
-    marginBottom: '8px',
-  },
-  modalSub: {
-    color: '#6b7280',
-    fontSize: '13px',
-    marginBottom: '20px',
-  },
-  appName: {
-    color: '#00d4aa',
-    fontSize: '13px',
-    fontWeight: '600',
-    marginBottom: '16px',
-  },
-  codeBox: {
-    background: '#1a2332',
-    border: '2px solid #00d4aa',
-    borderRadius: '12px',
-    padding: '20px',
-    marginBottom: '20px',
-  },
-  codeText: {
-    color: '#00d4aa',
-    fontSize: '36px',
-    fontWeight: '700',
-    letterSpacing: '8px',
-    margin: 0,
-  },
-  primaryBtn: {
-    background: '#00d4aa',
-    color: '#000',
-    border: 'none',
-    borderRadius: '8px',
-    padding: '10px 16px',
-    fontSize: '13px',
-    fontWeight: '600',
-    cursor: 'pointer',
-    width: '100%',
-    marginBottom: '10px',
-  },
-  copyBtn: {
-    background: '#1f2937',
-    color: '#e6edf3',
-    border: 'none',
-    borderRadius: '8px',
-    padding: '8px 16px',
-    fontSize: '13px',
-    cursor: 'pointer',
-    marginBottom: '16px',
-    width: '100%',
-  },
-  closeBtn: {
-    background: 'transparent',
-    color: '#6b7280',
-    border: '1px solid #374151',
-    borderRadius: '8px',
-    padding: '8px 16px',
-    fontSize: '13px',
-    cursor: 'pointer',
-    width: '100%',
-  },
-};
 
 export default function Smartphones() {
   const [filters, setFilters] = useState({ status: 'all', name: '' });
@@ -317,12 +230,16 @@ export default function Smartphones() {
                 <IconChevron className="h-4 w-4" />
               </Button>
               {menuOpen && (
-                <div className="absolute right-0 z-10 mt-1 w-48 rounded-lg border border-gray-800 bg-gray-900 py-1 shadow-xl">
+                <div
+                  className="absolute right-0 z-10 mt-1 w-48 rounded-lg py-1"
+                  style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
+                >
                   {['PaymentBot'].map((o) => (
                     <button
                       key={o}
                       onClick={startPairing}
-                      className="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-800"
+                      className="tf-row-hover block w-full px-4 py-2 text-left text-sm"
+                      style={{ color: 'var(--text)' }}
                     >
                       {o}
                     </button>
@@ -341,203 +258,214 @@ export default function Smartphones() {
         </div>
       </Card>
 
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-800 text-left text-xs uppercase tracking-wide text-gray-500">
-                <th className="px-4 py-3 font-medium">Smartphone Name</th>
-                <th className="px-4 py-3 font-medium">Model</th>
-                <th className="px-4 py-3 font-medium">Registration Code</th>
-                <th className="px-4 py-3 font-medium">Linked Details</th>
-                <th className="px-4 py-3 font-medium">Last Seen</th>
-                <th className="px-4 py-3 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800">
-              {filtered.map((s) => {
-                const linked = detailsByDevice[s.id] || [];
-                const expanded = expandedDeviceId === s.id;
-                return (
-                <tr key={s.id} data-device-id={s.id} className="text-gray-200 hover:bg-gray-800/40">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`h-2 w-2 rounded-full ${s.online ? 'bg-emerald-500' : 'bg-gray-500'}`}
-                        title={s.online ? 'Online — heartbeat within the last 15s' : 'Offline — no recent heartbeat'}
-                      />
-                      {renamingId === s.id ? (
-                        <div className="flex items-center gap-1">
-                          <input
-                            autoFocus
-                            value={renameValue}
-                            onChange={(e) => setRenameValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') saveRename(s);
-                              if (e.key === 'Escape') cancelRename();
-                            }}
-                            disabled={renaming}
-                            className="rounded border border-gray-700 bg-gray-800 px-2 py-0.5 text-sm text-gray-100 outline-none focus:border-emerald-500"
-                          />
-                          <button
-                            onClick={() => saveRename(s)}
-                            disabled={renaming || !renameValue.trim()}
-                            className="text-xs font-medium text-emerald-400 hover:text-emerald-300 disabled:opacity-50"
-                          >
-                            Save
-                          </button>
-                          <button onClick={cancelRename} disabled={renaming} className="text-xs text-gray-500 hover:text-gray-300">
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="font-medium">{s.deviceName || 'Unnamed device'}</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">{s.deviceModel || '—'}</td>
-                  <td className="px-4 py-3">
-                    <Badge color="gray">{s.licenseKey || '—'}</Badge>
-                  </td>
-                  <td className="px-4 py-3">
-                    {linked.length === 0 ? (
-                      <span className="text-xs text-gray-500">—</span>
-                    ) : (
-                      <div className="relative inline-block">
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <DataTable minWidth={900}>
+          <thead>
+            <tr>
+              <Th>Smartphone Name</Th>
+              <Th>Model</Th>
+              <Th>Registration Code</Th>
+              <Th>Linked Details</Th>
+              <Th>Last Seen</Th>
+              <Th align="right">Actions</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((s) => {
+              const linked = detailsByDevice[s.id] || [];
+              const expanded = expandedDeviceId === s.id;
+              return (
+              <tr key={s.id} data-device-id={s.id} className="tf-row-hover" style={{ borderBottom: '1px solid var(--cardborder)', color: 'var(--text)' }}>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="h-2 w-2 flex-shrink-0 rounded-full"
+                      style={{ background: s.online ? '#22c55e' : 'var(--muted)' }}
+                      title={s.online ? 'Online — heartbeat within the last 15s' : 'Offline — no recent heartbeat'}
+                    />
+                    {renamingId === s.id ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          autoFocus
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveRename(s);
+                            if (e.key === 'Escape') cancelRename();
+                          }}
+                          disabled={renaming}
+                          className="rounded px-2 py-0.5 text-sm outline-none"
+                          style={{ border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)' }}
+                        />
                         <button
-                          onClick={() => setExpandedDeviceId(expanded ? null : s.id)}
-                          className="rounded-full border border-gray-700 bg-gray-800 px-2 py-0.5 text-xs text-gray-300 hover:bg-gray-700"
-                          title="Click to see linked payment details"
+                          onClick={() => saveRename(s)}
+                          disabled={renaming || !renameValue.trim()}
+                          className="text-xs font-medium disabled:opacity-50"
+                          style={{ color: '#22c55e' }}
                         >
-                          {linked.length} account{linked.length === 1 ? '' : 's'} linked
+                          Save
                         </button>
-                        {expanded && (
-                          <div className="absolute left-0 z-10 mt-1 w-56 rounded-lg border border-gray-700 bg-gray-900 p-2 shadow-xl">
-                            {linked.map((d) => (
-                              <div key={d.id} className="truncate px-1 py-0.5 text-xs text-gray-300">
-                                {d.account_name || 'Untitled'} — <span className="text-gray-500">{d.upi_id}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                        <button onClick={cancelRename} disabled={renaming} className="text-xs" style={{ color: 'var(--muted)' }}>
+                          Cancel
+                        </button>
                       </div>
+                    ) : (
+                      <span className="font-medium">{s.deviceName || 'Unnamed device'}</span>
                     )}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-400">
-                    {s.lastSeen ? new Date(s.lastSeen).toLocaleString() : 'Never'}
-                  </td>
-                  <td className="px-4 py-3 text-right">
+                  </div>
+                </td>
+                <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{s.deviceModel || '—'}</td>
+                <td className="px-4 py-3">
+                  <Badge color="gray">{s.licenseKey || '—'}</Badge>
+                </td>
+                <td className="px-4 py-3">
+                  {linked.length === 0 ? (
+                    <span className="text-xs" style={{ color: 'var(--muted)' }}>—</span>
+                  ) : (
                     <div className="relative inline-block">
                       <button
-                        onClick={() => setRowMenuId(rowMenuId === s.id ? null : s.id)}
-                        className="text-gray-500 hover:text-gray-200"
-                        aria-label="Device actions"
+                        onClick={() => setExpandedDeviceId(expanded ? null : s.id)}
+                        className="rounded-full px-2 py-0.5 text-xs"
+                        style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)', color: 'var(--text)' }}
+                        title="Click to see linked payment details"
                       >
-                        <IconDots className="h-4 w-4" />
+                        {linked.length} account{linked.length === 1 ? '' : 's'} linked
                       </button>
-                      {rowMenuId === s.id && (
-                        <div className="absolute right-0 z-10 mt-1 w-36 rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-xl">
-                          <button
-                            onClick={() => startRename(s)}
-                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
-                          >
-                            <IconEdit className="h-3.5 w-3.5" /> Rename
-                          </button>
-                          <button
-                            onClick={() => removeDevice(s)}
-                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-red-300 hover:bg-gray-800"
-                          >
-                            <IconTrash className="h-3.5 w-3.5" /> Delete
-                          </button>
+                      {expanded && (
+                        <div
+                          className="absolute left-0 z-10 mt-1 w-56 rounded-lg p-2"
+                          style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
+                        >
+                          {linked.map((d) => (
+                            <div key={d.id} className="truncate px-1 py-0.5 text-xs" style={{ color: 'var(--text)' }}>
+                              {d.account_name || 'Untitled'} — <span style={{ color: 'var(--muted)' }}>{d.upi_id}</span>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
-                  </td>
-                </tr>
-                );
-              })}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="py-10 text-center text-sm text-gray-500">
-                    {loadingDevices ? 'Loading devices…' : 'No smartphones match your filters'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>
+                  {s.lastSeen ? new Date(s.lastSeen).toLocaleString() : 'Never'}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <div className="relative inline-block">
+                    <button
+                      onClick={() => setRowMenuId(rowMenuId === s.id ? null : s.id)}
+                      className="tf-hbtn"
+                      style={{ width: 30, height: 30 }}
+                      aria-label="Device actions"
+                    >
+                      <IconDots className="h-4 w-4" />
+                    </button>
+                    {rowMenuId === s.id && (
+                      <div
+                        className="absolute right-0 z-10 mt-1 w-36 rounded-lg py-1"
+                        style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
+                      >
+                        <button
+                          onClick={() => startRename(s)}
+                          className="tf-row-hover flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs"
+                          style={{ color: 'var(--text)' }}
+                        >
+                          <IconEdit className="h-3.5 w-3.5" /> Rename
+                        </button>
+                        <button
+                          onClick={() => removeDevice(s)}
+                          className="tf-row-hover flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs"
+                          style={{ color: '#ef4444' }}
+                        >
+                          <IconTrash className="h-3.5 w-3.5" /> Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </td>
+              </tr>
+              );
+            })}
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={6}>
+                  {loadingDevices ? (
+                    <LoadingState label="Loading devices…" />
+                  ) : (
+                    <EmptyState title="No smartphones match your filters" />
+                  )}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </DataTable>
       </Card>
 
-      {pairStep === 'install' && (
-        <div style={popupStyles.modal}>
-          <div style={popupStyles.modalBox}>
-            <p style={popupStyles.modalTitle}>Install PaymentBot</p>
-            <p style={popupStyles.modalSub}>
-              Download it to the phone that has banking apps installed.
-              It will read notifications and automatically verify payments.
-            </p>
-            <p style={popupStyles.appName}>PaymentBot</p>
-            <a
-              href="#"
-              style={{ ...popupStyles.primaryBtn, display: 'block', textDecoration: 'none' }}
-            >
-              Download Android APK
-            </a>
-            <button
-              style={popupStyles.copyBtn}
-              onClick={handleAppInstalled}
-              disabled={generating}
-            >
-              {generating ? 'Generating code…' : 'The app is installed'}
-            </button>
-            <button style={popupStyles.closeBtn} onClick={closePairing}>
-              Cancel
-            </button>
-          </div>
+      <Modal open={pairStep === 'install'} onClose={closePairing} title="Install PaymentBot" width={360}>
+        <div style={{ textAlign: 'center' }}>
+          <p style={{ color: 'var(--muted)', fontSize: 13, margin: '0 0 16px' }}>
+            Download it to the phone that has banking apps installed.
+            It will read notifications and automatically verify payments.
+          </p>
+          <p style={{ color: 'var(--accent)', fontSize: 13, fontWeight: 600, margin: '0 0 16px' }}>PaymentBot</p>
+          <a
+            href="#"
+            className="mb-2.5 block w-full rounded-lg py-2.5 text-sm font-semibold"
+            style={{ background: 'var(--accent)', color: '#fff', textDecoration: 'none' }}
+          >
+            Download Android APK
+          </a>
+          <Button variant="ghost" className="mb-4 w-full" onClick={handleAppInstalled} disabled={generating}>
+            {generating ? 'Generating code…' : 'The app is installed'}
+          </Button>
+          <Button variant="ghost" className="w-full" onClick={closePairing}>
+            Cancel
+          </Button>
         </div>
-      )}
+      </Modal>
 
-      {pairStep === 'code' && (
-        <div style={popupStyles.modal}>
-          <div style={popupStyles.modalBox}>
-            <p style={popupStyles.modalTitle}>Enter the code in the app</p>
-            <p style={popupStyles.modalSub}>Then follow setup instructions</p>
-            <p style={popupStyles.appName}>PaymentBot</p>
-            <div style={{ ...popupStyles.codeBox, opacity: codeExpired ? 0.4 : 1 }}>
-              <p style={popupStyles.codeText}>{licenseKey}</p>
-            </div>
-            <p
-              style={{
-                ...popupStyles.modalSub,
-                marginBottom: '16px',
-                color: codeExpired ? '#f87171' : remainingSec <= 60 ? '#fbbf24' : '#6b7280',
-                fontWeight: 600,
-              }}
-            >
-              {codeExpired ? 'Code expired' : `Expires in ${fmtCountdown(remainingSec)}`}
-            </p>
-            {codeExpired ? (
-              <button style={popupStyles.primaryBtn} onClick={handleAppInstalled} disabled={generating}>
-                {generating ? 'Generating…' : 'Generate new code'}
-              </button>
-            ) : (
-              <>
-                <button style={popupStyles.copyBtn} onClick={handleCopyCode}>
-                  {copied ? 'Copied!' : 'Copy code'}
-                </button>
-                <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-gray-700 border-t-emerald-500" />
-                <p style={{ ...popupStyles.modalSub, marginBottom: '16px' }}>
-                  After completing setup in the app you will be able to verify
-                  payments automatically.
-                </p>
-              </>
-            )}
-            <button style={popupStyles.closeBtn} onClick={closePairing}>
-              Cancel
-            </button>
+      <Modal open={pairStep === 'code'} onClose={closePairing} title="Enter the code in the app" subtitle="Then follow setup instructions" width={360}>
+        <div style={{ textAlign: 'center' }}>
+          <p style={{ color: 'var(--accent)', fontSize: 13, fontWeight: 600, margin: '0 0 16px' }}>PaymentBot</p>
+          <div
+            className="mb-5 rounded-xl p-5"
+            style={{ border: '2px solid var(--accent)', background: 'var(--hover)', opacity: codeExpired ? 0.4 : 1 }}
+          >
+            <p className="font-mono" style={{ color: 'var(--accent)', fontSize: 32, fontWeight: 700, letterSpacing: 8, margin: 0 }}>{licenseKey}</p>
           </div>
+          <p
+            style={{
+              fontSize: 13,
+              margin: '0 0 16px',
+              color: codeExpired ? '#ef4444' : remainingSec <= 60 ? '#f59e0b' : 'var(--muted)',
+              fontWeight: 600,
+            }}
+          >
+            {codeExpired ? 'Code expired' : `Expires in ${fmtCountdown(remainingSec)}`}
+          </p>
+          {codeExpired ? (
+            <Button className="w-full" onClick={handleAppInstalled} disabled={generating}>
+              {generating ? 'Generating…' : 'Generate new code'}
+            </Button>
+          ) : (
+            <>
+              <Button variant="ghost" className="mb-4 w-full" onClick={handleCopyCode}>
+                {copied ? 'Copied!' : 'Copy code'}
+              </Button>
+              <div
+                className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full"
+                style={{ border: '2px solid var(--cardborder)', borderTopColor: 'var(--accent)' }}
+              />
+              <p style={{ color: 'var(--muted)', fontSize: 13, margin: '0 0 16px' }}>
+                After completing setup in the app you will be able to verify
+                payments automatically.
+              </p>
+            </>
+          )}
+          <Button variant="ghost" className="w-full" onClick={closePairing}>
+            Cancel
+          </Button>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }
