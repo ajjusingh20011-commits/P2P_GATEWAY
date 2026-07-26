@@ -1032,8 +1032,8 @@ function EditModal({ detail, onClose, onSaved, onDeleted }) {
         // NGO/web accounts have no delete endpoint yet — only trader-native
         // details can be removed here.
         !detail.__ngo && (
-          <button onClick={remove} className="text-gray-500 hover:text-red-400" aria-label="Delete">
-            <IconTrash className="h-5 w-5" />
+          <button onClick={remove} className="tf-hbtn" style={{ color: '#ef4444' }} aria-label="Delete">
+            <IconTrash className="h-4 w-4" />
           </button>
         )
       }
@@ -1048,14 +1048,14 @@ function EditModal({ detail, onClose, onSaved, onDeleted }) {
             value={form.upi_id}
             onChange={(e) => set('upi_id', e.target.value)}
           />
-          <span className="mt-1 block text-xs text-gray-500">Must contain “@” (example: name@bank)</span>
+          <span className="mt-1 block text-xs" style={{ color: 'var(--muted)' }}>Must contain “@” (example: name@bank)</span>
         </Field>
         <Field label="Organization name">
           <input style={inputStyle} value={form.organization_name} onChange={(e) => set('organization_name', e.target.value)} />
         </Field>
 
         <div className="pt-1">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Limits</p>
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Limits</p>
           <LimitsForm form={form} set={set} caps={caps} setCaps={setCaps} usage={detail.usage} />
         </div>
       </div>
