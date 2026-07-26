@@ -2105,7 +2105,7 @@ export default function Offers() {
       />
 
       {loading ? (
-        <p className="py-16 text-center text-sm text-gray-500">Loading…</p>
+        <p className="py-16 text-center text-sm" style={{ color: 'var(--muted)' }}>Loading…</p>
       ) : (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <OffersColumn details={details} onBulkToggle={bulkToggle} onAdd={openAdd} ngoAccounts={ngoAccounts} onToggleNGO={toggleNGO} ngoToggleBusyId={ngoToggleBusyId} />
