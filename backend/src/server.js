@@ -9,7 +9,11 @@
  *     background jobs are skipped and services fall back to in-memory behaviour.
  */
 
-require('dotenv').config();
+require('dotenv').config({
+  path: process.env.NODE_ENV === 'production'
+    ? '.env'
+    : '.env.local'
+});
 
 const http = require('http');
 const app = require('./app');
@@ -82,6 +86,22 @@ async function bootstrap() {
     logger.info('Order expiry + retry sweep running every 30s');
   } catch (err) {
     logger.warn(`Could not start order sweep: ${err.message}`);
+  }
+
+  // ---- In-process stale-claim sweep (works with or without Redis) ----
+  // Flags claimed_paid orders nobody has resolved (Bug 4) → under_review +
+  // an admin alert. Isolated from the order-expiry sweep above, which never
+  // touches claimed_paid orders on purpose.
+  try {
+    const { checkStaleClaims } = require('./jobs/staleClaimSweep');
+    setInterval(() => {
+      checkStaleClaims().catch((err) => {
+        logger.warn(`Stale-claim sweep error (ignored): ${err.message}`);
+      });
+    }, 30_000).unref();
+    logger.info('Stale-claim review sweep running every 30s');
+  } catch (err) {
+    logger.warn(`Could not start stale-claim sweep: ${err.message}`);
   }
 
   // ---- In-process payout-request expiry sweep (works with or without Redis) ----

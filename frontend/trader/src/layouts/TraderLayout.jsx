@@ -40,7 +40,7 @@ export default function TraderLayout() {
       .dashboard()
       .then((res) => {
         const d = res.data?.data;
-        if (!d) return;
+        if (!d || Array.isArray(d)) return;
         setOnline(!!d.is_online);
         if (d.balance_usdt != null) setLiveBalance(Number(d.balance_usdt));
       })

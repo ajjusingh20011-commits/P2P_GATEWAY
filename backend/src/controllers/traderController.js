@@ -14,6 +14,7 @@ const { emitToAdmin } = require('../websocket');
 const logger = require('../utils/logger');
 const balanceService = require('../services/balanceService');
 const rateService = require('../services/rateService');
+const { computeWindowUsage } = require('../services/usageWindows');
 
 /** Load the Trader row for the current user, or 404. */
 async function currentTrader(req, res) {
@@ -219,22 +220,21 @@ const setOnlineStatus = asyncHandler(async (req, res) => {
 });
 
 /* -------------------------- GET /payment-details -------------------------- */
-// Includes live limit-usage per detail: transactions today / this hour, and
-// today's confirmed amount total.
+// Includes live limit-usage per detail: real hour/day/week/month COUNT +
+// AMOUNT totals of CONFIRMED (`success`) orders — the same shared
+// computeWindowUsage() routingEngine.pickEligibleAccount uses to enforce
+// max_per_hour/day/week/month and hourly/daily/weekly/monthly_limit(_amount),
+// so what's displayed here and what's enforced there can never drift apart.
 const listPaymentDetails = asyncHandler(async (req, res) => {
   const trader = await currentTrader(req, res);
   if (!trader) return undefined;
 
   const details = await db.PaymentDetail.findAll({ where: { trader_id: trader.id }, order: [['id', 'ASC']] });
-  const startToday = startOfToday();
-  const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
   const withUsage = await Promise.all(
     details.map(async (d) => {
-      const [usedToday, usedThisHour, amountToday, ordersTotal, ordersConfirmed] = await Promise.all([
-        db.Order.count({ where: { payment_detail_id: d.id, status: 'success', created_at: { [Op.gte]: startToday } } }),
-        db.Order.count({ where: { payment_detail_id: d.id, status: 'success', created_at: { [Op.gte]: hourAgo } } }),
-        db.Order.sum('amount_inr', { where: { payment_detail_id: d.id, status: 'success', created_at: { [Op.gte]: startToday } } }),
+      const [windowUsage, ordersTotal, ordersConfirmed] = await Promise.all([
+        computeWindowUsage(d.id, d.monthly_start_date, { statusWhere: 'success' }),
         // Success-rate counts (all-time, COUNTS not amounts): confirmed / total.
         db.Order.count({ where: { payment_detail_id: d.id } }),
         db.Order.count({ where: { payment_detail_id: d.id, status: 'success' } }),
@@ -242,9 +242,14 @@ const listPaymentDetails = asyncHandler(async (req, res) => {
       return {
         ...d.toJSON(),
         usage: {
-          used_today: usedToday,
-          used_this_hour: usedThisHour,
-          daily_amount_total: amountToday || 0,
+          used_this_hour: windowUsage.used_this_hour,
+          used_today: windowUsage.used_today,
+          used_this_week: windowUsage.used_this_week,
+          used_this_month: windowUsage.used_this_month,
+          hourly_amount_total: windowUsage.hourly_amount_total,
+          daily_amount_total: windowUsage.daily_amount_total,
+          weekly_amount_total: windowUsage.weekly_amount_total,
+          monthly_amount_total: windowUsage.monthly_amount_total,
           orders_total: ordersTotal,
           orders_confirmed: ordersConfirmed,
         },
@@ -281,6 +286,7 @@ const paymentDetailSchema = Joi.object({
   account_type: Joi.string().valid('gpay', 'phonepe', 'paytm', 'bharat_pe', 'airtel').required(),
   daily_limit: Joi.number().min(0).default(0),
   smartphone_id: Joi.number().integer().allow(null),
+  ngo_device_id: Joi.string().allow(null, ''),
   // Per-transaction bounds + count/amount window limits (all optional).
   min_amount: Joi.number().min(0).default(0),
   max_amount: Joi.number().min(0).default(500000),
@@ -336,6 +342,7 @@ const updatePaymentDetail = asyncHandler(async (req, res) => {
   const bools = ['is_active', 'is_active_detail'];
   const passthrough = [
     'account_name', 'upi_id', 'bank_name', 'organization_name', 'account_type', 'daily_limit', 'smartphone_id',
+    'ngo_device_id',
     'min_amount', 'max_amount', 'max_per_hour', 'max_per_day', 'max_per_week', 'max_per_month',
     'monthly_limit', 'weekly_limit', 'daily_limit_amount', 'hourly_limit_amount', 'monthly_start_date',
   ];

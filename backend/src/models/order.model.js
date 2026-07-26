@@ -3,7 +3,7 @@
 const { Model, DataTypes } = require('sequelize');
 
 // v2 order lifecycle.
-const STATUSES = ['pending', 'checkout_open', 'claimed_paid', 'under_review', 'success', 'failed', 'rejected', 'disputed'];
+const STATUSES = ['pending', 'checkout_open', 'claimed_paid', 'under_review', 'success', 'failed', 'rejected', 'disputed', 'cancelled'];
 // "Active" = the order is live and holds its trader/account (drives the
 // same-amount lock + routing eligibility). Terminal = done.
 const ACTIVE_STATUSES = ['pending', 'checkout_open', 'claimed_paid', 'under_review'];

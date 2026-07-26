@@ -134,6 +134,10 @@ export async function getAccounts() {
   return json.data
 }
 
+// Returns { account, reconnect } — reconnect is only present when turning ON
+// triggered a cookie-first reconnect attempt (web-login account, no live
+// session), and reports what that attempt actually did (live / needsOTP /
+// failed) so the caller can react instead of assuming success.
 export async function toggleAccount(accountId, status) {
   const token = await getNGOToken()
   if (!token) throw new Error('Cannot connect to NGO server')
@@ -152,7 +156,7 @@ export async function toggleAccount(accountId, status) {
 
   const json = await res.json()
   if (!json.success) throw new Error(json.message)
-  return json.data
+  return { account: json.data, reconnect: json.reconnect || null }
 }
 
 // Edit account details (title, organization, limits) — separate from the
@@ -176,6 +180,43 @@ export async function updateAccount(accountId, data) {
   const json = await res.json()
   if (!json.success) throw new Error(json.message)
   return json.data
+}
+
+// Delete an account permanently. If it's a web-login account with a live
+// scraper session, the backend closes that session and removes its saved
+// cookie file before deleting the record.
+export async function deleteAccount(accountId) {
+  const token = await getNGOToken()
+  if (!token) throw new Error('Cannot connect to NGO server')
+
+  const res = await fetch(
+    `${NGO_BASE}/ngo/accounts/${accountId}`,
+    {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + token }
+    }
+  )
+
+  const json = await res.json()
+  if (!json.success) throw new Error(json.message)
+  return json
+}
+
+// Scraper/APK-sourced transactions — this is where real payment events
+// actually land (see ngo-backend's webScraper.js fetchAndSaveTransactions),
+// unlike the P2P gateway's MySQL NotificationLog table, which nothing
+// currently writes to.
+export async function getTransactions() {
+  const token = await getNGOToken()
+  if (!token) throw new Error('Cannot connect to NGO server')
+
+  const res = await fetch(`${NGO_BASE}/ngo/transactions`, {
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+
+  const json = await res.json()
+  if (!json.success) throw new Error(json.message)
+  return json.transactions
 }
 
 export async function getNGOStats() {
@@ -294,4 +335,48 @@ export async function getDevices() {
   const json = await res.json();
   if (!json.success) throw new Error(json.message);
   return json.devices;
+}
+
+// Rename a paired device (trader-assigned display name).
+export async function renameDevice(deviceId, deviceName) {
+  const token = await getNGOToken()
+  if (!token) throw new Error('Cannot connect to NGO server')
+  const res = await fetch(
+    `${NGO_BASE}/apk/devices/${deviceId}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      body: JSON.stringify({ deviceName })
+    }
+  );
+  const json = await res.json();
+  if (!json.success) throw new Error(json.message);
+  return json.device;
+}
+
+// Permanently delete a device (real backend DELETE, not a client-side hide).
+export async function deleteDevice(deviceId) {
+  const token = await getNGOToken()
+  if (!token) throw new Error('Cannot connect to NGO server')
+  const res = await fetch(
+    `${NGO_BASE}/apk/devices/${deviceId}`,
+    {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + token }
+    }
+  );
+  const json = await res.json();
+  if (!json.success) throw new Error(json.message);
+  return json;
+}
+
+// Real-time liveness check for one device (for gating actions like linking
+// a Details account into an Offer) — same ~15s heartbeat window as the
+// Smartphones page's online dot, computed fresh server-side each call.
+export async function getDeviceLiveness(deviceId) {
+  const devices = await getDevices()
+  return devices.find((d) => d.id === deviceId) || null
 }

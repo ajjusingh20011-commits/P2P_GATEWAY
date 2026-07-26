@@ -14,6 +14,18 @@ const { ACCOUNT_STATUS, TRANSACTION_STATUS } = require('../config/constants');
  *
  * The per-platform DOM extraction is deliberately isolated in scrapePlatform()
  * so it can be filled in per platform without touching the orchestration.
+ *
+ * DEAD CODE (confirmed, 2026-07-22): scrapePlatform() never navigates
+ * anywhere and always returns []. scrapeAccount/scrapeAllLiveAccounts/
+ * startSession/stopSession/isSessionActive are unused — nothing in the
+ * codebase calls them anymore. Real web-login scraping is implemented in
+ * webScraper.js (Playwright-based PaytmScraper), driven by the
+ * connect/verify-otp/status/sync routes in routes/ngo.js. Do not wire
+ * startSession() back into any route without first replacing
+ * scrapePlatform()'s stub with a real implementation — it currently marks
+ * accounts LIVE having done nothing.
+ *
+ * ingestRawEvent() below is NOT dead — it's actively used by routes/apk.js.
  */
 
 /**

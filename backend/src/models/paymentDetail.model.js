@@ -30,7 +30,17 @@ module.exports = (sequelize) => {
       daily_limit: { type: DataTypes.DECIMAL(15, 2), allowNull: false, defaultValue: 0 },
       today_used: { type: DataTypes.DECIMAL(15, 2), allowNull: false, defaultValue: 0 },
       is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+      // LEGACY/DEAD: points at the MySQL `Smartphone` model, which nothing
+      // real populates (the actual APK only ever calls ngo-backend's
+      // /api/apk/* routes — see ngo_device_id below). Superseded by
+      // ngo_device_id. Still read/written in a few places (grepped and
+      // reported separately) — do not drop the column until those are
+      // migrated or confirmed unreachable.
       smartphone_id: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
+      // Real ngo-backend Device (Mongo _id, as a string) this detail is
+      // paired to — the actual APK/heartbeat pipeline. Distinct from the
+      // legacy smartphone_id above, which points at a dead MySQL model.
+      ngo_device_id: { type: DataTypes.STRING(191), allowNull: true },
 
       // Per-transaction amount bounds.
       min_amount: { type: DataTypes.DECIMAL(15, 2), allowNull: false, defaultValue: 0 },

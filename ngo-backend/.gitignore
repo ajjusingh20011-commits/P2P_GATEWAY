@@ -4,3 +4,6 @@ npm-debug.log*
 .DS_Store
 logs/
 *.log
+
+# Playwright session cookies (live credentials) — never track these.
+paytm-session*.json

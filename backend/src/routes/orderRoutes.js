@@ -30,6 +30,9 @@ router.post('/:id/claim-paid', orderController.claimPaid);
 router.post('/:id/paid', orderController.markPaid);
 router.post('/:id/confirm', orderController.confirm);
 router.post('/:id/customer-confirm', orderController.markPaid);
+// Public (checkout page): customer-initiated cancel, pending/checkout_open
+// only. Distinct from the authenticated /:id/cancel below (trader/admin).
+router.post('/:id/cancel-checkout', orderController.cancelCheckout);
 // Internal callback: NGO backend -> P2P backend once it verifies a payment.
 // SECURITY: unauthenticated — anyone who can reach it can settle any order
 // with a fabricated UTR. Restrict before production (shared-secret header,

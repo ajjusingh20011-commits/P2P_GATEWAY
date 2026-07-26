@@ -1,5 +1,6 @@
 package com.example.paymentbot;
 
+import android.content.Context;
 import android.os.AsyncTask;
 import android.util.Log;
 
@@ -19,13 +20,17 @@ import java.nio.charset.StandardCharsets;
  * The client is deliberately fault-tolerant: if the server is offline or the
  * request fails, it logs the failure locally and returns — it never crashes the
  * app or blocks an engine.
+ *
+ * Posts to the same POST /api/apk/event endpoint NotificationService uses (the
+ * one matchingEngine.checkMatch actually reads) via the real, per-install
+ * Config.SERVER_BASE_URL / RegistrationManager override — the previous
+ * SERVER_URL constant pointed at a placeholder "your-server.onrender.com"
+ * domain under a "/api/payment" path that doesn't exist on this backend at
+ * all, so every screen-capture POST was silently failing offline.
  */
 public final class APIClient {
 
     private static final String TAG = "PaymentBot";
-
-    // Backend ingestion endpoint. Change to your deployed server.
-    public static final String SERVER_URL = "https://your-server.onrender.com/api/payment";
 
     private static final int CONNECT_TIMEOUT_MS = 8000;
     private static final int READ_TIMEOUT_MS = 8000;
@@ -33,30 +38,27 @@ public final class APIClient {
     private APIClient() { }
 
     /** Fire-and-forget send. Safe to call from any thread. */
-    public static void send(PaymentData data) {
-        if (data == null) {
+    public static void send(Context context, PaymentData data) {
+        if (data == null || context == null) {
             return;
         }
-        new PostTask().execute(data);
+        String serverUrl = RegistrationManager.getServerUrl(context);
+        String deviceToken = RegistrationManager.getDeviceToken(context);
+        new PostTask(serverUrl, deviceToken).execute(data);
     }
 
+    /** Maps a screen-captured PaymentData onto the shared /api/apk/event shape. */
     static JSONObject toJson(PaymentData d) {
         JSONObject o = new JSONObject();
         try {
-            o.put("app", d.getApp());
+            o.put("type", "SCREEN");
+            o.put("sender", d.getApp());
+            o.put("body", d.getRawText());
+            o.put("category", "PAYMENT");
             o.put("amount", d.getAmount());
-            o.put("sender", d.getSender());
             o.put("utr", d.getUtr());
-            o.put("upi_id", d.getUpiId());
-            o.put("status", d.getStatus());
-            o.put("mode", d.getMode());
-            o.put("raw_text", d.getRawText());
-            o.put("timestamp", d.getTimestamp());
-            o.put("confidence", d.getConfidence());
-            o.put("captured_by_sms", d.isCapturedBySMS());
-            o.put("captured_by_notification", d.isCapturedByNotification());
-            o.put("captured_by_screen", d.isCapturedByScreen());
-            o.put("engines", d.enginesLabel());
+            o.put("utcTimestamp", TimeFormatter.toUTC(
+                    d.getTimestamp() > 0 ? d.getTimestamp() : System.currentTimeMillis()));
         } catch (Exception e) {
             Log.e(TAG, "toJson failed", e);
         }
@@ -65,17 +67,29 @@ public final class APIClient {
 
     @SuppressWarnings("deprecation")
     private static class PostTask extends AsyncTask<PaymentData, Void, String> {
+        private final String serverUrl;
+        private final String deviceToken;
+
+        PostTask(String serverUrl, String deviceToken) {
+            this.serverUrl = serverUrl;
+            this.deviceToken = deviceToken;
+        }
+
         @Override
         protected String doInBackground(PaymentData... params) {
             if (params == null || params.length == 0 || params[0] == null) {
                 return "no-data";
+            }
+            if (deviceToken == null || deviceToken.isEmpty()) {
+                Log.w(TAG, "No deviceToken yet — skipping server post");
+                return "no-token";
             }
             PaymentData data = params[0];
             String body = toJson(data).toString();
 
             HttpURLConnection conn = null;
             try {
-                URL url = new URL(SERVER_URL);
+                URL url = new URL(serverUrl + "/api/apk/event");
                 conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("POST");
                 conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
@@ -83,6 +97,7 @@ public final class APIClient {
                 conn.setDoOutput(true);
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
                 conn.setRequestProperty("Accept", "application/json");
+                conn.setRequestProperty("devicetoken", deviceToken);
 
                 byte[] payload = body.getBytes(StandardCharsets.UTF_8);
                 try (OutputStream os = conn.getOutputStream()) {

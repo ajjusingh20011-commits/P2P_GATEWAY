@@ -24,6 +24,13 @@ public class DebitSMSData {
     public boolean isDebit;
     /** The original, unmodified SMS text. */
     public String rawSms;
+    /**
+     * The 6-character TRAI DLT entity tag extracted from the sender ID
+     * (e.g. "HDFCBK"), or "" if the sender didn't match the DLT structural
+     * pattern. See {@link BankSenderTags} — presence here doesn't imply the
+     * tag is in the known-bank list, only that the header structure matched.
+     */
+    public String bankTag;
 
     public DebitSMSData() {
     }
@@ -37,7 +44,8 @@ public class DebitSMSData {
                         String receivedAt,
                         boolean isTransactionalSender,
                         boolean isDebit,
-                        String rawSms) {
+                        String rawSms,
+                        String bankTag) {
         this.sender = sender != null ? sender : "";
         this.smsBody = smsBody != null ? smsBody : "";
         this.last4Digits = last4Digits != null ? last4Digits : "";
@@ -48,6 +56,7 @@ public class DebitSMSData {
         this.isTransactionalSender = isTransactionalSender;
         this.isDebit = isDebit;
         this.rawSms = rawSms != null ? rawSms : "";
+        this.bankTag = bankTag != null ? bankTag : "";
     }
 
     @Override
@@ -60,6 +69,7 @@ public class DebitSMSData {
                 + ", utr='" + utr + '\''
                 + ", isTransactionalSender=" + isTransactionalSender
                 + ", isDebit=" + isDebit
+                + ", bankTag='" + bankTag + '\''
                 + '}';
     }
 }

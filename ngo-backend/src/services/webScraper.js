@@ -3,6 +3,7 @@ const { decrypt } = require('../utils/encryption');
 const SessionStore = require('./SessionStore');
 const Transaction = require('../models/Transaction');
 const Account = require('../models/Account');
+const { ACCOUNT_STATUS_REASON } = require('../config/constants');
 const path = require('path');
 const fs = require('fs');
 
@@ -14,15 +15,19 @@ async function initiateLogin(account, io) {
     const password = decrypt(account.encryptedLoginPassword);
     SessionStore.setSession(accountId, { status: 'connecting' });
     emitStatus(io, ngoId, accountId, 'connecting', 'Connecting...');
+    // Headless by default (production/server). Set SCRAPER_HEADLESS=false in
+    // a LOCAL .env.local (or via scripts/test-web-login.js) to watch a real
+    // login in a visible window — the deployed server never sets this var,
+    // so its behavior is unaffected.
     const browser = await chromium.launch({
-      headless: true,
+      headless: process.env.SCRAPER_HEADLESS !== 'false',
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     });
     const sessionFile = path.join(
-      __dirname, '../../paytm-session.json'
+      __dirname, `../../paytm-session-${accountId}.json`
     );
     if (fs.existsSync(sessionFile)) {
       const saved = JSON.parse(
@@ -150,7 +155,7 @@ async function initiateLogin(account, io) {
             'OTP sent to your phone.'
           );
           await Account.findByIdAndUpdate(
-            accountId, { status: 'paused' }
+            accountId, { status: 'paused', statusReason: ACCOUNT_STATUS_REASON.OTP_REQUIRED }
           );
           return {
             success: true,
@@ -173,6 +178,7 @@ async function initiateLogin(account, io) {
     }
     throw new Error('Login failed. Check credentials.');
   } catch (err) {
+    await Account.findByIdAndUpdate(accountId, { status: 'failed', statusReason: null });
     SessionStore.removeSession(accountId);
     emitStatus(io, ngoId, accountId, 'error', err.message);
     throw err;
@@ -226,6 +232,7 @@ async function submitOTP(account, otp, io) {
     }
     throw new Error('Invalid OTP. Try again.');
   } catch (err) {
+    await Account.findByIdAndUpdate(accountId, { status: 'failed', statusReason: null });
     emitStatus(io, ngoId, accountId,
       'otp_error', err.message);
     throw err;
@@ -246,7 +253,7 @@ async function onLoginSuccess(
   } catch(e) {}
   const cookies = await context.cookies();
   const sessionFile = path.join(
-    __dirname, '../../paytm-session.json'
+    __dirname, `../../paytm-session-${accountId}.json`
   );
   fs.writeFileSync(sessionFile, JSON.stringify({
     cookies,
@@ -261,6 +268,7 @@ async function onLoginSuccess(
   });
   await Account.findByIdAndUpdate(accountId, {
     status: 'live',
+    statusReason: null,
     lastSyncTime: new Date()
   });
   emitStatus(io, ngoId, accountId,
@@ -480,8 +488,29 @@ function startMonitoring(accountId, account, io) {
       if (!alive) {
         clearInterval(interval);
         SessionStore.removeSession(accountId);
+
+        // Auto-reconnect attempt (the same cookie-first path initiateLogin
+        // always tries first) BEFORE surfacing session_expired to the
+        // trader — most session deaths are a stale/expired page, not a
+        // revoked cookie, and resolve silently without an OTP.
+        console.log(`[monitor] session dead for ${accountId} — attempting auto-reconnect before giving up`);
+        try {
+          const result = await initiateLogin(account, io);
+          if (result.success && !result.needsOTP) {
+            console.log(`[monitor] AUTO-RECOVERED session for ${accountId} (cookie-first, no OTP needed) — status already set to live, monitoring restarted`);
+            return;
+          }
+          // needsOTP: initiateLogin already set status:paused/otp_required
+          // and emitted its own status event — that's a legitimate outcome,
+          // not a failure, just not fully auto-recoverable without the trader.
+          console.log(`[monitor] auto-reconnect for ${accountId} needs OTP — left for the trader (status already set by initiateLogin)`);
+          return;
+        } catch (err) {
+          console.log(`[monitor] auto-reconnect FAILED for ${accountId}: ${err.message} — marking session_expired`);
+        }
+
         await Account.findByIdAndUpdate(
-          accountId, { status: 'paused' }
+          accountId, { status: 'paused', statusReason: ACCOUNT_STATUS_REASON.SESSION_EXPIRED }
         );
         emitStatus(
           io,

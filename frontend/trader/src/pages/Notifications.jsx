@@ -2,24 +2,30 @@ import { useMemo, useState } from 'react';
 import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader } from '../components/ui';
 import { IconRefresh } from '../components/icons';
 import { useApi } from '../hooks/useApi';
-import { traderApi } from '../services/api';
+import { getTransactions } from '../lib/ngoApi';
 import { notifications, maskUpi, ACCOUNT_TYPES } from '../utils/mock';
 
 const PER_PAGE = 8;
 
-// Map a backend notification onto the row shape this table renders. The API has
-// no bank object, so `bank` is left null and shown as `—`.
+// Map an ngo-backend Transaction doc (see ngo-backend/src/models/Transaction.js)
+// onto the row shape this table renders. `bank` stays null — nothing populates
+// a receiving-account identity on these rows today (same as the old API this
+// replaced); `utr` (the bank/UPI reference, e.g. an RRN) is the most useful
+// "Transaction ID" available, so txnId (the platform's own order id) is shown
+// as the Notification ID instead.
 function apiToRow(n) {
   return {
-    id: n.id,
-    notificationId: n.notification_id,
-    time: n.created_at || '—',
+    id: n._id,
+    notificationId: n.txnId || n._id,
+    time: n.scrapedAt || n.createdAt || '—',
     amount: n.amount,
-    currency: n.currency,
+    currency: 'INR',
     bank: null,
-    method: n.payment_method,
-    transactionId: n.transaction_id,
-    description: n.description,
+    method: n.platform,
+    transactionId: n.utr || '—',
+    description: n.payerName
+      ? `Payment from ${n.payerName}${n.payerUpiId ? ` (${n.payerUpiId})` : ''}`
+      : 'Payment received',
   };
 }
 
@@ -50,7 +56,7 @@ export default function Notifications() {
 
   // Real notifications overlay the mock; mock stays as instant value + fallback.
   const { data: rows, loading } = useApi(
-    () => traderApi.notifications().then((res) => (res.data.data.notifications || []).map(apiToRow)),
+    () => getTransactions().then((list) => (list || []).map(apiToRow)),
     { fallback: notifications.map(mockToRow) }
   );
 

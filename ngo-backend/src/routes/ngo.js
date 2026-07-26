@@ -1,8 +1,9 @@
+const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const { verifyToken, requireRole } = require('../middleware/auth');
-const { ROLES, ACCOUNT_STATUS, CONNECTION_TYPE } = require('../config/constants');
+const { ROLES, ACCOUNT_STATUS, ACCOUNT_STATUS_REASON, CONNECTION_TYPE } = require('../config/constants');
 const { encrypt } = require('../utils/encryption');
-const scraperEngine = require('../services/scraperEngine');
 const ledgerService = require('../services/ledgerService');
 const Account = require('../models/Account');
 const Transaction = require('../models/Transaction');
@@ -84,7 +85,9 @@ router.post('/accounts', async (req, res, next) => {
       upiId,
       displayName,
       connectionType: type,
-      status: ACCOUNT_STATUS.LIVE,
+      // Not connected/verified yet — connect()/verify-otp() (web) or a real
+      // APK heartbeat is what actually establishes a live session.
+      status: ACCOUNT_STATUS.PENDING,
     };
 
     if (type === CONNECTION_TYPE.WEB) {
@@ -95,8 +98,6 @@ router.post('/accounts', async (req, res, next) => {
 
     const account = await Account.create(doc);
 
-    scraperEngine.startSession(account._id.toString());
-
     const safe = await Account.findById(account._id).select(CREDENTIAL_FIELDS);
     return res.status(201).json({ success: true, data: safe });
   } catch (err) {
@@ -104,6 +105,16 @@ router.post('/accounts', async (req, res, next) => {
   }
 });
 
+// Toggling isn't just a status flip any more:
+//   OFF -> really closes the live session (SessionStore.removeSession — the
+//          same cleanup the delete route uses), not just a flag.
+//   ON  -> for a web-login account with no live session, triggers
+//          initiateLogin (cookie-first — tries saved cookies silently
+//          before any OTP) as part of the toggle itself, instead of leaving
+//          the account "on" but not actually connected to anything.
+// initiateLogin manages status/statusReason on its own (live / paused+
+// otp_required / failed) — we let it, and just return the fresh row,
+// rather than racing it with our own blind status write.
 router.patch('/accounts/:accountId/toggle', async (req, res, next) => {
   try {
     const { status } = req.body;
@@ -113,22 +124,48 @@ router.patch('/accounts/:accountId/toggle', async (req, res, next) => {
         .json({ success: false, message: 'status must be "live" or "paused"' });
     }
 
-    const account = await Account.findOneAndUpdate(
-      { _id: req.params.accountId, ngoId: resolveNgoId(req) },
-      { status },
-      { new: true }
-    ).select(CREDENTIAL_FIELDS);
-
-    if (!account) {
+    const existing = await Account.findOne({
+      _id: req.params.accountId,
+      ngoId: resolveNgoId(req),
+    });
+    if (!existing) {
       return res.status(404).json({ success: false, message: 'Account not found' });
     }
 
     if (status === ACCOUNT_STATUS.PAUSED) {
-      scraperEngine.stopSession(account._id.toString());
-    } else {
-      scraperEngine.startSession(account._id.toString());
+      if (existing.connectionType === CONNECTION_TYPE.WEB) {
+        SessionStore.removeSession(existing._id.toString());
+      }
+      const account = await Account.findByIdAndUpdate(
+        existing._id,
+        { status: ACCOUNT_STATUS.PAUSED, statusReason: ACCOUNT_STATUS_REASON.MANUAL_PAUSE },
+        { new: true }
+      ).select(CREDENTIAL_FIELDS);
+      return res.json({ success: true, data: account });
     }
 
+    // Turning ON.
+    if (existing.connectionType === CONNECTION_TYPE.WEB) {
+      const alive = await SessionStore.isSessionAlive(existing._id.toString());
+      if (!alive) {
+        const io = req.app.locals.io;
+        let reconnect;
+        try {
+          reconnect = await PaytmScraper.initiateLogin(existing, io);
+        } catch (err) {
+          reconnect = { success: false, needsOTP: false, message: err.message };
+        }
+        const fresh = await Account.findById(existing._id).select(CREDENTIAL_FIELDS);
+        return res.json({ success: true, data: fresh, reconnect });
+      }
+    }
+
+    // Already-alive web session, or an APK account (no session concept).
+    const account = await Account.findByIdAndUpdate(
+      existing._id,
+      { status: ACCOUNT_STATUS.LIVE, statusReason: null },
+      { new: true }
+    ).select(CREDENTIAL_FIELDS);
     return res.json({ success: true, data: account });
   } catch (err) {
     return next(err);
@@ -172,6 +209,37 @@ router.patch('/accounts/:accountId', async (req, res, next) => {
     }
 
     return res.json({ success: true, data: account });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// Delete an account. For a web-login account, first tears down any live
+// scraper session (closes the Playwright browser, clears its monitor
+// interval — SessionStore.removeSession, NOT scraperEngine.js's stopSession,
+// which is dead code per the prior fix) and removes its saved session-cookie
+// file so orphaned paytm-session-<id>.json files don't pile up.
+router.delete('/accounts/:accountId', async (req, res, next) => {
+  try {
+    const account = await Account.findOne({
+      _id: req.params.accountId,
+      ngoId: resolveNgoId(req),
+    });
+    if (!account) {
+      return res.status(404).json({ success: false, message: 'Account not found' });
+    }
+
+    if (account.connectionType === CONNECTION_TYPE.WEB) {
+      SessionStore.removeSession(account._id.toString());
+      const sessionFile = path.join(__dirname, `../../paytm-session-${account._id}.json`);
+      try {
+        if (fs.existsSync(sessionFile)) fs.unlinkSync(sessionFile);
+      } catch (e) { /* best-effort cleanup */ }
+    }
+
+    await Account.deleteOne({ _id: account._id });
+
+    return res.json({ success: true });
   } catch (err) {
     return next(err);
   }

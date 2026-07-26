@@ -45,6 +45,11 @@ router.post('/register-device', async (req, res, next) => {
           .status(400)
           .json({ success: false, message: 'Invalid or already-used license code' });
       }
+      if (device.licenseExpiresAt && device.licenseExpiresAt.getTime() < Date.now()) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'Code expired — generate a new one' });
+      }
       device.deviceId = deviceId;
       device.ngoId = ngoId || device.ngoId;
       device.deviceModel = deviceModel || device.deviceModel;
@@ -122,27 +127,42 @@ router.post(
         // eslint-disable-next-line no-await-in-loop
       } while (await Device.exists({ licenseKey }));
 
+      const licenseExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
       const device = await Device.create({
         deviceId: `pending:${licenseKey}`,
         licenseKey,
+        licenseExpiresAt,
         ngoId,
         status: DEVICE_STATUS.PENDING,
       });
 
       return res
         .status(201)
-        .json({ success: true, licenseKey, deviceId: device._id.toString() });
+        .json({ success: true, licenseKey, licenseExpiresAt, deviceId: device._id.toString() });
     } catch (err) {
       return next(err);
     }
   }
 );
 
+// A device counts as genuinely online only if it has heartbeated (or
+// registered/posted an event, which also refresh lastSeen) within this
+// window — matches HeartbeatService's 4s interval with generous slack.
+// `status` alone is not trustworthy: the APK always sends status:"active"
+// verbatim and nothing ever flips it back on disconnect.
+const ONLINE_WINDOW_MS = 15 * 1000;
+const isOnline = (lastSeen) => !!lastSeen && Date.now() - new Date(lastSeen).getTime() <= ONLINE_WINDOW_MS;
+
 /**
  * GET /api/apk/devices/:ngoId
  * Auth: NGO staff/admin bearer token.
- * Lists devices (registered + pending) for one NGO, for the trader panel's
- * "Registered Devices" list.
+ * Lists devices for one NGO, for the trader panel's "Registered Devices"
+ * list and the payment-detail device picker (same source, so both agree).
+ *
+ * PENDING (a generated pairing code nobody has claimed yet, or an abandoned
+ * one) is deliberately excluded — those never reached ACTIVE and shouldn't
+ * permanently litter the list as an "Unnamed device" row. Use
+ * DELETE /api/apk/devices/:id to actually remove a Device row.
  */
 router.get(
   '/devices/:ngoId',
@@ -150,7 +170,10 @@ router.get(
   requireRole(ROLES.NGO_STAFF, ROLES.ADMIN),
   async (req, res, next) => {
     try {
-      const devices = await Device.find({ ngoId: req.params.ngoId })
+      const devices = await Device.find({
+        ngoId: req.params.ngoId,
+        status: { $ne: DEVICE_STATUS.PENDING },
+      })
         .sort({ createdAt: -1 })
         .select('deviceId deviceModel deviceName status lastSeen licenseKey createdAt');
 
@@ -162,9 +185,78 @@ router.get(
           deviceModel: d.deviceName ? d.deviceModel || '' : '',
           status: d.status,
           lastSeen: d.lastSeen,
+          online: isOnline(d.lastSeen),
           licenseKey: d.licenseKey,
         })),
       });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
+// Resolve the ngoId to scope a device lookup by, same convention as ngo.js's
+// resolveNgoId: staff use their own ngoId; admin may override via query.
+function resolveDeviceNgoId(req) {
+  if (req.user.role === ROLES.ADMIN && req.query.ngoId) return req.query.ngoId;
+  return req.user.ngoId || null;
+}
+
+/**
+ * PATCH /api/apk/devices/:id
+ * Auth: NGO staff/admin bearer token.
+ * Body: { deviceName }
+ * Renames a device (the trader-assigned display name shown on the
+ * Smartphones page) — id is the Device's Mongo _id.
+ */
+router.patch(
+  '/devices/:id',
+  verifyToken,
+  requireRole(ROLES.NGO_STAFF, ROLES.ADMIN),
+  async (req, res, next) => {
+    try {
+      const { deviceName } = req.body;
+      if (typeof deviceName !== 'string' || !deviceName.trim()) {
+        return res.status(400).json({ success: false, message: 'deviceName is required' });
+      }
+      const device = await Device.findOneAndUpdate(
+        { _id: req.params.id, ngoId: resolveDeviceNgoId(req) },
+        { deviceName: deviceName.trim() },
+        { new: true }
+      );
+      if (!device) {
+        return res.status(404).json({ success: false, message: 'Device not found' });
+      }
+      return res.json({
+        success: true,
+        device: { id: device._id.toString(), deviceName: device.deviceName },
+      });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
+/**
+ * DELETE /api/apk/devices/:id
+ * Auth: NGO staff/admin bearer token.
+ * Permanently removes a Device row (real deletion, not a client-side hide) —
+ * id is the Device's Mongo _id. Works on any status, including an abandoned
+ * PENDING pairing code fetched by direct id even though the list route above
+ * no longer surfaces PENDING rows.
+ */
+router.delete(
+  '/devices/:id',
+  verifyToken,
+  requireRole(ROLES.NGO_STAFF, ROLES.ADMIN),
+  async (req, res, next) => {
+    try {
+      const device = await Device.findOne({ _id: req.params.id, ngoId: resolveDeviceNgoId(req) });
+      if (!device) {
+        return res.status(404).json({ success: false, message: 'Device not found' });
+      }
+      await Device.deleteOne({ _id: device._id });
+      return res.json({ success: true });
     } catch (err) {
       return next(err);
     }

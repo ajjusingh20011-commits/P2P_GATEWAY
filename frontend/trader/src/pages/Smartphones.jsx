@@ -1,17 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import { Card, Badge, Button, SearchInput, Select, PageHeader } from '../components/ui';
-import { IconPlus, IconChevron, IconDots } from '../components/icons';
-import { getDevices, generateLicense, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
+import { IconPlus, IconChevron, IconDots, IconEdit, IconTrash } from '../components/icons';
+import { getDevices, generateLicense, renameDevice, deleteDevice, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
+import { traderApi } from '../services/api';
 
+// PENDING devices (a pairing code nobody claimed) are never returned by
+// getDevices() any more — see ngo-backend/src/routes/apk.js — so "Pending"
+// is no longer a meaningful filter here.
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All statuses' },
   { value: 'active', label: 'Active' },
-  { value: 'pending', label: 'Pending' },
   { value: 'inactive', label: 'Inactive' },
 ];
 
-const NGO_ID = '6a4be25836583c99fa079802';
+// Devices are considered online only while a heartbeat/event has landed
+// within this window — matches the ~4s HeartbeatService interval with slack.
+const ONLINE_POLL_MS = 15 * 1000;
 
 // Reuses the exact popup look already established for this pairing flow
 // (dark card, emerald accent, big letter-spaced code) — no new visual style.
@@ -109,9 +114,18 @@ export default function Smartphones() {
   const [licenseKey, setLicenseKey] = useState('');
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Pairing code expiry, driven by the server-issued licenseExpiresAt so the
+  // countdown can't drift from what /register-device actually enforces.
+  const [codeExpiresAt, setCodeExpiresAt] = useState(null);
+  const [remainingSec, setRemainingSec] = useState(0);
 
   const [devices, setDevices] = useState([]);
   const [loadingDevices, setLoadingDevices] = useState(true);
+
+  // Linked payment details (trader-native MySQL side), grouped by the real
+  // ngo-backend device id they're paired to (Fix 5) — same ngo_device_id
+  // field the "Add Payment Detail" device picker now writes.
+  const [detailsByDevice, setDetailsByDevice] = useState({});
 
   async function loadDevices() {
     try {
@@ -126,8 +140,33 @@ export default function Smartphones() {
     }
   }
 
+  async function loadLinkedDetails() {
+    try {
+      const res = await traderApi.paymentDetails();
+      const details = res?.data?.data?.payment_details || [];
+      const grouped = {};
+      for (const d of details) {
+        if (!d.ngo_device_id) continue;
+        (grouped[d.ngo_device_id] = grouped[d.ngo_device_id] || []).push(d);
+      }
+      setDetailsByDevice(grouped);
+    } catch (e) {
+      console.error('Failed to load linked payment details:', e);
+      setDetailsByDevice({});
+    }
+  }
+
   useEffect(() => {
     loadDevices();
+    loadLinkedDetails();
+  }, []);
+
+  // Keep the online dot honest without requiring a manual refresh — Mongo's
+  // `status` field never flips back on disconnect (see apk.js), so recency
+  // has to be re-checked periodically, not just read once at mount.
+  useEffect(() => {
+    const id = setInterval(loadDevices, ONLINE_POLL_MS);
+    return () => clearInterval(id);
   }, []);
 
   const startPairing = () => {
@@ -138,6 +177,8 @@ export default function Smartphones() {
   const closePairing = () => {
     setPairStep(null);
     setLicenseKey('');
+    setCodeExpiresAt(null);
+    setRemainingSec(0);
   };
 
   const handleAppInstalled = async () => {
@@ -146,6 +187,7 @@ export default function Smartphones() {
       const data = await generateLicense();
       if (data.success) {
         setLicenseKey(data.licenseKey);
+        setCodeExpiresAt(data.licenseExpiresAt ? new Date(data.licenseExpiresAt).getTime() : null);
         setPairStep('code');
       }
     } catch (e) {
@@ -155,6 +197,18 @@ export default function Smartphones() {
     }
   };
 
+  // Live countdown, ticking from the server-issued expiry.
+  useEffect(() => {
+    if (pairStep !== 'code' || !codeExpiresAt) return undefined;
+    const tick = () => setRemainingSec(Math.max(0, Math.round((codeExpiresAt - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [pairStep, codeExpiresAt]);
+
+  const codeExpired = pairStep === 'code' && codeExpiresAt != null && remainingSec <= 0;
+  const fmtCountdown = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
   const handleCopyCode = () => {
     navigator.clipboard.writeText(licenseKey);
     setCopied(true);
@@ -162,11 +216,18 @@ export default function Smartphones() {
   };
 
   // Only connect while the code screen is up — not on every page visit.
+  // Joins the trader's REAL ngoId room (the same value every other NGO API
+  // call resolves via getNGOAuth(), cached at localStorage.ngo_id by the
+  // time this runs since generateLicense() already awaited it) — previously
+  // a hardcoded, unrelated id, so this event never arrived and the modal
+  // never auto-closed.
   useEffect(() => {
     if (pairStep !== 'code') return undefined;
+    const ngoId = localStorage.getItem('ngo_id');
+    if (!ngoId) return undefined;
 
     const socket = io(NGO_SOCKET_ORIGIN);
-    socket.emit('join', NGO_ID);
+    socket.emit('join', ngoId);
     socket.on('device-registered', (data) => {
       closePairing();
       alert(data.deviceName + ' connected!');
@@ -177,6 +238,54 @@ export default function Smartphones() {
   }, [pairStep]);
 
   const set = (k) => (v) => setFilters((f) => ({ ...f, [k]: v }));
+
+  // Per-row 3-dot menu: Rename (inline edit, PATCH) and Delete (confirm, real
+  // DELETE) — Fix 4. Only one row's menu / rename box open at a time.
+  const [rowMenuId, setRowMenuId] = useState(null);
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  const [expandedDeviceId, setExpandedDeviceId] = useState(null);
+
+  const startRename = (s) => {
+    setRowMenuId(null);
+    setRenamingId(s.id);
+    setRenameValue(s.deviceName || '');
+  };
+
+  const cancelRename = () => {
+    setRenamingId(null);
+    setRenameValue('');
+  };
+
+  const saveRename = async (s) => {
+    const name = renameValue.trim();
+    if (!name) return;
+    setRenaming(true);
+    try {
+      await renameDevice(s.id, name);
+      setDevices((list) => list.map((d) => (d.id === s.id ? { ...d, deviceName: name } : d)));
+      cancelRename();
+    } catch (e) {
+      console.error('Rename failed:', e);
+      alert('Rename failed: ' + e.message);
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const removeDevice = async (s) => {
+    setRowMenuId(null);
+    const label = s.deviceName || 'this device';
+    if (!window.confirm(`Delete ${label}? This permanently removes it and cannot be undone.`)) return;
+    try {
+      await deleteDevice(s.id);
+      setDevices((list) => list.filter((d) => d.id !== s.id));
+    } catch (e) {
+      console.error('Delete failed:', e);
+      alert('Delete failed: ' + e.message);
+    }
+  };
 
   const filtered = useMemo(() => {
     return devices.filter((s) => {
@@ -240,36 +349,116 @@ export default function Smartphones() {
                 <th className="px-4 py-3 font-medium">Smartphone Name</th>
                 <th className="px-4 py-3 font-medium">Model</th>
                 <th className="px-4 py-3 font-medium">Registration Code</th>
+                <th className="px-4 py-3 font-medium">Linked Details</th>
                 <th className="px-4 py-3 font-medium">Last Seen</th>
                 <th className="px-4 py-3 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
-              {filtered.map((s) => (
-                <tr key={s.id} className="text-gray-200 hover:bg-gray-800/40">
+              {filtered.map((s) => {
+                const linked = detailsByDevice[s.id] || [];
+                const expanded = expandedDeviceId === s.id;
+                return (
+                <tr key={s.id} data-device-id={s.id} className="text-gray-200 hover:bg-gray-800/40">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <span className={`h-2 w-2 rounded-full ${s.status === 'active' ? 'bg-emerald-500' : 'bg-gray-500'}`} />
-                      <span className="font-medium">{s.deviceName || 'Unnamed device'}</span>
+                      <span
+                        className={`h-2 w-2 rounded-full ${s.online ? 'bg-emerald-500' : 'bg-gray-500'}`}
+                        title={s.online ? 'Online — heartbeat within the last 15s' : 'Offline — no recent heartbeat'}
+                      />
+                      {renamingId === s.id ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            autoFocus
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveRename(s);
+                              if (e.key === 'Escape') cancelRename();
+                            }}
+                            disabled={renaming}
+                            className="rounded border border-gray-700 bg-gray-800 px-2 py-0.5 text-sm text-gray-100 outline-none focus:border-emerald-500"
+                          />
+                          <button
+                            onClick={() => saveRename(s)}
+                            disabled={renaming || !renameValue.trim()}
+                            className="text-xs font-medium text-emerald-400 hover:text-emerald-300 disabled:opacity-50"
+                          >
+                            Save
+                          </button>
+                          <button onClick={cancelRename} disabled={renaming} className="text-xs text-gray-500 hover:text-gray-300">
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="font-medium">{s.deviceName || 'Unnamed device'}</span>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-3">{s.deviceModel || '—'}</td>
                   <td className="px-4 py-3">
                     <Badge color="gray">{s.licenseKey || '—'}</Badge>
                   </td>
+                  <td className="px-4 py-3">
+                    {linked.length === 0 ? (
+                      <span className="text-xs text-gray-500">—</span>
+                    ) : (
+                      <div className="relative inline-block">
+                        <button
+                          onClick={() => setExpandedDeviceId(expanded ? null : s.id)}
+                          className="rounded-full border border-gray-700 bg-gray-800 px-2 py-0.5 text-xs text-gray-300 hover:bg-gray-700"
+                          title="Click to see linked payment details"
+                        >
+                          {linked.length} account{linked.length === 1 ? '' : 's'} linked
+                        </button>
+                        {expanded && (
+                          <div className="absolute left-0 z-10 mt-1 w-56 rounded-lg border border-gray-700 bg-gray-900 p-2 shadow-xl">
+                            {linked.map((d) => (
+                              <div key={d.id} className="truncate px-1 py-0.5 text-xs text-gray-300">
+                                {d.account_name || 'Untitled'} — <span className="text-gray-500">{d.upi_id}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-xs text-gray-400">
                     {s.lastSeen ? new Date(s.lastSeen).toLocaleString() : 'Never'}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button className="text-gray-500 hover:text-gray-200">
-                      <IconDots className="h-4 w-4" />
-                    </button>
+                    <div className="relative inline-block">
+                      <button
+                        onClick={() => setRowMenuId(rowMenuId === s.id ? null : s.id)}
+                        className="text-gray-500 hover:text-gray-200"
+                        aria-label="Device actions"
+                      >
+                        <IconDots className="h-4 w-4" />
+                      </button>
+                      {rowMenuId === s.id && (
+                        <div className="absolute right-0 z-10 mt-1 w-36 rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-xl">
+                          <button
+                            onClick={() => startRename(s)}
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                          >
+                            <IconEdit className="h-3.5 w-3.5" /> Rename
+                          </button>
+                          <button
+                            onClick={() => removeDevice(s)}
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-red-300 hover:bg-gray-800"
+                          >
+                            <IconTrash className="h-3.5 w-3.5" /> Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="py-10 text-center text-sm text-gray-500">
+                  <td colSpan={6} className="py-10 text-center text-sm text-gray-500">
                     {loadingDevices ? 'Loading devices…' : 'No smartphones match your filters'}
                   </td>
                 </tr>
@@ -314,17 +503,35 @@ export default function Smartphones() {
             <p style={popupStyles.modalTitle}>Enter the code in the app</p>
             <p style={popupStyles.modalSub}>Then follow setup instructions</p>
             <p style={popupStyles.appName}>PaymentBot</p>
-            <div style={popupStyles.codeBox}>
+            <div style={{ ...popupStyles.codeBox, opacity: codeExpired ? 0.4 : 1 }}>
               <p style={popupStyles.codeText}>{licenseKey}</p>
             </div>
-            <button style={popupStyles.copyBtn} onClick={handleCopyCode}>
-              {copied ? 'Copied!' : 'Copy code'}
-            </button>
-            <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-gray-700 border-t-emerald-500" />
-            <p style={{ ...popupStyles.modalSub, marginBottom: '16px' }}>
-              After completing setup in the app you will be able to verify
-              payments automatically.
+            <p
+              style={{
+                ...popupStyles.modalSub,
+                marginBottom: '16px',
+                color: codeExpired ? '#f87171' : remainingSec <= 60 ? '#fbbf24' : '#6b7280',
+                fontWeight: 600,
+              }}
+            >
+              {codeExpired ? 'Code expired' : `Expires in ${fmtCountdown(remainingSec)}`}
             </p>
+            {codeExpired ? (
+              <button style={popupStyles.primaryBtn} onClick={handleAppInstalled} disabled={generating}>
+                {generating ? 'Generating…' : 'Generate new code'}
+              </button>
+            ) : (
+              <>
+                <button style={popupStyles.copyBtn} onClick={handleCopyCode}>
+                  {copied ? 'Copied!' : 'Copy code'}
+                </button>
+                <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-gray-700 border-t-emerald-500" />
+                <p style={{ ...popupStyles.modalSub, marginBottom: '16px' }}>
+                  After completing setup in the app you will be able to verify
+                  payments automatically.
+                </p>
+              </>
+            )}
             <button style={popupStyles.closeBtn} onClick={closePairing}>
               Cancel
             </button>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'react-qr-code';
 import { STRINGS } from '../utils/i18n';
 import { getOrderIdFromUrl, upiLink, inr, fmtTimer, SUPPORT_WHATSAPP } from '../utils/order';
-import { fetchCheckout, claimPaid, markCheckoutOpened } from '../services/api';
+import { fetchCheckout, claimPaid, markCheckoutOpened, cancelOrder } from '../services/api';
 import { useOrderSocket } from '../hooks/useOrderSocket';
 
 const STEP = {
@@ -453,9 +453,15 @@ export default function CheckoutPage() {
     }
   }, [utr, proof, orderId, t]);
 
-  const onCancel = useCallback(() => {
-    if (window.confirm('Cancel this payment and return to the store?')) window.location.reload();
-  }, []);
+  const onCancel = useCallback(async () => {
+    if (!window.confirm('Cancel this payment and return to the store?')) return;
+    try {
+      await cancelOrder(orderId);
+      window.location.reload();
+    } catch (e) {
+      window.alert(e.message || 'This order can no longer be cancelled.');
+    }
+  }, [orderId]);
 
   if (loading) return <Shell><LoadingScreen /></Shell>;
   if (step === STEP.ERROR) {

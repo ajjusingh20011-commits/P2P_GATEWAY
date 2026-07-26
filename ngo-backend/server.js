@@ -1,4 +1,8 @@
-require('dotenv').config();
+require('dotenv').config({
+  path: process.env.NODE_ENV === 'production'
+    ? '.env'
+    : '.env.local'
+});
 
 const http = require('http');
 const express = require('express');
@@ -111,5 +115,28 @@ async function start() {
 }
 
 start();
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown — closes the HTTP server and Mongo connection so the port
+// and DB connections are actually released (nodemon sends SIGUSR2 on restart,
+// but SIGINT/SIGTERM cover Ctrl+C and process managers/orchestrators too).
+// ---------------------------------------------------------------------------
+const mongoose = require('mongoose');
+
+function shutdown(signal) {
+  console.log(`${signal} received: closing server gracefully`);
+  server.close(() => {
+    mongoose.connection.close(false, () => {
+      console.log('HTTP server and MongoDB connection closed');
+      process.exit(0);
+    });
+  });
+
+  // Force-exit if close() hangs (e.g. open keep-alive sockets).
+  setTimeout(() => process.exit(1), 10000).unref();
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 module.exports = { app, server, io };

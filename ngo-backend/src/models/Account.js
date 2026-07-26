@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { PLATFORMS, ACCOUNT_STATUS, CONNECTION_TYPE } = require('../config/constants');
+const { PLATFORMS, ACCOUNT_STATUS, ACCOUNT_STATUS_REASON, CONNECTION_TYPE } = require('../config/constants');
 
 const accountSchema = new mongoose.Schema(
   {
@@ -36,6 +36,15 @@ const accountSchema = new mongoose.Schema(
       type: String,
       enum: Object.values(ACCOUNT_STATUS),
       default: ACCOUNT_STATUS.DISCONNECTED,
+    },
+    // Disambiguates WHY status === 'paused' — manual (trader toggled off),
+    // otp_required (mid-login, waiting on the trader), or session_expired
+    // (webScraper detected a dead session and an auto-reconnect attempt
+    // also failed). null whenever status isn't 'paused'.
+    statusReason: {
+      type: String,
+      enum: [...Object.values(ACCOUNT_STATUS_REASON), null],
+      default: null,
     },
     // How this account is connected: on-device APK relay (no stored
     // credentials) or a server-side web login the scraper drives.

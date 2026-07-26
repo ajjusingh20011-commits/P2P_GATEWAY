@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, Badge, Button, Toggle, SearchInput, Select, PageHeader } from '../components/ui';
 import {
   IconPlus, IconEdit, IconTrash, IconX, IconChevron, IconRobot, IconWarning, IconDots, IconDetails, IconLock, IconGlobe,
@@ -6,7 +6,19 @@ import {
 import { maskUpi, ACCOUNT_TYPES } from '../utils/mock';
 import { traderApi } from '../services/api';
 import { toast } from '../components/Toaster';
-import { saveWebAccount, getAccounts, toggleAccount, updateAccount, connectAccount, verifyOTP } from '../lib/ngoApi';
+import { useNavigate } from 'react-router-dom';
+import { io } from 'socket.io-client';
+import {
+  saveWebAccount, getAccounts, toggleAccount, updateAccount, connectAccount, verifyOTP, deleteAccount,
+  getDevices, getAccountStatus, NGO_SOCKET_ORIGIN,
+} from '../lib/ngoApi';
+
+// A device counts as "live" for the readiness gate only within this window —
+// same ~4s heartbeat interval + slack used by the Smartphones page's online
+// dot (ngo-backend/src/routes/apk.js).
+const DEVICE_ONLINE_WINDOW_MS = 15 * 1000;
+// Same polling cadence as the Smartphones page's own online dot.
+const LIVE_ICON_POLL_MS = 15 * 1000;
 
 // ---------------------------------------------------------------------------
 // Bank catalog for the "Select Bank" step. Each maps to a valid account_type.
@@ -373,10 +385,26 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
     upi_id: '',
     organization_name: '',
     bank_name: presetBank?.name || '',
-    smartphone_id: '',
+    ngo_device_id: '',
   }));
   const [saving, setSaving] = useState(false);
   const [caps, setCaps] = useState({ month: false, week: false, day: false, hour: false });
+
+  // Real paired devices (ngo-backend Mongo Device, via the same
+  // getDevices() the Smartphones page uses) — Fix 1: this dropdown used to
+  // be a static "No devices" placeholder pointed at an unrelated, dead
+  // MySQL Smartphone model with no data source at all.
+  const [ngoDevices, setNgoDevices] = useState([]);
+  const [devicesLoading, setDevicesLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setDevicesLoading(true);
+    getDevices()
+      .then((list) => { if (!cancelled) setNgoDevices(list || []); })
+      .catch((e) => { console.error('Failed to load devices:', e); if (!cancelled) setNgoDevices([]); })
+      .finally(() => { if (!cancelled) setDevicesLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -407,7 +435,7 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
           upi_id: form.upi_id,
           bank_name: form.bank_name || bank?.name || '',
           organization_name: form.organization_name,
-          smartphone_id: num(form.smartphone_id) ?? null,
+          ngo_device_id: form.ngo_device_id || null,
         })
       );
       toast('Payment detail added', 'success');
@@ -462,9 +490,22 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
       {step === 2 && (
         <div className="space-y-3">
           <Field label="Smartphone">
-            <select value={form.smartphone_id} onChange={(e) => set('smartphone_id', e.target.value)} className={inputCls}>
-              <option value="">No devices</option>
+            <select value={form.ngo_device_id} onChange={(e) => set('ngo_device_id', e.target.value)} className={inputCls}>
+              <option value="">
+                {devicesLoading ? 'Loading devices…' : ngoDevices.length === 0 ? 'No devices' : 'Not linked to a device yet'}
+              </option>
+              {ngoDevices.map((dev) => (
+                <option key={dev.id} value={dev.id}>
+                  {dev.deviceName || dev.deviceModel || 'Unnamed device'}
+                  {dev.online ? ' (online)' : ''}
+                </option>
+              ))}
             </select>
+            {!devicesLoading && ngoDevices.length === 0 && (
+              <span className="mt-1 block text-xs text-gray-500">
+                No paired devices yet — pair one from the Smartphones page first.
+              </span>
+            )}
           </Field>
 
           <Field label="Title / Name">
@@ -1095,6 +1136,46 @@ function ConnTypeIcon({ type, size = 24 }) {
   );
 }
 
+const fmtINR = (n) => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '₹0';
+  return '₹' + v.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+};
+
+// Any configured AMOUNT cap — not the always-present count caps (max_per_*),
+// which carry non-null defaults even when the trader never touched them.
+// Mirrors the same "!= null" convention EditModal already uses to decide
+// whether a limit window's toggle starts "on". Accepts either a trader-native
+// detail (snake_case) or an NGO account (camelCase).
+function configuredCaps(d) {
+  return [
+    { key: 'hourly', label: 'Hourly', cap: d.hourly_limit_amount ?? d.hourlyLimitAmount, used: d.usage?.hourly_amount_total },
+    { key: 'daily', label: 'Daily', cap: d.daily_limit_amount ?? d.dailyLimitAmount, used: d.usage?.daily_amount_total },
+    { key: 'weekly', label: 'Weekly', cap: d.weekly_limit ?? d.weeklyLimit, used: d.usage?.weekly_amount_total },
+    { key: 'monthly', label: 'Monthly', cap: d.monthly_limit ?? d.monthlyLimit, used: d.usage?.monthly_amount_total },
+  ].filter((w) => w.cap != null);
+}
+
+// Small pill: grey/none when no amount cap is configured, a distinct color
+// when at least one is. Hover/tap shows cap vs real used-amount for every
+// configured window (traderController.listPaymentDetails now computes real
+// hour/day/week/month totals via the same computeWindowUsage() the routing
+// engine enforces against — see usageWindows.js). NGO/web accounts have no
+// `usage` object at all (ngo-backend doesn't track spend), so they still get
+// an honest caveat instead of a fabricated number.
+function LimitBadge({ d }) {
+  const caps = configuredCaps(d);
+  if (caps.length === 0) {
+    return <span className="inline-block h-2 w-2 rounded-full bg-gray-600" title="No limits configured" />;
+  }
+  const lines = caps.map((w) => (
+    w.used != null
+      ? `${w.label} cap ${fmtINR(w.cap)} · ${fmtINR(w.used)} used`
+      : `${w.label} cap ${fmtINR(w.cap)} (usage not tracked for this account)`
+  ));
+  return <span className="inline-block h-2 w-2 rounded-full bg-sky-400" title={lines.join('\n')} />;
+}
+
 // NGO accounts (from ngo-backend, port 3000) grouped by their payment platform.
 function groupByPlatform(accounts) {
   return accounts.reduce((groups, account) => {
@@ -1117,10 +1198,32 @@ const platformNames = {
 // Mask an NGO UPI id the same way maskUpi handles trader UPIs.
 const platformLabel = (p) => platformNames[p] || p || 'UPI';
 
+// Visual treatment per NGO Account.status. 'paused' used to be ambiguous —
+// manual pause, a genuine OTP request, and a dead session all wrote the same
+// status value — statusReason now disambiguates it, so the label (and the
+// OTP box's visibility, see showingOtp above) reflects the real cause.
+const NGO_STATUS_META = {
+  live: { label: 'Live', badge: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' },
+  pending: { label: 'Connecting…', badge: 'border-amber-500/30 bg-amber-500/10 text-amber-300' },
+  failed: { label: 'Connection failed', badge: 'border-red-500/30 bg-red-500/10 text-red-300' },
+};
+const PAUSED_REASON_META = {
+  manual_pause: { label: 'Paused', badge: 'border-gray-700 bg-gray-800 text-gray-400' },
+  otp_required: { label: 'Waiting for OTP', badge: 'border-amber-500/30 bg-amber-500/10 text-amber-300' },
+  session_expired: { label: 'Session expired', badge: 'border-red-500/30 bg-red-500/10 text-red-300' },
+};
+const ngoStatusMeta = (status, statusReason) => {
+  if (status === 'paused') {
+    return PAUSED_REASON_META[statusReason]
+      || { label: 'Paused', badge: 'border-gray-700 bg-gray-800 text-gray-400' };
+  }
+  return NGO_STATUS_META[status] || { label: status || 'Unknown', badge: 'border-gray-700 bg-gray-800 text-gray-500' };
+};
+
 // ---------------------------------------------------------------------------
 // LEFT column — Offers grouped by payment method
 // ---------------------------------------------------------------------------
-function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggleNGO }) {
+function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggleNGO, ngoToggleBusyId }) {
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState(null);
 
@@ -1217,10 +1320,13 @@ function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggle
                       </span>
                     ))}
                   </div>
-                  <ConnTypeIcon
-                    type={g.items.some((i) => i.connectionType === 'web') ? 'web' : 'apk'}
-                    size={28}
-                  />
+                  <div className="flex items-center gap-2">
+                    <LimitBadge d={g.items.find((i) => configuredCaps(i).length > 0) || g.items[0] || {}} />
+                    <ConnTypeIcon
+                      type={g.items.some((i) => i.connectionType === 'web') ? 'web' : 'apk'}
+                      size={28}
+                    />
+                  </div>
                 </div>
               </div>
             );
@@ -1235,6 +1341,7 @@ function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggle
             })
             .map((a) => {
               const live = a.status === 'live';
+              const meta = ngoStatusMeta(a.status, a.statusReason);
               return (
                 <div key={`ngo-${a._id}`} className="rounded-lg border border-gray-800 bg-gray-950 p-3">
                   <div className="flex items-start justify-between gap-3">
@@ -1248,23 +1355,25 @@ function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggle
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Toggle checked={live} onChange={() => onToggleNGO(a)} />
+                      <span title={live ? undefined : 'Turning this on attempts to reconnect'}>
+                        <Toggle checked={live} disabled={ngoToggleBusyId === a._id} onChange={() => onToggleNGO(a)} />
+                      </span>
                     </div>
                   </div>
 
                   <div className="mt-3 flex items-end justify-between gap-2">
                     <div className="flex flex-wrap gap-1.5">
-                      <span
-                        className={`rounded-md border px-2 py-0.5 text-xs ${
-                          live
-                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                            : 'border-gray-700 bg-gray-800 text-gray-500'
-                        }`}
-                      >
+                      <span className="rounded-md border border-gray-700 bg-gray-800 px-2 py-0.5 text-xs text-gray-300">
                         {a.displayName}
                       </span>
+                      <span className={`rounded-md border px-2 py-0.5 text-xs ${meta.badge}`}>
+                        {meta.label}
+                      </span>
                     </div>
-                    <ConnTypeIcon type={a.connectionType === 'web' ? 'web' : 'apk'} size={28} />
+                    <div className="flex items-center gap-2">
+                      <LimitBadge d={a} />
+                      <ConnTypeIcon type={a.connectionType === 'web' ? 'web' : 'apk'} size={28} />
+                    </div>
                   </div>
                 </div>
               );
@@ -1284,7 +1393,12 @@ function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggle
 // ---------------------------------------------------------------------------
 // RIGHT column — Details grouped by bank
 // ---------------------------------------------------------------------------
-function DetailsColumn({ details, onToggle, onLink, onEdit, onAdd, ngoAccounts = [], onToggleNGO }) {
+function DetailsColumn({
+  details, onToggle, onLink, onEdit, onAdd, ngoAccounts = [], onToggleNGO, onDeleteNGO,
+  onRetryNGO, otpValues, onOtpChange, onSubmitOtp, otpBusyId,
+  linkBlocked = {}, linkChecking = null, onReconnect, ngoToggleBusyId,
+  deviceLiveMap = {}, ngoAliveMap = {},
+}) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all'); // all | active | inactive
   const [onlyUnlinked, setOnlyUnlinked] = useState(false);
@@ -1405,21 +1519,32 @@ function DetailsColumn({ details, onToggle, onLink, onEdit, onAdd, ngoAccounts =
                         {/* ON/OFF toggle (red off / green on) */}
                         <Toggle checked={!!d.is_active_detail} onChange={() => onToggle(d)} />
 
-                        {/* robot online/offline */}
+                        {/* robot online/offline — real heartbeat liveness
+                            (deviceLiveMap, polled every 15s), not just
+                            whether a device is assigned at all */}
                         <span
-                          className={d.smartphone_id ? 'text-emerald-400' : 'text-gray-600'}
-                          title={d.smartphone_id ? 'Device online' : 'No device connected'}
+                          className={d.ngo_device_id && deviceLiveMap[d.ngo_device_id] ? 'text-emerald-400' : 'text-gray-600'}
+                          title={
+                            !d.ngo_device_id
+                              ? 'No device connected'
+                              : deviceLiveMap[d.ngo_device_id]
+                                ? 'Device online — heartbeat within the last 15s'
+                                : 'Device offline — no recent heartbeat'
+                          }
                         >
                           <IconRobot className="h-5 w-5" />
                         </span>
 
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-gray-100">{d.account_name || 'Untitled'}</p>
-                          <p className="truncate text-xs text-gray-500">{maskUpi(d.upi_id)}</p>
+                          <p className="truncate text-xs text-gray-500">{d.upi_id}</p>
                         </div>
 
                         {/* connection-type icon (apk=android/teal · web=globe/coral) */}
                         <ConnTypeIcon type={connType(d)} size={24} />
+
+                        {/* limit badge (any amount cap configured) */}
+                        <LimitBadge d={d} />
 
                         {/* limit dot + Day label */}
                         <div className="flex flex-col items-center" title={dot.title}>
@@ -1434,18 +1559,38 @@ function DetailsColumn({ details, onToggle, onLink, onEdit, onAdd, ngoAccounts =
 
                       {/* inline warning + action */}
                       {highlight && (
-                        <div className="mt-2 flex items-center justify-between gap-2 text-xs">
-                          <span className="text-amber-300">
-                            {exhausted ? 'Limit exhausted' : 'Not linked to Offer'}
-                          </span>
-                          {exhausted ? (
-                            <button onClick={() => onEdit(d)} className="rounded-md border border-amber-500/40 px-2 py-0.5 font-medium text-amber-200 hover:bg-amber-500/20">
-                              Update limit
-                            </button>
-                          ) : (
-                            <button onClick={() => onLink(d)} className="rounded-md border border-amber-500/40 px-2 py-0.5 font-medium text-amber-200 hover:bg-amber-500/20">
-                              Link
-                            </button>
+                        <div className="mt-2 space-y-1.5 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-amber-300">
+                              {exhausted ? 'Limit exhausted' : 'Not linked to Offer'}
+                            </span>
+                            {exhausted ? (
+                              <button onClick={() => onEdit(d)} className="rounded-md border border-amber-500/40 px-2 py-0.5 font-medium text-amber-200 hover:bg-amber-500/20">
+                                Update limit
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => onLink(d)}
+                                disabled={linkChecking === d.id}
+                                className="whitespace-nowrap rounded-md border border-amber-500/40 px-2 py-0.5 font-medium text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+                              >
+                                {linkChecking === d.id ? 'Checking…' : 'Link'}
+                              </button>
+                            )}
+                          </div>
+                          {/* Readiness gate: the last Link attempt found no live
+                              data source (device heartbeat / web session), so
+                              the link was blocked instead of silently proceeding. */}
+                          {!exhausted && linkBlocked[d.id] && (
+                            <div className="flex items-center justify-between gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1">
+                              <span className="text-red-300">{linkBlocked[d.id].message}</span>
+                              <button
+                                onClick={() => onReconnect(linkBlocked[d.id])}
+                                className="whitespace-nowrap rounded-md border border-red-500/40 px-2 py-0.5 font-medium text-red-200 hover:bg-red-500/20"
+                              >
+                                {linkBlocked[d.id].actionLabel}
+                              </button>
+                            </div>
                           )}
                         </div>
                       )}
@@ -1479,33 +1624,98 @@ function DetailsColumn({ details, onToggle, onLink, onEdit, onAdd, ngoAccounts =
               <div className="space-y-2">
                 {accounts.map((a) => {
                   const live = a.status === 'live';
+                  const meta = ngoStatusMeta(a.status, a.statusReason);
+                  // 'paused' alone is ambiguous — manual pause, a genuine OTP
+                  // request, and a dead session all set the same status value
+                  // (see statusReason, added specifically to disambiguate).
+                  // Only show the OTP box when it's actually an OTP request.
+                  const showingOtp = a.status === 'paused' && a.statusReason === 'otp_required';
+                  const otpVal = otpValues[a._id] || '';
+                  const otpBusy = otpBusyId === a._id;
                   return (
                     <div key={a._id} className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2.5">
                       <div className="flex items-center gap-3">
-                        <Toggle checked={live} onChange={() => onToggleNGO(a)} />
+                        <span title={live ? undefined : 'Turning this on attempts to reconnect'}>
+                          <Toggle checked={live} disabled={ngoToggleBusyId === a._id} onChange={() => onToggleNGO(a)} />
+                        </span>
 
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-gray-100">{a.displayName || 'Untitled'}</p>
-                          <p className="truncate text-xs text-gray-500">{maskUpi(a.upiId)}</p>
+                          <p className="truncate text-xs text-gray-500">{a.upiId}</p>
                         </div>
 
                         {/* connection-type icon (apk=android/teal · web=globe/coral) */}
                         <ConnTypeIcon type={a.connectionType === 'web' ? 'web' : 'apk'} size={24} />
 
-                        {/* live/paused dot + Day label */}
-                        <div className="flex flex-col items-center" title={live ? 'Live' : 'Paused'}>
-                          <span className={`h-2.5 w-2.5 rounded-full ${live ? 'bg-emerald-500' : 'bg-gray-500'}`} />
-                          <span className="mt-0.5 text-[10px] text-gray-500">Day</span>
-                        </div>
+                        {/* limit badge (any amount cap configured) */}
+                        <LimitBadge d={a} />
+
+                        {/* connection-status badge: pending/paused/failed/live */}
+                        <span className={`whitespace-nowrap rounded-md border px-2 py-0.5 text-xs ${meta.badge}`}>
+                          {meta.label}
+                        </span>
+
+                        {/* real SessionStore.isSessionAlive check (polled every
+                            15s) disagreeing with the DB's cached 'live' status —
+                            the 60s monitor loop hasn't caught up yet */}
+                        {live && ngoAliveMap[a._id] === false && (
+                          <span
+                            className="h-2 w-2 rounded-full bg-red-500"
+                            title="Marked live, but the session isn't responding right now"
+                          />
+                        )}
+
+                        <span title={live ? undefined : 'Available once connected'}>
+                          <button
+                            onClick={() => onEdit(ngoAccountToEditable(a))}
+                            disabled={!live}
+                            className="text-gray-500 hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-500"
+                            aria-label="Edit detail"
+                          >
+                            <IconEdit className="h-4 w-4" />
+                          </button>
+                        </span>
+
+                        {a.status === 'failed' && (
+                          <button
+                            onClick={() => onRetryNGO(a)}
+                            disabled={otpBusy}
+                            className="whitespace-nowrap rounded-md border border-red-500/40 px-2 py-1 text-xs font-medium text-red-200 hover:bg-red-500/20 disabled:opacity-50"
+                          >
+                            Retry
+                          </button>
+                        )}
 
                         <button
-                          onClick={() => onEdit(ngoAccountToEditable(a))}
-                          className="text-gray-500 hover:text-gray-200"
-                          aria-label="Edit detail"
+                          onClick={() => onDeleteNGO(a)}
+                          className="text-gray-500 hover:text-red-400"
+                          aria-label="Delete account"
                         >
-                          <IconEdit className="h-4 w-4" />
+                          <IconTrash className="h-4 w-4" />
                         </button>
                       </div>
+
+                      {showingOtp && (
+                        <div className="mt-2 flex items-center gap-2 border-t border-gray-800 pt-2">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            value={otpVal}
+                            onChange={(e) => onOtpChange(a._id, e.target.value.replace(/\D/g, ''))}
+                            placeholder="6-digit OTP"
+                            disabled={otpBusy}
+                            className="w-28 rounded-md border border-gray-700 bg-gray-800 px-2 py-1 text-center text-sm tracking-widest text-gray-100 outline-none focus:border-emerald-500"
+                          />
+                          <button
+                            onClick={() => onSubmitOtp(a._id)}
+                            disabled={otpBusy || otpVal.length !== 6}
+                            className="rounded-md border border-emerald-500/40 px-2 py-1 text-xs font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+                          >
+                            Verify
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1528,6 +1738,7 @@ function DetailsColumn({ details, onToggle, onLink, onEdit, onAdd, ngoAccounts =
 // Page
 // ---------------------------------------------------------------------------
 export default function Offers() {
+  const navigate = useNavigate();
   const [details, setDetails] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -1535,6 +1746,12 @@ export default function Offers() {
   const [editing, setEditing] = useState(null);
   const [ngoAccounts, setNgoAccounts] = useState([]);
   const [ngoLoading, setNgoLoading] = useState(false);
+  // Refs so the polling/socket effects below (deliberately mounted once,
+  // empty dep array) always see current state without re-subscribing.
+  const detailsRef = useRef(details);
+  useEffect(() => { detailsRef.current = details; }, [details]);
+  const ngoAccountsRef = useRef(ngoAccounts);
+  useEffect(() => { ngoAccountsRef.current = ngoAccounts; }, [ngoAccounts]);
 
   const load = async () => {
     try {
@@ -1581,38 +1798,316 @@ export default function Offers() {
     return () => window.removeEventListener('ngo-account-added', loadNGOAccounts);
   }, []);
 
-  // Optimistically flip an NGO account's status, then persist via ngoApi.
-  const toggleNGO = async (account) => {
-    const newStatus = account.status === 'live' ? 'paused' : 'live';
-    setNgoAccounts((list) => list.map((a) => (a._id === account._id ? { ...a, status: newStatus } : a)));
-    try {
-      await toggleAccount(account._id, newStatus);
-      // Keep the mirrored payment_detail's routing eligibility in sync —
-      // best-effort, doesn't affect the toggle the user is waiting on.
-      if (account.gatewayPaymentDetailId) {
+  // Poll while any account is still settling (pending = scraper session
+  // starting, paused = awaiting OTP) so the trader sees it flip to
+  // live/failed without a manual refresh. Stops once nothing is in flight.
+  const hasPendingNgoAccounts = useMemo(
+    () => ngoAccounts.some((a) => a.status === 'pending' || a.status === 'paused'),
+    [ngoAccounts]
+  );
+  useEffect(() => {
+    if (!hasPendingNgoAccounts) return undefined;
+    const id = setInterval(loadNGOAccounts, 5000);
+    return () => clearInterval(id);
+  }, [hasPendingNgoAccounts]);
+
+  // ---------------------------------------------------------------------
+  // Item 5: real device liveness for the APK "robot" icon — same source
+  // and ~15s online window the Smartphones page's own dot uses, polled
+  // continuously so the icon (and the auto-unlink below) track a device
+  // going offline in real time, not just at page load / Link click.
+  // Item 4 (APK half): reuses this exact poll to detect a linked, active
+  // device going offline and auto-flips is_active back to false.
+  // ---------------------------------------------------------------------
+  const [deviceLiveMap, setDeviceLiveMap] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      let list;
+      try {
+        list = await getDevices();
+      } catch (e) {
+        return; // transient fetch failure — keep the last-known map
+      }
+      if (cancelled) return;
+      const map = {};
+      (list || []).forEach((dev) => { map[dev.id] = !!dev.online; });
+      setDeviceLiveMap((prev) => {
+        Object.keys(prev).forEach((devId) => {
+          if (prev[devId] && !map[devId]) {
+            detailsRef.current
+              .filter((d) => d.ngo_device_id === devId && d.is_active)
+              .forEach((d) => {
+                patch(d, { is_active: false });
+                toast(`${d.account_name || d.upi_id} went offline — unlinked from its Offer`, 'error');
+              });
+          }
+        });
+        return map;
+      });
+    };
+    poll();
+    const id = setInterval(poll, LIVE_ICON_POLL_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  // ---------------------------------------------------------------------
+  // Item 5 (web half): real SessionStore.isSessionAlive for accounts the DB
+  // currently says are 'live' — catches the case where the session died but
+  // the periodic monitor (webScraper.js, 60s cadence) hasn't caught up yet.
+  // ---------------------------------------------------------------------
+  const [ngoAliveMap, setNgoAliveMap] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      const liveWebAccounts = ngoAccountsRef.current.filter((a) => a.status === 'live' && a.connectionType === 'web');
+      if (liveWebAccounts.length === 0) return;
+      const entries = await Promise.all(liveWebAccounts.map(async (a) => {
+        try {
+          const res = await getAccountStatus(a._id);
+          return [a._id, !!res.isAlive];
+        } catch (e) {
+          return [a._id, null]; // unknown — don't assume offline on a fetch error
+        }
+      }));
+      if (cancelled) return;
+      setNgoAliveMap((prev) => {
+        const next = { ...prev };
+        entries.forEach(([id, alive]) => { if (alive !== null) next[id] = alive; });
+        return next;
+      });
+    };
+    poll();
+    const id = setInterval(poll, LIVE_ICON_POLL_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  // Item 4 (web half): auto-unlink on a REAL session-death push — the
+  // existing account-status socket event webScraper.js already emits when
+  // its monitor gives up (after item 3's auto-reconnect attempt fails), not
+  // a new detection mechanism.
+  useEffect(() => {
+    const ngoId = localStorage.getItem('ngo_id');
+    if (!ngoId) return undefined;
+    const socket = io(NGO_SOCKET_ORIGIN);
+    socket.emit('join', ngoId);
+    socket.on('account-status', ({ accountId, status }) => {
+      if (status !== 'session_expired') return;
+      const account = ngoAccountsRef.current.find((a) => a._id === accountId);
+      loadNGOAccounts();
+      if (account?.gatewayPaymentDetailId) {
         traderApi
-          .updatePaymentDetail(account.gatewayPaymentDetailId, { is_active_detail: newStatus === 'live' })
+          .updatePaymentDetail(account.gatewayPaymentDetailId, { is_active: false })
+          .catch((e) => console.error('Auto-unlink sync failed:', e));
+        toast(`${account.displayName || account.upiId || 'Account'} session expired — unlinked from its Offer`, 'error');
+      }
+    });
+    return () => socket.disconnect();
+  }, []);
+
+  // Busy-disables an NGO account's toggle while a request is in flight — the
+  // toggle no longer requires status==='live' to be clickable (turning ON is
+  // now itself the reconnect action), so this replaces the old disabled={!live}
+  // guard to still stop a double-click firing two concurrent reconnects.
+  const [ngoToggleBusyId, setNgoToggleBusyId] = useState(null);
+
+  // Turning OFF: unconditional. The backend's /toggle route now really closes
+  // the live session (SessionStore.removeSession), not just a status flip.
+  // Turning ON: the backend attempts a real cookie-first reconnect for a
+  // web-login account with no live session (initiateLogin) as part of the
+  // same request — this IS the linking action now (item 4): the mirrored
+  // payment_detail's is_active only gets set true if the account actually
+  // reached 'live', never optimistically.
+  const toggleNGO = async (account) => {
+    const turningOn = account.status !== 'live';
+    const newStatus = turningOn ? 'live' : 'paused';
+    setNgoToggleBusyId(account._id);
+    if (!turningOn) {
+      setNgoAccounts((list) => list.map((a) => (a._id === account._id ? { ...a, status: 'paused', statusReason: 'manual_pause' } : a)));
+    }
+    try {
+      const { account: fresh, reconnect } = await toggleAccount(account._id, newStatus);
+      setNgoAccounts((list) => list.map((a) => (a._id === account._id ? fresh : a)));
+
+      if (account.gatewayPaymentDetailId) {
+        const reallyLive = fresh.status === 'live';
+        traderApi
+          .updatePaymentDetail(account.gatewayPaymentDetailId, {
+            is_active_detail: turningOn ? true : false,
+            is_active: turningOn ? reallyLive : false,
+          })
           .catch((e) => console.error('Routing sync failed:', e));
+      }
+
+      if (turningOn && fresh.status !== 'live') {
+        if (fresh.statusReason === 'otp_required') {
+          toast('OTP required — check the phone linked to this account', 'info');
+        } else if (reconnect && reconnect.success === false) {
+          toast(reconnect.message || 'Reconnect failed — try again', 'error');
+        }
       }
     } catch (e) {
       toast(e.message, 'error');
       loadNGOAccounts();
+    } finally {
+      setNgoToggleBusyId(null);
     }
   };
 
-  // Optimistic single-field patch used by toggles / link.
-  const patch = async (d, body, revertKey) => {
+  const deleteNGO = async (account) => {
+    if (!window.confirm(`Delete ${account.displayName || 'this account'}? This cannot be undone.`)) return;
+    try {
+      await deleteAccount(account._id);
+      setNgoAccounts((list) => list.filter((a) => a._id !== account._id));
+      toast('Account deleted', 'success');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+
+  // Retry ('failed' status) — re-triggers the same connectAccount() call used
+  // on initial save, no delete/re-create needed. Per-account OTP entry, keyed
+  // by accountId so more than one account "waiting for OTP" doesn't collide.
+  const [otpValues, setOtpValues] = useState({});
+  const [otpBusyId, setOtpBusyId] = useState(null);
+
+  const retryConnectNGO = async (account) => {
+    setOtpBusyId(account._id);
+    try {
+      const result = await connectAccount(account._id);
+      if (result.needsOTP || result.data?.needsOTP) {
+        toast('OTP required — check the phone linked to this account', 'info');
+      } else {
+        toast(result.message || 'Reconnected', 'success');
+      }
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setOtpBusyId(null);
+      loadNGOAccounts();
+    }
+  };
+
+  const submitNGOOtp = async (accountId) => {
+    const otp = (otpValues[accountId] || '').trim();
+    if (otp.length !== 6) { toast('Enter the 6-digit OTP', 'error'); return; }
+    setOtpBusyId(accountId);
+    try {
+      await verifyOTP(accountId, otp);
+      toast('Connected successfully', 'success');
+      setOtpValues((v) => ({ ...v, [accountId]: '' }));
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setOtpBusyId(null);
+      loadNGOAccounts();
+    }
+  };
+
+  // Optimistic patch used by toggles / link. Reverts every field the call
+  // touched (not just one) back to its pre-patch value if the request fails
+  // — matters now that toggle-on can patch is_active_detail AND is_active
+  // together in one call.
+  const patch = async (d, body) => {
     setDetails((list) => list.map((x) => (x.id === d.id ? { ...x, ...body } : x)));
     try {
       await traderApi.updatePaymentDetail(d.id, body);
     } catch (e) {
-      setDetails((list) => list.map((x) => (x.id === d.id ? { ...x, [revertKey]: d[revertKey] } : x)));
+      const revert = {};
+      Object.keys(body).forEach((k) => { revert[k] = d[k]; });
+      setDetails((list) => list.map((x) => (x.id === d.id ? { ...x, ...revert } : x)));
       toast(apiError(e), 'error');
     }
   };
 
-  const toggleDetail = (d) => patch(d, { is_active_detail: !d.is_active_detail }, 'is_active_detail');
-  const linkDetail = (d) => patch(d, { is_active: true }, 'is_active');
+  const linkDetail = (d) => patch(d, { is_active: true });
+
+  // Readiness gate: before actually linking, verify the detail has a real,
+  // currently-live data source — an APK device heartbeating within the last
+  // ~15s, or (for a web-login mirror) a genuinely alive scraper session, not
+  // just the Mongo status field. Checked fresh on every attempt rather than
+  // from cached state, since liveness is inherently time-sensitive.
+  const [linkBlocked, setLinkBlocked] = useState({});
+  const [linkChecking, setLinkChecking] = useState(null);
+
+  const checkDetailLiveness = async (d) => {
+    const mirrorAccount = ngoAccounts.find((a) => a.gatewayPaymentDetailId === d.id);
+    if (mirrorAccount) {
+      try {
+        const res = await getAccountStatus(mirrorAccount._id);
+        return { live: !!res.isAlive, kind: 'web', account: mirrorAccount };
+      } catch (e) {
+        return { live: false, kind: 'web', account: mirrorAccount };
+      }
+    }
+    if (d.ngo_device_id) {
+      try {
+        const devices = await getDevices();
+        const device = devices.find((dev) => dev.id === d.ngo_device_id);
+        const live = !!device && device.lastSeen
+          && Date.now() - new Date(device.lastSeen).getTime() <= DEVICE_ONLINE_WINDOW_MS;
+        return { live, kind: 'apk', device };
+      } catch (e) {
+        return { live: false, kind: 'apk', device: null };
+      }
+    }
+    // Never linked to any real device or web session — nothing to check
+    // liveness against, so there's no live data source by definition.
+    return { live: false, kind: 'apk', device: null };
+  };
+
+  // Shared by the manual "Link" retry button AND toggle-on (item 4): checks
+  // real liveness, links (is_active:true) if live, otherwise records why for
+  // the inline blocked-message UI. `extra` lets toggle-on fold
+  // is_active_detail into the same PUT instead of a second round trip.
+  const linkIfLive = async (d, extra = {}) => {
+    setLinkChecking(d.id);
+    try {
+      const check = await checkDetailLiveness(d);
+      if (!check.live) {
+        const message = check.kind === 'web'
+          ? "Not receiving data — the web-login session isn't connected."
+          : 'Not receiving data — no recent heartbeat from the paired device.';
+        const actionLabel = check.kind === 'web' ? 'Reconnect account' : 'Go to Smartphones';
+        setLinkBlocked((b) => ({ ...b, [d.id]: { message, actionLabel, kind: check.kind, account: check.account } }));
+        if (Object.keys(extra).length) await patch(d, extra);
+        return false;
+      }
+      setLinkBlocked((b) => {
+        if (!(d.id in b)) return b;
+        const n = { ...b };
+        delete n[d.id];
+        return n;
+      });
+      await patch(d, { is_active: true, ...extra });
+      return true;
+    } finally {
+      setLinkChecking(null);
+    }
+  };
+
+  const attemptLink = (d) => linkIfLive(d);
+
+  // Toggle-off is unconditional. Toggle-on now IS the linking action: flip
+  // is_active_detail and, in the same request, set is_active:true only if a
+  // real liveness check passes — otherwise is_active_detail still turns on
+  // but is_active stays false, with the same inline "reconnect" message the
+  // manual Link button already shows.
+  const toggleDetail = (d) => {
+    if (d.is_active_detail) return patch(d, { is_active_detail: false });
+    return linkIfLive(d, { is_active_detail: true });
+  };
+
+  // Web-login: jump straight into the existing per-row OTP/reconnect flow.
+  // APK: there's no "reconnect" action on this page at all — send the
+  // trader to the Smartphones pairing flow, the real reconnect surface.
+  const reconnectFromBlock = (blocked) => {
+    if (blocked.kind === 'web' && blocked.account) {
+      retryConnectNGO(blocked.account);
+    } else {
+      navigate('/smartphones');
+    }
+  };
 
   const bulkToggle = async (items, value) => {
     setDetails((list) => list.map((x) => (items.some((i) => i.id === x.id) ? { ...x, is_active_detail: value } : x)));
@@ -1644,8 +2139,28 @@ export default function Offers() {
         <p className="py-16 text-center text-sm text-gray-500">Loading…</p>
       ) : (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          <OffersColumn details={details} onBulkToggle={bulkToggle} onAdd={openAdd} ngoAccounts={ngoAccounts} onToggleNGO={toggleNGO} />
-          <DetailsColumn details={details} onToggle={toggleDetail} onLink={linkDetail} onEdit={setEditing} onAdd={openAdd} ngoAccounts={ngoAccounts} onToggleNGO={toggleNGO} />
+          <OffersColumn details={details} onBulkToggle={bulkToggle} onAdd={openAdd} ngoAccounts={ngoAccounts} onToggleNGO={toggleNGO} ngoToggleBusyId={ngoToggleBusyId} />
+          <DetailsColumn
+            details={details}
+            onToggle={toggleDetail}
+            onLink={attemptLink}
+            linkBlocked={linkBlocked}
+            linkChecking={linkChecking}
+            onReconnect={reconnectFromBlock}
+            onEdit={setEditing}
+            onAdd={openAdd}
+            ngoAccounts={ngoAccounts}
+            onToggleNGO={toggleNGO}
+            ngoToggleBusyId={ngoToggleBusyId}
+            onDeleteNGO={deleteNGO}
+            onRetryNGO={retryConnectNGO}
+            otpValues={otpValues}
+            onOtpChange={(id, v) => setOtpValues((m) => ({ ...m, [id]: v }))}
+            onSubmitOtp={submitNGOOtp}
+            otpBusyId={otpBusyId}
+            deviceLiveMap={deviceLiveMap}
+            ngoAliveMap={ngoAliveMap}
+          />
         </div>
       )}
 

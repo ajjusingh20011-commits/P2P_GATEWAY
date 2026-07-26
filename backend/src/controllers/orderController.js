@@ -246,6 +246,31 @@ const cancel = asyncHandler(async (req, res) => {
   return ok(res, { order: orderView(order) });
 });
 
+/* ----------------------- POST /:id/cancel-checkout ------------------------- */
+// Public (checkout page): the customer's own "Cancel" button. Only allowed
+// before they've claimed payment — once claimed_paid, only a trader/admin
+// can act (see the authenticated POST /:id/cancel above), so a donor can't
+// cancel out from under a payment they already asserted they made.
+const cancelCheckout = asyncHandler(async (req, res) => {
+  const order = await findOrder(req.params.id);
+  if (!order) return fail(res, 404, 'Order not found');
+  if (!['pending', 'checkout_open'].includes(order.status)) {
+    return fail(res, 409, `Order can no longer be cancelled (status: ${order.status})`);
+  }
+
+  const traderId = order.trader_id;
+  await order.update({ status: 'cancelled' });
+  if (traderId) await routingEngine.releaseTrader(traderId, order.id);
+
+  emitToMerchant(order.merchant_id, 'order:cancelled', { order_id: order.uuid });
+  if (traderId) emitToTrader(traderId, 'order:cancelled', { order_id: order.uuid });
+  emitToAdmin('order:cancelled', { order_id: order.uuid });
+  emitToOrder(order.uuid, 'order:cancelled', { order_id: order.uuid, status: 'cancelled' });
+  webhookService.sendWebhook(order.merchant_id, 'order.cancelled', { order_id: order.uuid }).catch(() => {});
+
+  return ok(res, { success: true, status: 'cancelled', order: orderView(order) });
+});
+
 /* --------------------------- POST /:id/expire ----------------------------- */
 const expire = asyncHandler(async (req, res) => {
   const order = await findOrder(req.params.id);
@@ -409,4 +434,4 @@ const list = asyncHandler(async (req, res) => {
   return ok(res, { orders: rows.map(orderView), pagination: { page, limit, total: count } });
 });
 
-module.exports = { create, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, markPaid, cancel, verifyPayment };
+module.exports = { create, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, markPaid, cancel, cancelCheckout, verifyPayment };

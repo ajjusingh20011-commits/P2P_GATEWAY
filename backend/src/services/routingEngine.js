@@ -23,6 +23,7 @@ const logger = require('../utils/logger');
 const { connection, isRedisAvailable } = require('../loaders/redis');
 const { emitToTrader, emitToAdmin, emitToMerchant, emitToOrder, broadcast } = require('../websocket');
 const upiService = require('./upiService');
+const { computeWindowUsage } = require('./usageWindows');
 
 const ACTIVE = db.Order.ACTIVE_STATUSES; // pending, checkout_open, claimed_paid, under_review
 const LOCK_TTL_SEC = config.platform.orderExpiryMinutes * 60 + 60;
@@ -102,13 +103,13 @@ async function hasSameAmountActiveOrder(paymentDetailId, amount) {
 /** First eligible account under a trader for `amount`, or null. */
 async function pickEligibleAccount(trader, amount) {
   const accounts = trader.paymentDetails || [];
-  const now = Date.now();
-  const hourAgo = new Date(now - 3600000);
-  const dayStart = new Date();
-  dayStart.setHours(0, 0, 0, 0);
+  const now = new Date();
 
   for (const account of accounts) {
     if (!account.is_active) continue;
+    // Trader-facing on/off switch (Offers page toggle) — distinct from the
+    // admin `is_active` linkage flag above; both must pass.
+    if (!account.is_active_detail) continue;
     if (Number(account.min_amount) > 0 && Number(amount) < Number(account.min_amount)) continue;
     if (Number(account.max_amount) > 0 && Number(amount) > Number(account.max_amount)) continue;
 
@@ -119,20 +120,35 @@ async function pickEligibleAccount(trader, amount) {
       continue;
     }
 
-    // Hourly / daily COUNT limits (exclude failed/rejected).
-    if (account.max_per_hour) {
+    // Legacy per-account daily amount cap (written by smartMerge.js,
+    // reset nightly by settlementJob.js).
+    if (Number(account.daily_limit) > 0 && Number(account.today_used) + Number(amount) > Number(account.daily_limit)) continue;
+
+    const needsWindowCheck = account.max_per_hour || account.max_per_day || account.max_per_week || account.max_per_month
+      || account.hourly_limit_amount != null || account.daily_limit_amount != null
+      || account.weekly_limit != null || account.monthly_limit != null;
+
+    if (needsWindowCheck) {
+      // Same live hour/day/week/month aggregation the usage badge reads
+      // (traderController.listPaymentDetails) — one shared computation, so
+      // what's enforced here and what's displayed there can't drift apart.
+      // In-flight (non-terminal-failed) orders count too: an order reserves
+      // capacity the moment it's created, before it settles.
       // eslint-disable-next-line no-await-in-loop
-      const hourlyCount = await db.Order.count({
-        where: { payment_detail_id: account.id, status: { [Op.notIn]: ['failed', 'rejected'] }, created_at: { [Op.gte]: hourAgo } },
+      const usage = await computeWindowUsage(account.id, account.monthly_start_date, {
+        statusWhere: { [Op.notIn]: ['failed', 'rejected'] },
+        now,
       });
-      if (hourlyCount >= account.max_per_hour) continue;
-    }
-    if (account.max_per_day) {
-      // eslint-disable-next-line no-await-in-loop
-      const dailyCount = await db.Order.count({
-        where: { payment_detail_id: account.id, status: { [Op.notIn]: ['failed', 'rejected'] }, created_at: { [Op.gte]: dayStart } },
-      });
-      if (dailyCount >= account.max_per_day) continue;
+
+      if (account.max_per_hour && usage.used_this_hour >= account.max_per_hour) continue;
+      if (account.max_per_day && usage.used_today >= account.max_per_day) continue;
+      if (account.max_per_week && usage.used_this_week >= account.max_per_week) continue;
+      if (account.max_per_month && usage.used_this_month >= account.max_per_month) continue;
+
+      if (account.hourly_limit_amount != null && usage.hourly_amount_total + Number(amount) > Number(account.hourly_limit_amount)) continue;
+      if (account.daily_limit_amount != null && usage.daily_amount_total + Number(amount) > Number(account.daily_limit_amount)) continue;
+      if (account.weekly_limit != null && usage.weekly_amount_total + Number(amount) > Number(account.weekly_limit)) continue;
+      if (account.monthly_limit != null && usage.monthly_amount_total + Number(amount) > Number(account.monthly_limit)) continue;
     }
 
     return account;

@@ -28,6 +28,23 @@ const ACCOUNT_STATUS = {
   LIVE: 'live',
   PAUSED: 'paused',
   DISCONNECTED: 'disconnected',
+  // Created but a real login has never been attempted yet.
+  PENDING: 'pending',
+  // A real login (or OTP submit) was attempted and genuinely failed —
+  // distinct from PAUSED (OTP pending / session expired) and PENDING
+  // (never attempted).
+  FAILED: 'failed',
+};
+
+// Why an account is currently PAUSED — PAUSED alone is ambiguous (a trader
+// manually turning it off looks identical to a genuine OTP request or a
+// dead session, since all three write the same status value). null when
+// status isn't PAUSED, or for a PAUSED account whose reason predates this
+// field.
+const ACCOUNT_STATUS_REASON = {
+  MANUAL_PAUSE: 'manual_pause',
+  OTP_REQUIRED: 'otp_required',
+  SESSION_EXPIRED: 'session_expired',
 };
 
 // How an account's transactions are captured: an on-device APK relay, or a
@@ -81,6 +98,7 @@ module.exports = {
   NGO_STATUS,
   PLATFORMS,
   ACCOUNT_STATUS,
+  ACCOUNT_STATUS_REASON,
   CONNECTION_TYPE,
   RAW_EVENT_TYPE,
   CATEGORY,

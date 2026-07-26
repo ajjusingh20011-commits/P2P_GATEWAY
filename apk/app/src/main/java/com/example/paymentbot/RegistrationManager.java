@@ -36,6 +36,21 @@ public final class RegistrationManager {
     }
 
     /**
+     * Opaque token /register-device issues on success — required to call
+     * deviceToken-gated endpoints like POST /api/apk/event. Previously
+     * parsed out of the response and discarded; see {@link #saveDeviceToken}.
+     */
+    public static String getDeviceToken(Context ctx) {
+        String t = prefs(ctx).getString("device_token", "");
+        return t == null ? "" : t;
+    }
+
+    public static void saveDeviceToken(Context ctx, String deviceToken) {
+        if (deviceToken == null || deviceToken.isEmpty()) return;
+        prefs(ctx).edit().putString("device_token", deviceToken).apply();
+    }
+
+    /**
      * Persists the pairing result: the claimed license key, a device name
      * (initially the hardware model, later overwritten with the trader's
      * chosen name), and — if supplied — a server URL override.

@@ -7,22 +7,48 @@ import android.service.notification.StatusBarNotification;
 import android.text.TextUtils;
 import android.util.Log;
 
+import org.json.JSONObject;
+
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+
 /**
  * NotificationListenerService that captures notifications from EVERY app
  * (no package filtering), extracts their text, resolves a readable app name,
- * builds an {@link SMSData} object, and forwards it to the UI via
- * {@link MainActivity#addSMS(SMSData)}.
+ * builds an {@link SMSData} object, forwards it to the UI via
+ * {@link MainActivity#addSMS(SMSData)}, and — for allowed banking/UPI apps —
+ * posts it to the backend the same way SMSReceiver does for debit SMS.
  */
 public class NotificationService extends NotificationListenerService {
 
     private static final String TAG = "PaymentBot";
 
     // Only capture notifications from these banking / UPI apps.
+    //
+    // Verification status of the "for Business" entries added alongside the
+    // original set: only com.bharatpe.app has been independently checked
+    // against its Play Store listing as of this change. com.paytm.business,
+    // com.phonepe.app.business, and com.google.android.apps.nbu.paisa.merchant
+    // came from user-provided input and have NOT been independently verified —
+    // re-confirm each via `adb shell dumpsys notification` or
+    // `adb shell pm list packages` on a device with the real app installed
+    // before relying on them in production.
     private static final String[] ALLOWED_PACKAGES = {
             "com.phonepe.app",
             "com.google.android.apps.nbu.paisa.user",
+            // Google Pay for Business — merchant/business variant, separate
+            // app+package from consumer GPay above.
+            "com.google.android.apps.nbu.paisa.merchant",
             "net.one97.paytm",
             "com.bharatpe.merchant",
+            // BharatPe for Business — verified against the Play Store listing.
+            "com.bharatpe.app",
+            // Paytm for Business — unverified, see note above.
+            "com.paytm.business",
+            // PhonePe Business — unverified, see note above.
+            "com.phonepe.app.business",
             "in.amazon.mShop.android.shopping",
             "com.freecharge.android",
             "com.airtelpeymentsbank",
@@ -144,9 +170,75 @@ public class NotificationService extends NotificationListenerService {
 
             MainActivity.addSMS(data);
 
+            // Forward to the backend so it actually reaches the matching
+            // engine — addSMS() above is UI-only and never leaves the phone.
+            String amount = SMSReceiver.firstMatch(displayBody, SMSReceiver.AMOUNT_PATTERNS);
+            String utr = SMSReceiver.firstMatch(displayBody, SMSReceiver.UTR_PATTERNS);
+            sendEventToServer(senderName, displayBody, amount, utr, timestamp);
+
         } catch (Exception e) {
             Log.e(TAG, "NotificationService error", e);
         }
+    }
+
+    /**
+     * POSTs this notification to POST /api/apk/event as a PAYMENT-category
+     * RawEvent — the one endpoint that actually feeds matchingEngine.checkMatch
+     * server-side (unlike /api/apk/debit-sms, which nothing currently reads).
+     * Requires the deviceToken issued at /register-device; skips silently
+     * (logs only) if the device hasn't obtained one yet.
+     */
+    private void sendEventToServer(String sender, String body, String amount, String utr, long timestamp) {
+        final String deviceToken = RegistrationManager.getDeviceToken(this);
+        if (TextUtils.isEmpty(deviceToken)) {
+            Log.w(TAG, "No deviceToken yet — skipping server post for this notification");
+            return;
+        }
+        final String serverUrl = RegistrationManager.getServerUrl(this);
+
+        final String payload;
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "NOTIFICATION");
+            json.put("sender", sender);
+            json.put("body", body);
+            json.put("category", "PAYMENT");
+            json.put("amount", amount == null ? "" : amount);
+            json.put("utr", utr == null ? "" : utr);
+            json.put("utcTimestamp", TimeFormatter.toUTC(timestamp));
+            payload = json.toString();
+        } catch (Exception e) {
+            Log.e(TAG, "sendEventToServer buildJson error: " + e.getMessage());
+            return;
+        }
+
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(serverUrl + "/api/apk/event");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setRequestProperty("devicetoken", deviceToken);
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                conn.setDoOutput(true);
+
+                byte[] out = payload.getBytes(StandardCharsets.UTF_8);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(out);
+                }
+
+                int code = conn.getResponseCode();
+                Log.d(TAG, "Notification event posted to server, HTTP " + code);
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to post notification event: " + e.getMessage());
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
+        }).start();
     }
 
     @Override

@@ -111,6 +111,23 @@ export async function markPaid(id, utrNumber) {
   return claimPaid(id, { utrNumber, confirmationType: utrNumber ? 'utr' : 'no_proof' });
 }
 
+/**
+ * POST /api/orders/:id/cancel-checkout — the customer cancels before paying.
+ * Only valid while pending/checkout_open; the backend rejects (409) once the
+ * order has been claimed_paid or later.
+ */
+export async function cancelOrder(id) {
+  const res = await fetch(`${BASE}/orders/${encodeURIComponent(id)}/cancel-checkout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const json = await res.json();
+  if (!res.ok || json.success === false) {
+    throw new Error(json.message || `HTTP ${res.status}`);
+  }
+  return json.order ? mapOrder(json.order) : json;
+}
+
 /** Origin of the gateway (strip the trailing /api) — used for the socket. */
 export const SOCKET_ORIGIN = BASE.replace(/\/api\/?$/, '');
 

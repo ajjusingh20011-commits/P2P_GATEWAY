@@ -31,13 +31,10 @@ import java.util.List;
 /**
  * MaxPay main screen.
  *
- * The visible UI is the simple "Working" home screen + Settings tab described
- * by the redesign; the original live capture feed (every SMS/notification
- * card) is still built and kept fully up to date in the background — it is
- * just not attached visibly (kept at View.GONE) since the new design doesn't
- * surface it. Engines push captures in via the thread-safe static
- * {@link #addSMS(SMSData)} hook; {@link #addLog(String)} and
- * {@link #addPayment(PaymentData)} are compatibility shims kept so the
+ * The visible UI is the "Working" home screen + a Logs tab (the live capture
+ * feed of every SMS/notification card) + Settings. Engines push captures in
+ * via the thread-safe static {@link #addSMS(SMSData)} hook; {@link #addLog(String)}
+ * and {@link #addPayment(PaymentData)} are compatibility shims kept so the
  * accessibility engine ({@link PaymentBotService}) and {@link APIClient}
  * still compile and keep recording captures, unchanged from before.
  */
@@ -71,14 +68,23 @@ public class MainActivity extends AppCompatActivity {
     private static WeakReference<MainActivity> instanceRef = new WeakReference<>(null);
     private static final List<SMSData> allMessages = new ArrayList<>();
 
+    // The local debug feed is a rolling window of the most recent captures only.
+    // The real event data is posted to the server immediately on capture, so
+    // this cap has no effect on data delivery — it just stops the static list
+    // (and the on-screen card tree) from growing without bound and OOM-crashing
+    // the long-lived process.
+    private static final int MAX_ENTRIES = 200;
+
     private LinearLayout messageContainer;
     private TextView emptyView;
 
     // New UI state.
     private LinearLayout homePage;
+    private LinearLayout logsPage;
     private LinearLayout settingsPage;
     private TextView deviceNameLabel;
     private TextView homeTab;
+    private TextView logsTab;
     private TextView settingsTab;
 
     // Auto-refresh the "x min ago" labels on the (hidden) feed once a minute.
@@ -245,12 +251,14 @@ public class MainActivity extends AppCompatActivity {
 
         root.addView(buildTopBar());
 
-        // Page container: home + settings, one visible at a time.
+        // Page container: home + logs + settings, one visible at a time.
         LinearLayout.LayoutParams pageLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
         homePage = buildHomePage();
+        logsPage = buildLogsPage();
         settingsPage = buildSettingsPage();
         root.addView(homePage, pageLp);
+        root.addView(logsPage, pageLp);
         root.addView(settingsPage, pageLp);
 
         root.addView(buildBottomNav());
@@ -313,11 +321,6 @@ public class MainActivity extends AppCompatActivity {
         working.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         working.setGravity(Gravity.CENTER);
         content.addView(working);
-
-        // The original live capture feed still exists and is kept updated by
-        // addSMS()/rebuildFeed(), just not shown — the new design surfaces
-        // "Working" instead. All captures still send to the server as before.
-        content.addView(buildFeed());
         page.addView(content);
 
         // Bottom "Enable payment mode" button.
@@ -515,10 +518,13 @@ public class MainActivity extends AppCompatActivity {
         wrapper.addView(nav);
 
         homeTab = buildNavTab("🏠", "Home", true);
+        logsTab = buildNavTab("📋", "Logs", false);
         settingsTab = buildNavTab("⚙️", "Settings", false);
         homeTab.setOnClickListener(v -> showHome());
+        logsTab.setOnClickListener(v -> showLogs());
         settingsTab.setOnClickListener(v -> showSettings());
         nav.addView(homeTab);
+        nav.addView(logsTab);
         nav.addView(settingsTab);
 
         return wrapper;
@@ -539,27 +545,49 @@ public class MainActivity extends AppCompatActivity {
 
     private void showHome() {
         homePage.setVisibility(View.VISIBLE);
+        logsPage.setVisibility(View.GONE);
         settingsPage.setVisibility(View.GONE);
         homeTab.setTextColor(GREEN_PRIMARY);
+        logsTab.setTextColor(TEXT_HINT);
+        settingsTab.setTextColor(TEXT_HINT);
+    }
+
+    private void showLogs() {
+        homePage.setVisibility(View.GONE);
+        logsPage.setVisibility(View.VISIBLE);
+        settingsPage.setVisibility(View.GONE);
+        homeTab.setTextColor(TEXT_HINT);
+        logsTab.setTextColor(GREEN_PRIMARY);
         settingsTab.setTextColor(TEXT_HINT);
     }
 
     private void showSettings() {
         homePage.setVisibility(View.GONE);
+        logsPage.setVisibility(View.GONE);
         settingsPage.setVisibility(View.VISIBLE);
         homeTab.setTextColor(TEXT_HINT);
+        logsTab.setTextColor(TEXT_HINT);
         settingsTab.setTextColor(GREEN_PRIMARY);
     }
 
     // ---------------------------------------------------------------------
-    // Hidden legacy feed — still fully maintained, not shown (View.GONE).
+    // Logs tab — live capture feed (every SMS/notification card), visible.
     // ---------------------------------------------------------------------
+    private LinearLayout buildLogsPage() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        page.addView(buildFeed(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        return page;
+    }
+
     private View buildFeed() {
         ScrollView scroll = new ScrollView(this);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0);
         scroll.setLayoutParams(lp);
-        scroll.setVisibility(View.GONE);
         scroll.setFillViewport(true);
 
         messageContainer = new LinearLayout(this);
@@ -648,14 +676,19 @@ public class MainActivity extends AppCompatActivity {
         if (data == null) return;
         final MainActivity a = instanceRef.get();
         if (a == null) {
-            // No UI yet; still record it so it appears once the screen opens.
+            // No UI yet (e.g. captured by a background service); still record it
+            // so it appears once the screen opens, but keep the rolling window.
             synchronized (allMessages) {
                 allMessages.add(0, data);
+                trimMessages();
             }
             return;
         }
         a.runOnUiThread(() -> {
-            allMessages.add(0, data);
+            synchronized (allMessages) {
+                allMessages.add(0, data);
+                trimMessages();
+            }
             if (a.messageContainer != null) {
                 // Remove the empty placeholder if present, then prepend.
                 if (a.messageContainer.getChildCount() == 1
@@ -663,8 +696,19 @@ public class MainActivity extends AppCompatActivity {
                     a.messageContainer.removeAllViews();
                 }
                 a.messageContainer.addView(a.buildCard(data), 0);
+                // Cap the card view tree to match the rolling window.
+                while (a.messageContainer.getChildCount() > MAX_ENTRIES) {
+                    a.messageContainer.removeViewAt(a.messageContainer.getChildCount() - 1);
+                }
             }
         });
+    }
+
+    /** Drops oldest entries beyond MAX_ENTRIES. Caller must hold allMessages. */
+    private static void trimMessages() {
+        while (allMessages.size() > MAX_ENTRIES) {
+            allMessages.remove(allMessages.size() - 1);
+        }
     }
 
     /** Compatibility shim: route legacy log lines to Logcat + a Toast-free feed. */

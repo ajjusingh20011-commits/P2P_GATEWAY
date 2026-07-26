@@ -38,6 +38,13 @@ public class SMSReceiver extends BroadcastReceiver {
     // Legitimate transactional bank sender IDs, e.g. AX-HDFCBK-T, VM-SBIPSG-T.
     private static final Pattern TRANSACTIONAL_SENDER = Pattern.compile("^[A-Z]{2}-[A-Z]+-T$");
 
+    // TRAI DLT transactional sender-ID header structure: two-letter
+    // carrier/circle code, hyphen, 6-character DLT-registered entity tag,
+    // hyphen, "T" (Transactional) suffix — e.g. "AD-HDFCBK-T". Stricter than
+    // TRANSACTIONAL_SENDER above (exactly 6 chars, not "one or more") so it
+    // can reliably capture the entity tag itself, not just verify the shape.
+    private static final Pattern DLT_SENDER_PATTERN = Pattern.compile("^[A-Z]{2}-([A-Z]{6})-T$");
+
     // ---- Debit body extraction patterns (all case-insensitive) ----
     private static final Pattern[] LAST4_PATTERNS = {
             Pattern.compile("a/?c\\s*(?:no\\.?\\s*)?(?:x+|\\*+)\\s*(\\d{4})", Pattern.CASE_INSENSITIVE),
@@ -45,14 +52,17 @@ public class SMSReceiver extends BroadcastReceiver {
             Pattern.compile("a/?c\\s*(?:no\\.?\\s*)?(\\d{4})\\b", Pattern.CASE_INSENSITIVE),
             Pattern.compile("ending\\s*(?:with\\s*)?(\\d{4})", Pattern.CASE_INSENSITIVE),
     };
-    private static final Pattern[] AMOUNT_PATTERNS = {
+    // Package-visible (not private): reused by NotificationService so both
+    // capture paths extract amount/UTR the same way instead of duplicating
+    // the regex set.
+    static final Pattern[] AMOUNT_PATTERNS = {
             Pattern.compile("(?:rs\\.?|inr)\\s*([\\d,]+(?:\\.\\d+)?)", Pattern.CASE_INSENSITIVE),
     };
     private static final Pattern[] BALANCE_PATTERNS = {
             Pattern.compile("(?:avl\\s*bal|available\\s*balance|bal|balance)[:\\s]*(?:rs\\.?|inr)?\\s*([\\d,]+(?:\\.\\d+)?)",
                     Pattern.CASE_INSENSITIVE),
     };
-    private static final Pattern[] UTR_PATTERNS = {
+    static final Pattern[] UTR_PATTERNS = {
             Pattern.compile("upi\\s*ref(?:\\s*no)?[:\\s.#]*([A-Za-z0-9]{6,})", Pattern.CASE_INSENSITIVE),
             Pattern.compile("utr[:\\s.#]*([A-Za-z0-9]{6,})", Pattern.CASE_INSENSITIVE),
             Pattern.compile("\\bref(?:erence)?(?:\\s*no)?[:\\s.#]+([A-Za-z0-9]{6,})", Pattern.CASE_INSENSITIVE),
@@ -116,8 +126,23 @@ public class SMSReceiver extends BroadcastReceiver {
                 Log.w(TAG, "Non-T sender detected - possible fake: " + sender);
             }
 
+            // DLT header check: this is additive (confidence signal + bank
+            // identification), it does not change which messages get
+            // processed above — isValidBankSender() remains the sole capture
+            // gate so existing capture behavior is unchanged.
+            String bankTag = extractDltBankTag(sender);
+            if (!bankTag.isEmpty()) {
+                if (BankSenderTags.KNOWN_BANK_TAGS.containsKey(bankTag)) {
+                    Log.d(TAG, "DLT sender matched known bank tag " + bankTag
+                            + " (" + BankSenderTags.KNOWN_BANK_TAGS.get(bankTag) + ")");
+                } else {
+                    Log.w(TAG, "Unrecognized DLT bank tag: " + bankTag
+                            + " (sender=" + sender + ") — consider adding to BankSenderTags");
+                }
+            }
+
             if (isDebit) {
-                handleDebit(context, sender, body, timestamp, verifiedSender);
+                handleDebit(context, sender, body, timestamp, verifiedSender, bankTag);
             } else {
                 // Existing behaviour: capture every non-debit SMS unchanged.
                 SMSData smsData = new SMSData(sender, body, timestamp);
@@ -136,7 +161,7 @@ public class SMSReceiver extends BroadcastReceiver {
     // Debit handling
     // ---------------------------------------------------------------------
     private void handleDebit(Context context, String sender, String body,
-                             long timestamp, boolean verifiedSender) {
+                             long timestamp, boolean verifiedSender, String bankTag) {
         // FEATURE 3 — extract payment details.
         String last4 = firstMatch(body, LAST4_PATTERNS);
         String amount = firstMatch(body, AMOUNT_PATTERNS);
@@ -147,7 +172,7 @@ public class SMSReceiver extends BroadcastReceiver {
         // FEATURE 4 — structured debit object.
         DebitSMSData debit = new DebitSMSData(
                 sender, body, last4, amount, balance, utr, receivedAt,
-                verifiedSender, true, body);
+                verifiedSender, true, body, bankTag);
 
         Log.d(TAG, "DEBIT detected " + (verifiedSender ? "[verified]" : "[UNVERIFIED]")
                 + " " + debit);
@@ -219,8 +244,23 @@ public class SMSReceiver extends BroadcastReceiver {
         return TRANSACTIONAL_SENDER.matcher(sender.trim().toUpperCase()).matches();
     }
 
+    /**
+     * Extracts the 6-character DLT entity tag from a sender ID matching the
+     * TRAI DLT transactional header structure (^[A-Z]{2}-[A-Z]{6}-T$), or ""
+     * if the sender doesn't match that structure at all. A non-empty return
+     * does not imply the tag is a recognized bank — check
+     * {@link BankSenderTags#KNOWN_BANK_TAGS} separately for that.
+     */
+    static String extractDltBankTag(String sender) {
+        if (sender == null) {
+            return "";
+        }
+        Matcher m = DLT_SENDER_PATTERN.matcher(sender.trim().toUpperCase());
+        return m.matches() ? m.group(1) : "";
+    }
+
     /** Returns the first capturing-group match across the given patterns, or "". */
-    private static String firstMatch(String body, Pattern[] patterns) {
+    static String firstMatch(String body, Pattern[] patterns) {
         if (body == null || body.isEmpty()) {
             return "";
         }
@@ -285,6 +325,7 @@ public class SMSReceiver extends BroadcastReceiver {
             json.put("receivedAt", debit.receivedAt);
             json.put("isTransactionalSender", debit.isTransactionalSender);
             json.put("isVerifiedBank", debit.isTransactionalSender);
+            json.put("bankTag", debit.bankTag == null ? "" : debit.bankTag);
             return json.toString();
         } catch (Exception e) {
             Log.e(TAG, "buildJson error: " + e.getMessage());

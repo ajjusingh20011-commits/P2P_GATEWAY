@@ -276,7 +276,7 @@ public class PaymentBotService extends AccessibilityService {
                 + " [" + data.getConfidence() + "%]");
 
         MainActivity.addPayment(data);
-        APIClient.send(data);
+        APIClient.send(this, data);
     }
 
     // ---------------------------------------------------------------------

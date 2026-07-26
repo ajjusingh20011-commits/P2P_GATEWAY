@@ -259,6 +259,10 @@ public class RegistrationActivity extends Activity {
               android.os.Build.MODEL,
               serverUrl
             );
+            RegistrationManager.saveDeviceToken(
+              RegistrationActivity.this,
+              resp.optString("deviceToken", "")
+            );
             // Go to set device name
             startActivity(new Intent(
               RegistrationActivity.this,
