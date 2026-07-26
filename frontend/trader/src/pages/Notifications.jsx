@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader } from '../components/ui';
-import { IconRefresh } from '../components/icons';
+import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, DataTable, Th, EmptyState, LoadingState } from '../components/ui';
+import { IconRefresh, IconBell } from '../components/icons';
 import { useApi } from '../hooks/useApi';
 import { getTransactions } from '../lib/ngoApi';
 import { notifications, maskUpi, ACCOUNT_TYPES } from '../utils/mock';
@@ -91,7 +91,7 @@ export default function Notifications() {
         subtitle="Logs of notifications for Automation"
         actions={
           <>
-            {loading && <span className="text-xs text-gray-500">Loading…</span>}
+            {loading && <span style={{ color: 'var(--muted)', fontSize: 12 }}>Loading…</span>}
             <Button variant="ghost" onClick={refresh}>
               <IconRefresh className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
               Refresh
@@ -111,63 +111,69 @@ export default function Notifications() {
         </div>
       </Card>
 
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-800 text-left text-xs uppercase tracking-wide text-gray-500">
-                <th className="px-4 py-3 font-medium">Notification ID</th>
-                <th className="px-4 py-3 font-medium">Time</th>
-                <th className="px-4 py-3 font-medium">Amount</th>
-                <th className="px-4 py-3 font-medium">Currency</th>
-                <th className="px-4 py-3 font-medium">My Bank</th>
-                <th className="px-4 py-3 font-medium">Method</th>
-                <th className="px-4 py-3 font-medium">Transaction ID</th>
-                <th className="px-4 py-3 font-medium">Description</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800">
-              {pageRows.map((n) => {
-                const method = ACCOUNT_TYPES[n.method];
-                return (
-                  <tr key={n.id} className="text-gray-200 hover:bg-gray-800/40">
-                    <td className="px-4 py-3 font-mono text-xs text-gray-400">{n.notificationId}</td>
-                    <td className="px-4 py-3 text-xs text-gray-400">{n.time}</td>
-                    <td className="px-4 py-3 font-medium">₹{Number(n.amount).toLocaleString('en-IN')}</td>
-                    <td className="px-4 py-3 text-gray-400">{n.currency}</td>
-                    <td className="px-4 py-3">
-                      {n.bank ? (
-                        <>
-                          <div className="text-xs font-medium">{n.bank.accountName}</div>
-                          <div className="text-xs text-gray-500">{maskUpi(n.bank.upiId)}</div>
-                        </>
-                      ) : (
-                        <span className="text-xs text-gray-500">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {method ? (
-                        <Badge color={method.color}>{method.label}</Badge>
-                      ) : (
-                        <span className="text-xs text-gray-400">{n.method || '—'}</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-400">{n.transactionId}</td>
-                    <td className="px-4 py-3 text-xs text-gray-300">{n.description}</td>
-                  </tr>
-                );
-              })}
-              {pageRows.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="py-10 text-center text-sm text-gray-500">
-                    {rows.length === 0 ? 'No notifications yet' : 'No notifications match your filters'}
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <DataTable minWidth={960}>
+          <thead>
+            <tr>
+              <Th>Notification ID</Th>
+              <Th>Time</Th>
+              <Th>Amount</Th>
+              <Th>Currency</Th>
+              <Th>My Bank</Th>
+              <Th>Method</Th>
+              <Th>Transaction ID</Th>
+              <Th>Description</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((n) => {
+              const method = ACCOUNT_TYPES[n.method];
+              return (
+                <tr key={n.id} className="tf-row-hover" style={{ borderBottom: '1px solid var(--cardborder)', color: 'var(--text)' }}>
+                  <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>{n.notificationId}</td>
+                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>{n.time}</td>
+                  <td className="px-4 py-3 font-medium">₹{Number(n.amount).toLocaleString('en-IN')}</td>
+                  <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{n.currency}</td>
+                  <td className="px-4 py-3">
+                    {n.bank ? (
+                      <>
+                        <div className="text-xs font-medium" style={{ color: 'var(--text)' }}>{n.bank.accountName}</div>
+                        <div className="text-xs" style={{ color: 'var(--muted)' }}>{maskUpi(n.bank.upiId)}</div>
+                      </>
+                    ) : (
+                      <span className="text-xs" style={{ color: 'var(--muted)' }}>—</span>
+                    )}
                   </td>
+                  <td className="px-4 py-3">
+                    {method ? (
+                      <Badge color={method.color}>{method.label}</Badge>
+                    ) : (
+                      <span className="text-xs" style={{ color: 'var(--muted)' }}>{n.method || '—'}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>{n.transactionId}</td>
+                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text)' }}>{n.description}</td>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div className="border-t border-gray-800">
+              );
+            })}
+            {pageRows.length === 0 && (
+              <tr>
+                <td colSpan={8}>
+                  {loading && rows.length === 0 ? (
+                    <LoadingState label="Loading notifications…" />
+                  ) : (
+                    <EmptyState
+                      icon={IconBell}
+                      title={rows.length === 0 ? 'No notifications yet' : 'No notifications match your filters'}
+                      message={rows.length === 0 ? 'Detected payments will show up here automatically.' : undefined}
+                    />
+                  )}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </DataTable>
+        <div style={{ borderTop: '1px solid var(--cardborder)' }}>
           <Pagination page={page} perPage={PER_PAGE} total={filtered.length} onPage={setPage} />
         </div>
       </Card>
