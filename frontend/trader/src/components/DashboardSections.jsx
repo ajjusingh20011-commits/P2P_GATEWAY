@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Coins, Smartphone, Clock3, ChevronRight, CheckCircle2 } from 'lucide-react';
+import { Coins, Smartphone, Clock3, ChevronRight, CheckCircle2, ArrowRight } from 'lucide-react';
 import { traderApi } from '../services/api';
 import { getDevices } from '../lib/ngoApi';
+import { BankBadge, ScoreCircle } from './ui';
+import { ACCOUNT_TYPES, inr } from '../utils/mock';
 
 /*
-  Two dashboard sections used below the trader stat grid:
+  Dashboard sections used below the trader stat grid:
 
   - CommissionSection: REAL data from GET /trader/commission?period=. The big
     number toggles between ₹ (INR) and USDT on click; it counts up on change.
+  - LivePoolSection: REAL payment-details data already fetched by Dashboard
+    (is_active accounts), joined with real device names (getDevices(), same
+    source Smartphones.jsx/AttentionSection already read) and real
+    in-processing payout totals (traderApi.payoutRequests, same source
+    BuyUsdt.jsx reads) for the pay-in/payout summary strip. Score is a
+    placeholder (ScoreCircle) — no success-score metric exists yet.
   - AttentionSection: REAL data from two existing sources — device online
     state (same field Smartphones.jsx's own poll reads) and in-processing
     payout requests' expires_at (same field BuyUsdt.jsx reads). No score/
@@ -98,72 +106,181 @@ export function CommissionSection() {
       : (raw > 0 ? '+' : '') + fmtValue(shown, cur);
 
   return (
-    <div className="tf-card" style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div>
-          <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0 }}>Commission</h3>
-          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0 0' }}>Earnings overview</p>
-        </div>
-        <div style={{ display: 'flex', gap: 18 }}>
+    <div className="tf-card" style={{ padding: '20px 22px', position: 'relative' }}>
+      <div className="flex items-start justify-between">
+        <p style={{ color: 'var(--muted)', fontWeight: 500, fontSize: 13, margin: '0 0 7px' }}>Commission earned</p>
+        <span
+          className="tf-badge"
+          style={{
+            width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', flexShrink: 0, background: hexA('#f59e0b', 0.14), color: '#f59e0b',
+          }}
+        >
+          <Coins size={20} />
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={toggleCur}
+        title="Click to switch currency"
+        style={{
+          display: 'block', fontWeight: 800, fontSize: 23, margin: 0, letterSpacing: '-.4px', lineHeight: 1,
+          background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left',
+          color: error ? 'var(--muted)' : 'var(--text)',
+        }}
+      >
+        {valueText}
+        {delta != null && (
+          <span style={{ marginLeft: 8, color: delta >= 0 ? '#22c55e' : '#ef4444', fontSize: 11, fontWeight: 700 }}>
+            {(delta >= 0 ? '▲ ' : '▼ ') + Math.abs(delta) + '%'}
+          </span>
+        )}
+      </button>
+      <div className="flex items-center justify-between" style={{ marginTop: 9 }}>
+        <span style={{ color: 'var(--muted)', fontSize: 11 }}>
+          {NOTE[period]} · {error ? '—' : `${data?.trades ?? 0} trades`}
+        </span>
+        <select
+          value={period}
+          onChange={(e) => setPeriod(e.target.value)}
+          style={{
+            fontSize: 10, fontWeight: 600, color: 'var(--muted)', background: 'var(--surface2)',
+            border: '1px solid var(--cardborder)', borderRadius: 7, padding: '3px 6px', outline: 'none',
+          }}
+        >
           {PERIODS.map((k) => (
-            <button key={k} className={'tf-tab' + (period === k ? ' on' : '')} onClick={() => setPeriod(k)}>
-              {TAB_LABEL[k]}
-            </button>
+            <option key={k} value={k}>{TAB_LABEL[k]}</option>
           ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+// ---- Live pool (REAL payment-details data, joined with real devices +
+// real in-processing payout totals) --------------------------------------
+export function LivePoolSection({ details, todayVolumeInr }) {
+  const navigate = useNavigate();
+  const [deviceNames, setDeviceNames] = useState({});
+  const [payoutSummary, setPayoutSummary] = useState({ count: 0, total: 0 });
+
+  useEffect(() => {
+    let alive = true;
+    getDevices()
+      .then((devices) => {
+        if (!alive) return;
+        const map = {};
+        (devices || []).forEach((d) => { map[d.id] = d.deviceName || 'Smartphone'; });
+        setDeviceNames(map);
+      })
+      .catch(() => {});
+    traderApi
+      .payoutRequests('in_processing')
+      .then((res) => {
+        if (!alive) return;
+        const list = res.data?.data?.payout_requests || [];
+        setPayoutSummary({
+          count: list.length,
+          total: list.reduce((sum, r) => sum + (Number(r.amount_inr) || 0), 0),
+        });
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const live = (details || []).filter((d) => d.is_active);
+  const rows = live.slice(0, 6);
+
+  return (
+    <div className="tf-card" style={{ padding: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '20px 22px 16px' }}>
+        <div>
+          <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0 }}>Live pool</h3>
+          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0 0' }}>Accounts currently eligible for incoming orders</p>
+        </div>
+        <button
+          onClick={() => navigate('/offers')}
+          style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 0, color: 'var(--accent)', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+        >
+          {live.length} live of {(details || []).length}
+          <ArrowRight size={13} />
+        </button>
+      </div>
+
+      <div className="flex items-center" style={{ margin: '0 22px 16px', border: '1px solid var(--cardborder)', borderRadius: 11, padding: '12px 4px' }}>
+        <div className="flex flex-1 items-center justify-center gap-2.5">
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#12b76a', flexShrink: 0 }} />
+          <div>
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--muted)' }}>Pay-in today</p>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{inr(todayVolumeInr || 0)} <span style={{ fontWeight: 500, color: 'var(--muted)', fontSize: 11 }}>· {live.length} accounts</span></p>
+          </div>
+        </div>
+        <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--cardborder)' }} />
+        <div className="flex flex-1 items-center justify-center gap-2.5">
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#f04438', flexShrink: 0 }} />
+          <div>
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--muted)' }}>Payout processing</p>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{inr(payoutSummary.total)} <span style={{ fontWeight: 500, color: 'var(--muted)', fontSize: 11 }}>· {payoutSummary.count} accounts</span></p>
+          </div>
         </div>
       </div>
 
-      {/* Centered in the remaining height so the card doesn't leave a big gap
-          below when it's paired with a taller sibling card. */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 130 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                onClick={toggleCur}
-                title="Click to switch currency"
-                style={{
-                  fontWeight: 800, fontSize: 38, margin: 0, letterSpacing: '-1px', lineHeight: 1,
-                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                  color: error ? 'var(--muted)' : '#22c55e',
-                }}
-              >
-                {valueText}
-              </button>
-              {delta != null && (
-                <span style={{ color: delta >= 0 ? '#22c55e' : '#ef4444', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
-                  {(delta >= 0 ? '▲ ' : '▼ ') + Math.abs(delta) + '%'}
-                </span>
-              )}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14 }}>
-              <button
-                type="button"
-                onClick={toggleCur}
-                style={{
-                  fontSize: 12, fontWeight: 600, color: '#14b8c4', cursor: 'pointer',
-                  background: 'rgba(20,184,196,.12)', border: 'none', borderRadius: 8, padding: '4px 10px',
-                }}
-              >
-                {cur === 'inr' ? 'Show in USDT' : 'Show in ₹'}
-              </button>
-              <span style={{ color: 'var(--muted)', fontSize: 12 }}>
-                {NOTE[period]} · {error ? '—' : `${data?.trades ?? 0} trades`}
-              </span>
-            </div>
-          </div>
-          <div
-            className="tf-badge"
-            style={{
-              width: 48, height: 48, borderRadius: 14, display: 'flex', alignItems: 'center',
-              justifyContent: 'center', flexShrink: 0, background: hexA('#22c55e', 0.14), color: '#22c55e',
-            }}
-          >
-            <Coins size={22} />
-          </div>
+      <div style={{ borderTop: '1px solid var(--cardborder)' }}>
+        <div
+          className="grid"
+          style={{ gridTemplateColumns: '2fr 1.3fr 1fr 60px', gap: 8, padding: '9px 22px', background: 'var(--surface2)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', fontWeight: 700, color: 'var(--muted)' }}
+        >
+          <span>Account</span>
+          <span>Device / session</span>
+          <span>Orders today</span>
+          <span style={{ textAlign: 'right' }}>Score</span>
         </div>
+        {rows.length === 0 ? (
+          <p style={{ padding: '22px', color: 'var(--muted)', fontSize: 13, margin: 0, textAlign: 'center' }}>No live accounts right now.</p>
+        ) : (
+          rows.map((d) => {
+            const type = ACCOUNT_TYPES[d.account_type] || { label: d.account_type };
+            const isWeb = d.connectionType === 'web';
+            const sessionLabel = isWeb
+              ? 'Web session'
+              : d.ngo_device_id
+                ? (deviceNames[d.ngo_device_id] || 'APK device')
+                : '—';
+            return (
+              <button
+                key={d.id}
+                onClick={() => navigate('/offers')}
+                className="tf-row-hover grid w-full items-center text-left"
+                style={{ gridTemplateColumns: '2fr 1.3fr 1fr 60px', gap: 8, padding: '10px 22px', border: 0, borderTop: '1px solid var(--cardborder)', background: 'transparent', cursor: 'pointer' }}
+              >
+                <span className="flex min-w-0 items-center gap-2.5">
+                  <BankBadge type={d.account_type} label={type.label} size={30} />
+                  <span className="min-w-0">
+                    <p className="truncate" style={{ margin: 0, fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{d.account_name}</p>
+                    <p className="truncate" style={{ margin: 0, fontSize: 10, color: 'var(--muted)' }}>{type.label}</p>
+                  </span>
+                </span>
+                <span className="truncate" style={{ fontSize: 11, color: 'var(--muted)' }}>{sessionLabel}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
+                  {d.usage?.used_today ?? 0}{d.max_per_day ? ` / ${d.max_per_day}` : ''}
+                </span>
+                <span style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <ScoreCircle size={28} />
+                </span>
+              </button>
+            );
+          })
+        )}
       </div>
+
+      {live.length > rows.length && (
+        <button
+          onClick={() => navigate('/offers')}
+          style={{ width: '100%', border: 0, borderTop: '1px solid var(--cardborder)', background: 'transparent', color: 'var(--accent)', padding: '11px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+        >
+          View all live pool accounts →
+        </button>
+      )}
     </div>
   );
 }

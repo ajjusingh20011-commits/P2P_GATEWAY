@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useOutletContext, useNavigate } from 'react-router-dom';
-import { Activity, Layers3, TrendingUp, ShieldCheck, Wifi, Plus } from 'lucide-react';
-import { Card, StatCard, Badge, Button, Toggle, SearchInput, PageHeader } from '../components/ui';
-import { CommissionSection, AttentionSection } from '../components/DashboardSections';
+import { useNavigate } from 'react-router-dom';
+import { Layers3, TrendingUp, ShieldCheck, Plus } from 'lucide-react';
+import { Card, StatCard, Badge, SearchInput, Button } from '../components/ui';
+import { CommissionSection, AttentionSection, LivePoolSection } from '../components/DashboardSections';
 import { useApi } from '../hooks/useApi';
 import { traderApi } from '../services/api';
 import { balance, stats, inr, ACCOUNT_TYPES } from '../utils/mock';
@@ -25,7 +25,6 @@ function deriveMetrics(d) {
 }
 
 export default function Dashboard() {
-  const { online, setOnline } = useOutletContext();
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [details, setDetails] = useState([]);
@@ -103,46 +102,31 @@ export default function Dashboard() {
   // Top stat row — exactly the set the approved design calls for. No My
   // Rate / FTD / STD cards (FTD/STD is an admin-only concept, not shown on
   // the trader panel at all) and no score/health metric (none is computed
-  // anywhere in the backend, so none is shown — correction 1).
+  // anywhere in the backend, so none is shown — correction 1). Today's
+  // Volume and Success Rate have no real weekly/monthly source, so they stay
+  // single-period; Commission Earned (below, its own component) is the only
+  // card with a real period selector since /trader/commission genuinely
+  // backs today/week/month.
   const statCards = [
     { label: 'Total UPI Accounts', value: details.length, sub: 'All connected accounts', icon: Layers3, accent: '#8b5cf6' },
     { label: "Today's Volume", value: inr(dash.today_volume_inr ?? 0), sub: 'Today', icon: TrendingUp, accent: '#14b8c4' },
     { label: 'Success Rate', value: `${dash.success_rate}%`, sub: 'Today', icon: ShieldCheck, accent: '#22c55e' },
-    { label: 'Live Pool', value: livePoolCount, sub: `of ${details.length} accounts`, icon: Wifi, accent: '#3b82f6' },
   ];
 
   return (
     <div>
-      <PageHeader
-        title="Dashboard"
-        subtitle="Overview of your trading activity"
-        actions={
-          <div className="flex items-center gap-2">
-            {loading && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</span>}
-            <div
-              className="flex items-center gap-2"
-              style={{ borderRadius: 12, border: '1px solid var(--cardborder)', background: 'var(--card)', padding: '8px 12px' }}
-            >
-              <Activity size={16} style={{ color: online ? '#22c55e' : 'var(--muted)' }} />
-              <span style={{ fontSize: 14, fontWeight: 500, color: online ? '#22c55e' : 'var(--muted)' }}>
-                {online ? 'Online' : 'Offline'}
-              </span>
-              <Toggle checked={online} onChange={setOnline} />
-            </div>
-          </div>
-        }
-      />
-
       <div className="flex justify-end" style={{ marginBottom: 16 }}>
+        {loading && <span style={{ fontSize: 12, color: 'var(--muted)', marginRight: 12, alignSelf: 'center' }}>Loading…</span>}
         <Button onClick={() => navigate('/offers')}>
           <Plus size={16} />
           Add payment detail
         </Button>
       </div>
 
-      {/* Earnings & activity (USDT). Balance lives in the sidebar, so it is not
-          duplicated here. */}
-      <div className="tf-grid" style={{ marginBottom: 18 }}>
+      {/* 4 equal top-row cards: 3 real single-period metrics + Commission
+          Earned (its own component — the only one with a real period toggle).
+          Balance lives in the sidebar, so it is not duplicated here. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" style={{ marginBottom: 18 }}>
         {statCards.map((s, i) => (
           <StatCard
             key={s.label}
@@ -154,11 +138,15 @@ export default function Dashboard() {
             index={i}
           />
         ))}
+        <div className="tf-enter" style={{ animationDelay: '0.3s' }}><CommissionSection /></div>
       </div>
 
-      {/* Commission (real data) + Requires attention (real data, correction 5) */}
-      <div className="tf-two" style={{ marginBottom: 18 }}>
-        <div className="tf-enter" style={{ animationDelay: '0.15s' }}><CommissionSection /></div>
+      {/* Live pool (65%, real payment-details data) + Requires attention
+          (35%, real device/payout data) — same row. */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.85fr_1fr]" style={{ marginBottom: 18 }}>
+        <div className="tf-enter" style={{ animationDelay: '0.15s' }}>
+          <LivePoolSection details={details} todayVolumeInr={dash.today_volume_inr ?? 0} />
+        </div>
         <div className="tf-enter" style={{ animationDelay: '0.25s' }}><AttentionSection /></div>
       </div>
 
