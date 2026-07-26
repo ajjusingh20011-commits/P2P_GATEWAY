@@ -1,23 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Coins, BarChart3, AlignLeft } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Coins, Smartphone, Clock3, ChevronRight, CheckCircle2 } from 'lucide-react';
 import { traderApi } from '../services/api';
+import { getDevices } from '../lib/ngoApi';
 
 /*
   Two dashboard sections used below the trader stat grid:
 
   - CommissionSection: REAL data from GET /trader/commission?period=. The big
     number toggles between ₹ (INR) and USDT on click; it counts up on change.
-  - StatisticSection: DEMO data for now (grouped Pay-in / Payout bars). The real
-    pay-in/payout series is wired later — the datasets below are placeholders.
+  - AttentionSection: REAL data from two existing sources — device online
+    state (same field Smartphones.jsx's own poll reads) and in-processing
+    payout requests' expires_at (same field BuyUsdt.jsx reads). No score/
+    health-based alert; if nothing is real-actionable it shows a genuine
+    empty state rather than a padded placeholder.
 */
-
-// Format a rupee amount to short INR: 10500 -> "₹10.5k", 260000 -> "₹2.6L".
-function inrShort(v) {
-  if (v >= 10000000) return '₹' + (v / 10000000).toFixed(v % 10000000 ? 1 : 0) + 'Cr';
-  if (v >= 100000) return '₹' + (v / 100000).toFixed(v % 100000 ? 1 : 0) + 'L';
-  if (v >= 1000) return '₹' + (v / 1000).toFixed(v % 1000 ? 1 : 0) + 'k';
-  return '₹' + v;
-}
 
 function hexA(hex, alpha) {
   const n = parseInt(hex.slice(1), 16);
@@ -117,7 +114,7 @@ export function CommissionSection() {
       </div>
 
       {/* Centered in the remaining height so the card doesn't leave a big gap
-          below when it's paired with the taller Statistic chart. */}
+          below when it's paired with a taller sibling card. */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 130 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
           <div style={{ minWidth: 0 }}>
@@ -171,140 +168,132 @@ export function CommissionSection() {
   );
 }
 
-// ---- Statistic section (DEMO data — real pay-in/payout wired later) -------
-// piTrades / poTrades = number of trades behind each bar (shown in tooltip).
-const STATDATA = {
-  today: { labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], payin: [12000, 18000, 9000, 16000, 20000, 14000, 17000], payout: [8000, 11000, 6000, 13000, 9000, 10000, 12000], piTrades: [4, 6, 3, 5, 7, 5, 6], poTrades: [2, 3, 2, 4, 3, 3, 4] },
-  week: { labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4'], payin: [52000, 61000, 48000, 70000], payout: [30000, 42000, 26000, 38000], piTrades: [22, 26, 20, 29], poTrades: [12, 17, 11, 15] },
-  month: { labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'], payin: [180000, 210000, 160000, 240000, 200000, 260000], payout: [120000, 150000, 110000, 170000, 140000, 160000], piTrades: [88, 102, 79, 118, 96, 124], poTrades: [50, 62, 44, 71, 58, 66] },
-};
+// ---- Requires attention (REAL data, two sources) --------------------------
+function fmtDuration(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${String(s % 60).padStart(2, '0')}s`;
+}
 
-export function StatisticSection() {
-  const [period, setPeriod] = useState('today');
-  const [ori, setOri] = useState('v');
-  const [hover, setHover] = useState(null);
-  const d = STATDATA[period];
-  const max = useMemo(() => Math.max(...d.payin, ...d.payout) * 1.1, [d]);
+function timeAgo(dateStr) {
+  if (!dateStr) return 'never';
+  const ms = Date.now() - new Date(dateStr).getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
-  const W = 640;
-  const H = 240;
-  const bars = [];
-  const onEnter = (label, kind, amount, trades, x, y) => setHover({ label, kind, amount, trades, x, y });
-  const onLeave = () => setHover(null);
+const EXPIRING_SOON_MS = 5 * 60 * 1000;
+const TONE_HEX = { blue: '#1570ef', amber: '#dc6803' };
 
-  if (ori === 'v') {
-    const padL = 52;
-    const padB = 28;
-    const padT = 8;
-    const padR = 12;
-    const plotW = W - padL - padR;
-    const plotH = H - padB - padT;
-    [0, 0.5, 1].forEach((f, gi) => {
-      const y = padT + plotH * (1 - f);
-      bars.push(<line key={'g' + gi} x1={padL} y1={y} x2={W - padR} y2={y} stroke="var(--track)" />);
-      bars.push(<text key={'gt' + gi} x={padL - 10} y={y + 3} textAnchor="end" fontSize="10" fill="var(--muted)">{inrShort(Math.round(max * f))}</text>);
-    });
-    const n = d.labels.length;
-    const group = plotW / n;
-    const bw = Math.min(16, group / 3.2);
-    const gap = 5;
-    d.labels.forEach((lb, i) => {
-      const cx = padL + group * i + group / 2;
-      const h1 = (d.payin[i] / max) * plotH;
-      const h2 = (d.payout[i] / max) * plotH;
-      const x1 = cx - bw - gap / 2;
-      const x2 = cx + gap / 2;
-      bars.push(<rect key={'pi' + i} x={x1} y={padT + plotH - h1} width={bw} height={h1} rx={bw / 2} fill="#22c55e" style={{ cursor: 'pointer' }}
-        onMouseEnter={() => onEnter(lb, 'Pay-in', d.payin[i], d.piTrades[i], ((x1 + bw / 2) / W) * 100, ((padT + plotH - h1) / H) * 100)} onMouseLeave={onLeave}>
-        <animate attributeName="height" from="0" to={h1} dur="0.6s" fill="freeze" /><animate attributeName="y" from={padT + plotH} to={padT + plotH - h1} dur="0.6s" fill="freeze" /></rect>);
-      bars.push(<rect key={'po' + i} x={x2} y={padT + plotH - h2} width={bw} height={h2} rx={bw / 2} fill="#ef4444" style={{ cursor: 'pointer' }}
-        onMouseEnter={() => onEnter(lb, 'Payout', d.payout[i], d.poTrades[i], ((x2 + bw / 2) / W) * 100, ((padT + plotH - h2) / H) * 100)} onMouseLeave={onLeave}>
-        <animate attributeName="height" from="0" to={h2} dur="0.6s" fill="freeze" /><animate attributeName="y" from={padT + plotH} to={padT + plotH - h2} dur="0.6s" fill="freeze" /></rect>);
-      bars.push(<text key={'lb' + i} x={cx} y={H - 10} textAnchor="middle" fontSize="10" fill="var(--muted)">{lb}</text>);
-    });
-  } else {
-    const padL = 64;
-    const padR = 52;
-    const padT = 6;
-    const padB = 10;
-    const plotW = W - padL - padR;
-    const plotH = H - padT - padB;
-    const n = d.labels.length;
-    const group = plotH / n;
-    const bh = Math.min(13, group / 3.2);
-    const gap = 4;
-    d.labels.forEach((lb, i) => {
-      const cy = padT + group * i + group / 2;
-      const w1 = (d.payin[i] / max) * plotW;
-      const w2 = (d.payout[i] / max) * plotW;
-      const y1 = cy - bh - gap / 2;
-      const y2 = cy + gap / 2;
-      bars.push(<rect key={'pi' + i} x={padL} y={y1} width={w1} height={bh} rx={bh / 2} fill="#22c55e" style={{ cursor: 'pointer' }}
-        onMouseEnter={() => onEnter(lb, 'Pay-in', d.payin[i], d.piTrades[i], ((padL + w1) / W) * 100, (y1 / H) * 100)} onMouseLeave={onLeave}>
-        <animate attributeName="width" from="0" to={w1} dur="0.6s" fill="freeze" /></rect>);
-      bars.push(<rect key={'po' + i} x={padL} y={y2} width={w2} height={bh} rx={bh / 2} fill="#ef4444" style={{ cursor: 'pointer' }}
-        onMouseEnter={() => onEnter(lb, 'Payout', d.payout[i], d.poTrades[i], ((padL + w2) / W) * 100, (y2 / H) * 100)} onMouseLeave={onLeave}>
-        <animate attributeName="width" from="0" to={w2} dur="0.6s" fill="freeze" /></rect>);
-      bars.push(<text key={'lb' + i} x={padL - 8} y={cy + 3} textAnchor="end" fontSize="10" fill="var(--muted)">{lb}</text>);
-    });
-  }
+export function AttentionSection() {
+  const navigate = useNavigate();
+  const [alerts, setAlerts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.allSettled([getDevices(), traderApi.payoutRequests('in_processing')])
+      .then(([devicesRes, payoutRes]) => {
+        if (!alive) return;
+        const list = [];
+
+        const devices = devicesRes.status === 'fulfilled' ? (devicesRes.value || []) : [];
+        devices.filter((d) => !d.online).forEach((d) => {
+          list.push({
+            key: `device-${d.id}`,
+            icon: Smartphone,
+            tone: 'blue',
+            title: `${d.deviceName || 'Device'} is offline`,
+            sub: `Last seen ${timeAgo(d.lastSeen)}`,
+            to: '/smartphones',
+          });
+        });
+
+        const payouts = payoutRes.status === 'fulfilled' ? (payoutRes.value.data?.data?.payout_requests || []) : [];
+        payouts.forEach((r) => {
+          if (!r.expires_at) return;
+          const msLeft = new Date(r.expires_at).getTime() - Date.now();
+          if (msLeft < EXPIRING_SOON_MS) {
+            list.push({
+              key: `payout-${r.id}`,
+              icon: Clock3,
+              tone: 'amber',
+              title: msLeft <= 0 ? 'A payout request expired' : 'Payout request expiring soon',
+              sub: msLeft <= 0 ? `#${r.id} needs review` : `#${r.id} — ${fmtDuration(msLeft)} left`,
+              to: '/buy-usdt',
+            });
+          }
+        });
+
+        setAlerts(list);
+      })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
 
   return (
-    <div className="tf-card" style={{ padding: '20px 22px' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
+    <div className="tf-card" style={{ padding: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 22px 16px' }}>
         <div>
-          <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0 }}>Statistic</h3>
-          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0 0' }}>Pay-in vs Payout volume</p>
+          <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0 }}>Requires attention</h3>
+          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0 0' }}>Actionable items only</p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <div style={{ display: 'flex', gap: 16 }}>
-            {PERIODS.map((k) => (
-              <button key={k} className={'tf-tab' + (period === k ? ' on' : '')} onClick={() => setPeriod(k)}>
-                {TAB_LABEL[k]}
-              </button>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button className={'tf-obtn' + (ori === 'v' ? ' on' : '')} onClick={() => setOri('v')} title="Vertical"><BarChart3 size={16} /></button>
-            <button className={'tf-obtn' + (ori === 'h' ? ' on' : '')} onClick={() => setOri('h')} title="Horizontal"><AlignLeft size={16} /></button>
-          </div>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: 18, margin: '14px 0 18px' }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--muted)', fontSize: 12, fontWeight: 500 }}>
-          <span style={{ width: 11, height: 11, borderRadius: 3, background: '#22c55e' }} />Pay-in
-        </span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--muted)', fontSize: 12, fontWeight: 500 }}>
-          <span style={{ width: 11, height: 11, borderRadius: 3, background: '#ef4444' }} />Payout
-        </span>
-      </div>
-
-      <div style={{ position: 'relative' }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto' }} key={period + ori}>{bars}</svg>
-
-        {hover && (
-          <div style={{
-            position: 'absolute', left: `${hover.x}%`, top: `${hover.y}%`,
-            transform: 'translate(-50%, -115%)', pointerEvents: 'none',
-            background: 'var(--card)', border: '1px solid var(--cardborder)',
-            boxShadow: '0 6px 20px rgba(0,0,0,.12)', borderRadius: 12, padding: '10px 14px',
-            minWidth: 150, zIndex: 5,
-          }}>
-            <p style={{ color: 'var(--muted)', fontSize: 11, fontWeight: 600, margin: '0 0 8px' }}>{hover.label}</p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-              <span style={{ width: 9, height: 9, borderRadius: '50%', background: hover.kind === 'Pay-in' ? '#22c55e' : '#ef4444' }} />
-              <span style={{ color: 'var(--muted)', fontSize: 12 }}>{hover.kind}:</span>
-              <span style={{ color: 'var(--text)', fontSize: 12, fontWeight: 700, marginLeft: 'auto' }}>{inrShort(hover.amount)}</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#94a3b8' }} />
-              <span style={{ color: 'var(--muted)', fontSize: 12 }}>Trades:</span>
-              <span style={{ color: 'var(--text)', fontSize: 12, fontWeight: 700, marginLeft: 'auto' }}>{hover.trades}</span>
-            </div>
-          </div>
+        {alerts.length > 0 && (
+          <span
+            style={{ fontSize: 11, fontWeight: 700, borderRadius: 999, padding: '4px 9px', background: hexA('#dc6803', 0.14), color: '#dc6803' }}
+          >
+            {alerts.length} item{alerts.length > 1 ? 's' : ''}
+          </span>
         )}
       </div>
+
+      {loading ? (
+        <p style={{ padding: '0 22px 22px', color: 'var(--muted)', fontSize: 13, margin: 0 }}>Checking…</p>
+      ) : alerts.length === 0 ? (
+        <div style={{ padding: '4px 22px 24px', display: 'flex', alignItems: 'center', gap: 10, color: '#22c55e' }}>
+          <CheckCircle2 size={18} style={{ flexShrink: 0 }} />
+          <span style={{ fontSize: 13, fontWeight: 500 }}>Nothing needs your attention right now.</span>
+        </div>
+      ) : (
+        <div style={{ flex: 1 }}>
+          {alerts.map((a) => {
+            const Icon = a.icon;
+            const hex = TONE_HEX[a.tone];
+            return (
+              <button
+                key={a.key}
+                onClick={() => navigate(a.to)}
+                className="tf-row-hover"
+                style={{
+                  width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '11px 22px', border: 0, borderTop: '1px solid var(--cardborder)',
+                  background: 'transparent', cursor: 'pointer',
+                }}
+              >
+                <span
+                  style={{
+                    width: 32, height: 32, borderRadius: 10, display: 'flex', alignItems: 'center',
+                    justifyContent: 'center', background: hexA(hex, 0.14), color: hex, flexShrink: 0,
+                  }}
+                >
+                  <Icon size={16} />
+                </span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{a.title}</p>
+                  <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--muted)' }}>{a.sub}</p>
+                </span>
+                <ChevronRight size={16} style={{ color: 'var(--muted)', flexShrink: 0 }} />
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

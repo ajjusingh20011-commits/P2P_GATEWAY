@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
-import { Activity, TrendingUp, UserPlus, Repeat } from 'lucide-react';
-import { Card, StatCard, Badge, Toggle, SearchInput, PageHeader } from '../components/ui';
-import { CommissionSection, StatisticSection } from '../components/DashboardSections';
+import { useOutletContext, useNavigate } from 'react-router-dom';
+import { Activity, Layers3, TrendingUp, ShieldCheck, Wifi, Plus } from 'lucide-react';
+import { Card, StatCard, Badge, Button, Toggle, SearchInput, PageHeader } from '../components/ui';
+import { CommissionSection, AttentionSection } from '../components/DashboardSections';
 import { useApi } from '../hooks/useApi';
 import { traderApi } from '../services/api';
-import { balance, stats, ACCOUNT_TYPES } from '../utils/mock';
+import { balance, stats, inr, ACCOUNT_TYPES } from '../utils/mock';
 
 // Success-rate → red / yellow / green thresholds (shared with the currency widget).
 function rateColor(rate) {
@@ -26,6 +26,7 @@ function deriveMetrics(d) {
 
 export default function Dashboard() {
   const { online, setOnline } = useOutletContext();
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [details, setDetails] = useState([]);
 
@@ -38,14 +39,10 @@ export default function Dashboard() {
         locked_usdt: 0,
         commission_today_usdt: 0,
         commission_total_usdt: 0,
-        my_rate: 4,
         base_rate: 100,
         trader_margin: 4,
         trader_rate: 104,
-        rate_label: 'My Rate',
         commission_rate: 4,
-        ftd_today: 0,
-        std_today: 0,
         today_trades: stats.todayTrades,
         today_volume_inr: stats.todayVolume,
         success_rate: stats.successRate,
@@ -99,20 +96,19 @@ export default function Dashboard() {
     ];
   }, [filtered]);
 
-  // Stat cards — only My Rate + Success Rate live in the top grid now. Commission
-  // and volume/trades moved to the dedicated sections below (Change 1).
+  // Live pool = payment details actually gated live for routing right now
+  // (is_active), not just toggled on — same distinction Offers.jsx enforces.
+  const livePoolCount = useMemo(() => details.filter((d) => d.is_active).length, [details]);
+
+  // Top stat row — exactly the set the approved design calls for. No My
+  // Rate / FTD / STD cards (FTD/STD is an admin-only concept, not shown on
+  // the trader panel at all) and no score/health metric (none is computed
+  // anywhere in the backend, so none is shown — correction 1).
   const statCards = [
-    {
-      label: dash.rate_label || 'My Rate',
-      value: dash.trader_rate != null ? `₹${dash.trader_rate}` : '—',
-      sub: `Base ₹${dash.base_rate ?? 100} + margin ${dash.trader_margin ?? dash.my_rate ?? 0}%`,
-      icon: Activity,
-      accent: '#14b8c4',
-    },
-    { label: 'Success Rate', value: `${dash.success_rate}%`, sub: 'All-time', icon: TrendingUp, accent: '#8b5cf6' },
-    // FTD vs STD split for today (Order System v2).
-    { label: 'FTD orders today', value: dash.ftd_today ?? 0, sub: 'First-time deposits', icon: UserPlus, accent: '#22c55e' },
-    { label: 'STD orders today', value: dash.std_today ?? 0, sub: 'Returning customers', icon: Repeat, accent: '#3b82f6' },
+    { label: 'Total UPI Accounts', value: details.length, sub: 'All connected accounts', icon: Layers3, accent: '#8b5cf6' },
+    { label: "Today's Volume", value: inr(dash.today_volume_inr ?? 0), sub: 'Today', icon: TrendingUp, accent: '#14b8c4' },
+    { label: 'Success Rate', value: `${dash.success_rate}%`, sub: 'Today', icon: ShieldCheck, accent: '#22c55e' },
+    { label: 'Live Pool', value: livePoolCount, sub: `of ${details.length} accounts`, icon: Wifi, accent: '#3b82f6' },
   ];
 
   return (
@@ -137,6 +133,13 @@ export default function Dashboard() {
         }
       />
 
+      <div className="flex justify-end" style={{ marginBottom: 16 }}>
+        <Button onClick={() => navigate('/offers')}>
+          <Plus size={16} />
+          Add payment detail
+        </Button>
+      </div>
+
       {/* Earnings & activity (USDT). Balance lives in the sidebar, so it is not
           duplicated here. */}
       <div className="tf-grid" style={{ marginBottom: 18 }}>
@@ -153,10 +156,10 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Commission (real data) + Statistic (demo — real pay-in/payout later) */}
+      {/* Commission (real data) + Requires attention (real data, correction 5) */}
       <div className="tf-two" style={{ marginBottom: 18 }}>
         <div className="tf-enter" style={{ animationDelay: '0.15s' }}><CommissionSection /></div>
-        <div className="tf-enter" style={{ animationDelay: '0.25s' }}><StatisticSection /></div>
+        <div className="tf-enter" style={{ animationDelay: '0.25s' }}><AttentionSection /></div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -230,7 +233,8 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        {/* Values by Currency — static conversion legend */}
+        {/* Values by Currency — a color-threshold legend for the rates above,
+            not live data of its own. */}
         <Card className="flex flex-col">
           <div className="p-4" style={{ borderBottom: '1px solid var(--cardborder)' }}>
             <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>Values by Currency</h2>
