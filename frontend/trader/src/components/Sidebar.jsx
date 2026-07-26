@@ -1,9 +1,5 @@
-import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
-  ChevronsLeft,
-  ChevronsRight,
-  Wallet,
   LayoutDashboard,
   ArrowUpRight,
   ArrowDownLeft,
@@ -13,16 +9,15 @@ import {
   Download,
   Settings as SettingsIcon,
   LogOut,
-  Activity,
+  HelpCircle,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { Toggle } from './ui';
 import { usdt } from '../utils/mock';
 
 const NAV = [
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { to: '/trades', label: 'Sell USDT', icon: ArrowUpRight },
-  { to: '/offers', label: 'Details', icon: Landmark },
+  { to: '/offers', label: 'Payment details', icon: Landmark },
   { to: '/buy-usdt', label: 'Buy USDT', icon: ArrowDownLeft, badge: 'buyUsdt' },
   { to: '/notifications', label: 'Notifications', icon: Bell, badge: 'notifications' },
   { to: '/smartphones', label: 'Smartphones', icon: Smartphone, badge: 'smartphones' },
@@ -30,31 +25,27 @@ const NAV = [
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
 
+// Soft indigo count pill (matches the reference nav badge).
 function CountBadge({ value }) {
   if (value == null) return null;
   const text = value > 99 ? '99+' : String(value);
   return (
     <span
       className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold"
-      style={{ background: 'rgba(34,197,94,.14)', color: '#22c55e' }}
+      style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
     >
       {text}
     </span>
   );
 }
 
-export default function Sidebar({ balance, online, onToggleOnline, badges = {} }) {
+/**
+ * Trader sidebar (MaxPay visual system). Collapse is controlled from the top
+ * header (single collapse control), so this is a presentational component that
+ * only reads `collapsed`. Balance is real (from the trader's dashboard).
+ */
+export default function Sidebar({ balance, badges = {}, collapsed = false }) {
   const { logout } = useAuth();
-
-  // Collapsed/expanded state (this feature's allowed new state), persisted.
-  const [collapsed, setCollapsed] = useState(false);
-  useEffect(() => {
-    const saved = localStorage.getItem('sidebar-collapsed');
-    if (saved != null) setCollapsed(saved === 'true');
-  }, []);
-  useEffect(() => {
-    localStorage.setItem('sidebar-collapsed', String(collapsed));
-  }, [collapsed]);
 
   const linkClass = ({ isActive }) => `tf-nav${isActive ? ' active' : ''}${collapsed ? ' tf-tip' : ''}`;
   const collapsedNavStyle = collapsed ? { justifyContent: 'center', gap: 0 } : undefined;
@@ -63,82 +54,44 @@ export default function Sidebar({ balance, online, onToggleOnline, badges = {} }
     <aside
       className="flex h-screen flex-shrink-0 flex-col"
       style={{
-        width: collapsed ? 72 : 256,
+        width: collapsed ? 78 : 280,
         background: 'var(--sidebar)',
         borderRight: '1px solid var(--cardborder)',
-        padding: collapsed ? '16px 10px' : '16px 14px',
+        padding: collapsed ? '18px 12px' : '18px 14px',
         transition: 'width .25s ease, padding .25s ease, background-color .3s',
       }}
     >
-      {/* Logo + collapse toggle (toggle stays visible in both states) */}
-      {collapsed ? (
-        <div className="flex flex-col items-center gap-2" style={{ padding: '0 0 12px' }}>
-          <span
-            className="flex items-center justify-center font-extrabold text-white"
-            style={{ width: 36, height: 36, borderRadius: 11, background: '#10b981', fontSize: 13 }}
-          >
-            P2P
-          </span>
-          <button className="tf-hbtn" onClick={() => setCollapsed(false)} aria-label="Expand sidebar" title="Expand">
-            <ChevronsRight size={18} />
-          </button>
-        </div>
-      ) : (
-        <div className="flex items-center justify-between" style={{ padding: '4px 6px 14px' }}>
-          <div className="flex items-center gap-2.5">
-            <span
-              className="flex items-center justify-center font-extrabold text-white"
-              style={{ width: 36, height: 36, borderRadius: 11, background: '#10b981', fontSize: 13 }}
-            >
-              P2P
-            </span>
-            <span style={{ color: 'var(--text)', fontWeight: 700, fontSize: 15 }}>Trader Panel</span>
+      {/* Brand mark */}
+      <div className="flex items-center gap-2.5" style={{ padding: collapsed ? '0 0 12px' : '0 6px 12px', justifyContent: collapsed ? 'center' : undefined }}>
+        <span
+          className="flex items-center justify-center font-extrabold text-white"
+          style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(145deg,#5b55ee,#3d36bd)', fontSize: 15, boxShadow: '0 7px 20px rgba(79,70,229,.24)' }}
+        >
+          M
+        </span>
+        {!collapsed && (
+          <div style={{ lineHeight: 1.2 }}>
+            <div style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16 }}>MaxPay</div>
+            <div style={{ color: 'var(--muted)', fontSize: 11 }}>Trader</div>
           </div>
-          <button className="tf-hbtn" onClick={() => setCollapsed(true)} aria-label="Collapse sidebar" title="Collapse">
-            <ChevronsLeft size={18} />
-          </button>
+        )}
+      </div>
+
+      {/* Purple-gradient balance card (expanded only) — real available balance */}
+      {!collapsed && (
+        <div style={{ margin: '10px 2px 16px', padding: 16, borderRadius: 14, background: 'linear-gradient(145deg,#4f46e5,#3730a3)', color: '#fff' }}>
+          <p style={{ opacity: 0.72, fontSize: 12, margin: 0 }}>Available balance</p>
+          <p style={{ fontWeight: 800, fontSize: 21, margin: '7px 0 0' }}>{usdt(balance)}</p>
         </div>
       )}
 
-      {/* Balance — full card expanded, compact icon badge collapsed */}
-      {collapsed ? (
-        <div className="tf-tip flex justify-center" data-tip={`Balance ${usdt(balance)}`} style={{ marginBottom: 8 }}>
-          <span
-            className="flex items-center justify-center"
-            style={{ width: 40, height: 40, borderRadius: 12, background: 'rgba(20,184,196,.13)', color: '#0f766e' }}
-          >
-            <Wallet size={19} />
-          </span>
-        </div>
-      ) : (
-        <div style={{ borderRadius: 16, padding: 15, marginBottom: 8, background: 'linear-gradient(135deg,#d5f5ef,#c2f0e6)' }}>
-          <p style={{ color: '#0d9488', fontWeight: 500, fontSize: 12, margin: '0 0 4px', opacity: 0.85 }}>Total Balance</p>
-          <p style={{ color: '#0f766e', fontWeight: 800, fontSize: 19, margin: 0 }}>{usdt(balance)}</p>
-        </div>
-      )}
-
-      {/* Activity — full toggle expanded, status icon collapsed */}
-      {collapsed ? (
-        <div className="tf-tip flex justify-center" data-tip={online ? 'Online' : 'Offline'} style={{ padding: '9px 0', marginBottom: 4 }}>
-          <Activity className="h-[18px] w-[18px]" style={{ color: online ? '#14b8c4' : 'var(--muted)' }} />
-        </div>
-      ) : (
-        <div className="flex items-center justify-between" style={{ padding: '9px 14px', marginBottom: 4 }}>
-          <span className="flex items-center gap-2" style={{ color: 'var(--muted)', fontSize: 13, fontWeight: 500 }}>
-            <Activity className="h-4 w-4" />
-            Activity
-          </span>
-          <div className="flex items-center gap-2">
-            <span style={{ fontSize: 12, fontWeight: 500, color: online ? '#14b8c4' : 'var(--muted)' }}>
-              {online ? 'Online' : 'Offline'}
-            </span>
-            <Toggle checked={online} onChange={onToggleOnline} />
-          </div>
-        </div>
-      )}
-
-      {/* Nav */}
-      <nav className="tf-scroll mt-2 flex-1 space-y-1 overflow-y-auto overflow-x-hidden">
+      {/* Workspace nav */}
+      <nav className="tf-hidescroll mt-1 flex-1 space-y-1 overflow-y-auto overflow-x-hidden">
+        {!collapsed && (
+          <small style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--subtle)', padding: '9px 11px', letterSpacing: '.12em' }}>
+            WORKSPACE
+          </small>
+        )}
         {NAV.map(({ to, label, icon: Icon, badge, disabled }) => {
           const count = badge ? badges[badge] : null;
           const hasCount = count != null && count > 0;
@@ -165,7 +118,7 @@ export default function Sidebar({ balance, online, onToggleOnline, badges = {} }
                 <Icon className="h-[19px] w-[19px]" />
                 {collapsed && hasCount && (
                   <span
-                    style={{ position: 'absolute', top: -3, right: -4, width: 8, height: 8, borderRadius: '50%', background: '#22c55e', border: '1.5px solid var(--sidebar)' }}
+                    style={{ position: 'absolute', top: -3, right: -4, width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', border: '1.5px solid var(--sidebar)' }}
                   />
                 )}
               </span>
@@ -180,16 +133,28 @@ export default function Sidebar({ balance, online, onToggleOnline, badges = {} }
         })}
       </nav>
 
-      {/* Logout */}
+      {/* Footer: support card + neutral logout */}
       <div style={{ marginTop: 'auto', paddingTop: 8 }}>
+        {!collapsed && (
+          <div
+            className="flex items-center gap-2.5"
+            style={{ border: '1px solid var(--cardborder)', background: 'var(--surface2)', borderRadius: 12, padding: 12, marginBottom: 8 }}
+          >
+            <HelpCircle className="h-[18px] w-[18px]" style={{ color: 'var(--muted)', flexShrink: 0 }} />
+            <div style={{ lineHeight: 1.3 }}>
+              <div style={{ color: 'var(--text)', fontWeight: 600, fontSize: 12 }}>Need help?</div>
+              <div style={{ color: 'var(--muted)', fontSize: 10 }}>Contact MaxPay support</div>
+            </div>
+          </div>
+        )}
         <button
           onClick={logout}
           className={`tf-nav${collapsed ? ' tf-tip' : ''}`}
-          data-tip={collapsed ? 'Logout' : undefined}
-          style={{ color: '#ef4444', ...collapsedNavStyle }}
+          data-tip={collapsed ? 'Sign out' : undefined}
+          style={collapsedNavStyle}
         >
           <LogOut className="h-[19px] w-[19px]" />
-          {!collapsed && 'Logout'}
+          {!collapsed && 'Sign out'}
         </button>
       </div>
     </aside>

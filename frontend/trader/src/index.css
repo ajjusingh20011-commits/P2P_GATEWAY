@@ -209,6 +209,10 @@
 }
 .tf-scroll::-webkit-scrollbar-track { background: transparent; }
 
+/* Scroll area with a visually hidden scrollbar (sidebar nav). */
+.tf-hidescroll { scrollbar-width: none; -ms-overflow-style: none; }
+.tf-hidescroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
 /* Tooltip shown to the right of collapsed-sidebar items on hover */
 .tf-tip { position: relative; }
 .tf-tip:hover::after {
