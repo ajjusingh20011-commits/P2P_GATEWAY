@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader } from '../components/ui';
-import { IconExport, IconRobot } from '../components/icons';
+import { Clock3, ExternalLink, Hand, CheckCircle2, XCircle, AlertTriangle, Copy, Check } from 'lucide-react';
+import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, DataTable, Th, EmptyState, LoadingState } from '../components/ui';
+import { IconExport } from '../components/icons';
 import { useApi } from '../hooks/useApi';
 import { traderApi } from '../services/api';
 import { trades, inr, usdt, ACCOUNT_TYPES } from '../utils/mock';
@@ -18,15 +19,9 @@ function CopyId({ id }) {
   };
   return (
     <div className="flex items-center gap-2">
-      <div>
-        <div className="font-mono text-[11px] text-gray-400">{full.slice(0, 8) || '—'}…</div>
-      </div>
-      <button
-        onClick={copy}
-        title="Copy full ID"
-        className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-gray-200"
-      >
-        {copied ? '✓' : '⎘'}
+      <div className="font-mono text-[11px]" style={{ color: 'var(--muted)' }}>{full.slice(0, 8) || '—'}…</div>
+      <button onClick={copy} title="Copy full ID" className="tf-hbtn" style={{ width: 26, height: 26 }}>
+        {copied ? <Check size={12} /> : <Copy size={12} />}
       </button>
     </div>
   );
@@ -50,11 +45,11 @@ function formatStamp(value) {
 // Two-line timestamp cell: big time over small date, or a muted dash.
 function Stamp({ value }) {
   const s = formatStamp(value);
-  if (!s) return <span className="text-xs text-gray-500">—</span>;
+  if (!s) return <span className="text-xs" style={{ color: 'var(--muted)' }}>—</span>;
   return (
     <div>
-      <div className="text-sm font-medium text-gray-200">{s.time}</div>
-      <div className="text-xs text-gray-500">{s.date}</div>
+      <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>{s.time}</div>
+      <div className="text-xs" style={{ color: 'var(--muted)' }}>{s.date}</div>
     </div>
   );
 }
@@ -66,11 +61,13 @@ const CLOSED_STATUSES = new Set([
 
 // Map a backend order onto the shape this table renders. The API lacks some of
 // the rich mock fields (myRate/binanceRate/bank/client/closedAt) — show `—`.
+// No deposit_type (FTD/STD) field is read here — that's an admin-only
+// trader-classification/routing concept and is deliberately never surfaced
+// on the trader panel, on this page or any other.
 function orderToRow(o) {
   return {
     id: o.order_id || o.id,
     gatewayOrderId: o.gateway_order_id || null,
-    depositType: o.deposit_type || null,
     amountInr: o.amount_inr,
     amountUsdt: o.amount_usdt,
     // USDT the trader actually gives up = amount_inr / trader_rate. Persisted on
@@ -92,28 +89,30 @@ function orderToRow(o) {
   };
 }
 
-// Order System v2 statuses + colours.
+// Order System v2 statuses (backend/src/models/order.model.js STATUSES) —
+// every real value is represented, nothing invented. claimed_paid/under_review
+// share the same "manual review" icon+tone (the reference file's distinction
+// between auto-resolved and manual-review states) since both are exactly
+// Order.REVIEWABLE_STATUSES — a real backend-defined grouping. There is no
+// exposed signal for "was this auto-verified" (auto_verified isn't part of
+// the GET /orders response), so `success` is labelled plainly rather than
+// claiming an unverifiable "auto-closed" distinction.
 const STATUS = {
-  pending: { color: 'gray', label: 'Pending' },
-  checkout_open: { color: 'sky', label: 'Checkout Open' },
-  claimed_paid: { color: 'amber', label: 'Claimed Paid' },
-  under_review: { color: 'amber', label: 'Under Review' },
-  success: { color: 'green', label: 'Success' },
-  failed: { color: 'gray', label: 'Failed' },
-  rejected: { color: 'red', label: 'Rejected' },
-  disputed: { color: 'amber', label: 'Disputed' },
+  pending: { color: 'gray', label: 'Pending', icon: Clock3 },
+  checkout_open: { color: 'sky', label: 'Checkout Open', icon: ExternalLink },
+  claimed_paid: { color: 'amber', label: 'Claimed Paid', icon: Hand },
+  under_review: { color: 'amber', label: 'Under Review', icon: Hand },
+  success: { color: 'green', label: 'Success', icon: CheckCircle2 },
+  failed: { color: 'gray', label: 'Failed', icon: XCircle },
+  rejected: { color: 'red', label: 'Rejected', icon: XCircle },
+  disputed: { color: 'amber', label: 'Disputed', icon: AlertTriangle },
+  cancelled: { color: 'gray', label: 'Canceled', icon: XCircle },
 };
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All statuses' },
   ...Object.entries(STATUS).map(([value, s]) => ({ value, label: s.label })),
 ];
-
-// FTD green / STD blue.
-function DepositBadge({ type }) {
-  if (!type) return <span className="text-xs text-gray-500">—</span>;
-  return <Badge color={type === 'FTD' ? 'green' : 'sky'}>{type}</Badge>;
-}
 
 function toCsv(rows) {
   const header = ['ID', 'Amount INR', 'Amount USDT', 'My Rate', 'Binance Rate', 'UPI', 'Client', 'Created', 'Closed', 'Status'];
@@ -204,7 +203,7 @@ export default function Trades() {
         subtitle="Your outgoing trades"
         actions={
           <>
-            {loading && <span className="text-xs text-gray-500">Loading…</span>}
+            {loading && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</span>}
             <Button variant="ghost" onClick={exportCsv}>
               <IconExport className="h-4 w-4" />
               Export CSV
@@ -224,72 +223,76 @@ export default function Trades() {
         </div>
       </Card>
 
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-800 text-left text-xs uppercase tracking-wide text-gray-500">
-                <th className="px-4 py-3 font-medium">Gateway ID</th>
-                <th className="px-4 py-3 font-medium">Type</th>
-                <th className="px-4 py-3 font-medium">Amount</th>
-                <th className="px-4 py-3 font-medium">My Rate</th>
-                <th className="px-4 py-3 font-medium">Exchange rate</th>
-                <th className="px-4 py-3 font-medium">My Bank</th>
-                <th className="px-4 py-3 font-medium">Client</th>
-                <th className="px-4 py-3 font-medium">Created</th>
-                <th className="px-4 py-3 font-medium">Closed</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800">
-              {pageRows.map((t) => {
-                const s = STATUS[t.status] || { color: 'gray', label: t.status || '—' };
-                const type = ACCOUNT_TYPES[t.accountType];
-                return (
-                  <tr key={t.id} className="text-gray-200 hover:bg-gray-800/40">
-                    <td className="px-4 py-3">
-                      {t.gatewayOrderId
-                        ? <span className="font-mono text-[11px] text-gray-300">{t.gatewayOrderId}</span>
-                        : <CopyId id={t.id} />}
-                    </td>
-                    <td className="px-4 py-3"><DepositBadge type={t.depositType} /></td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{inr(t.amountInr)}</div>
-                      <div className="text-xs text-gray-500">{usdt(traderUsdt(t))}</div>
-                    </td>
-                    <td className="px-4 py-3 font-medium text-emerald-400">₹{t.traderRate ?? currentTraderRate}</td>
-                    <td className="px-4 py-3 text-gray-400">₹{baseRate}</td>
-                    <td className="px-4 py-3">
-                      <div className="text-xs text-gray-500">{t.upiId || '—'}</div>
-                      {type ? (
-                        <Badge color={type.color} className="mt-1">{type.label}</Badge>
-                      ) : (
-                        t.accountType && <Badge color="gray" className="mt-1">{t.accountType}</Badge>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">{t.client}</td>
-                    <td className="px-4 py-3"><Stamp value={t.createdAt} /></td>
-                    <td className="px-4 py-3"><Stamp value={t.closedAt} /></td>
-                    <td className="px-4 py-3">
-                      <Badge color={s.color}>
-                        {s.robot && <IconRobot className="h-3.5 w-3.5" />}
-                        {s.label}
-                      </Badge>
-                    </td>
-                  </tr>
-                );
-              })}
-              {pageRows.length === 0 && (
-                <tr>
-                  <td colSpan={11} className="py-10 text-center text-sm text-gray-500">
-                    {rows.length === 0 ? 'No trades yet' : 'No trades match your filters'}
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <DataTable minWidth={1080}>
+          <thead>
+            <tr>
+              <Th>Gateway ID</Th>
+              <Th>Amount</Th>
+              <Th>My Rate</Th>
+              <Th>Exchange rate</Th>
+              <Th>My Bank</Th>
+              <Th>Client</Th>
+              <Th>Created</Th>
+              <Th>Closed</Th>
+              <Th>Status</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((t) => {
+              const s = STATUS[t.status] || { color: 'gray', label: t.status || '—', icon: null };
+              const StatusIcon = s.icon;
+              const type = ACCOUNT_TYPES[t.accountType];
+              return (
+                <tr key={t.id} className="tf-row-hover" style={{ borderBottom: '1px solid var(--cardborder)', color: 'var(--text)' }}>
+                  <td className="px-4 py-3">
+                    {t.gatewayOrderId
+                      ? <span className="font-mono text-[11px]" style={{ color: 'var(--text)' }}>{t.gatewayOrderId}</span>
+                      : <CopyId id={t.id} />}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium">{inr(t.amountInr)}</div>
+                    <div className="text-xs" style={{ color: 'var(--muted)' }}>{usdt(traderUsdt(t))}</div>
+                  </td>
+                  <td className="px-4 py-3 font-medium" style={{ color: '#22c55e' }}>₹{t.traderRate ?? currentTraderRate}</td>
+                  <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>₹{baseRate}</td>
+                  <td className="px-4 py-3">
+                    <div className="text-xs" style={{ color: 'var(--muted)' }}>{t.upiId || '—'}</div>
+                    {type ? (
+                      <Badge color={type.color} className="mt-1">{type.label}</Badge>
+                    ) : (
+                      t.accountType && <Badge color="gray" className="mt-1">{t.accountType}</Badge>
+                    )}
+                  </td>
+                  <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{t.client}</td>
+                  <td className="px-4 py-3"><Stamp value={t.createdAt} /></td>
+                  <td className="px-4 py-3"><Stamp value={t.closedAt} /></td>
+                  <td className="px-4 py-3">
+                    <Badge color={s.color}>
+                      {StatusIcon && <StatusIcon size={12} />}
+                      {s.label}
+                    </Badge>
                   </td>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div className="border-t border-gray-800">
+              );
+            })}
+            {pageRows.length === 0 && (
+              <tr>
+                <td colSpan={9}>
+                  {loading && rows.length === 0 ? (
+                    <LoadingState label="Loading trades…" />
+                  ) : (
+                    <EmptyState
+                      title={rows.length === 0 ? 'No trades yet' : 'No trades match your filters'}
+                      message={rows.length === 0 ? 'Incoming orders routed to your payment details will show up here.' : undefined}
+                    />
+                  )}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </DataTable>
+        <div style={{ borderTop: '1px solid var(--cardborder)' }}>
           <Pagination page={page} perPage={PER_PAGE} total={filtered.length} onPage={setPage} />
         </div>
       </Card>
