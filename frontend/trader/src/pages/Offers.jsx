@@ -47,24 +47,6 @@ const BANKS = [
   { name: 'Yes Bank', type: 'gpay', color: 'sky' },
 ];
 
-const CIRCLE = {
-  sky: 'bg-sky-500/20 text-sky-300',
-  violet: 'bg-violet-500/20 text-violet-300',
-  amber: 'bg-amber-500/20 text-amber-300',
-  red: 'bg-red-500/20 text-red-300',
-  green: 'bg-emerald-500/20 text-emerald-300',
-  gray: 'bg-gray-700/40 text-gray-300',
-};
-
-const initials = (name = '') =>
-  name
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase();
-
 // Empty string → undefined so Joi defaults apply; a value → Number.
 const num = (v) => (v === '' || v == null ? undefined : Number(v));
 
@@ -1427,9 +1409,9 @@ function DetailsColumn({
 
   return (
     <Card className="flex flex-col">
-      <div className="flex items-center justify-between border-b border-gray-800 p-4">
+      <div className="flex items-center justify-between p-4" style={{ borderBottom: '1px solid var(--cardborder)' }}>
         <div className="flex items-center gap-2">
-          <h2 className="font-semibold text-white">Details</h2>
+          <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>Details</h2>
           <Badge color="gray">{details.length + ngoAccounts.length}</Badge>
         </div>
         <div className="flex items-center gap-2">
@@ -1443,7 +1425,7 @@ function DetailsColumn({
             ]}
             className="w-28"
           />
-          <button onClick={() => onAdd(null)} className="rounded-lg border border-gray-700 p-1.5 text-gray-300 hover:bg-gray-800" aria-label="Add detail">
+          <button onClick={() => onAdd(null)} className="tf-hbtn" aria-label="Add detail">
             <IconPlus className="h-4 w-4" />
           </button>
         </div>
@@ -1454,14 +1436,15 @@ function DetailsColumn({
 
         {/* warning banner (Fix 4) */}
         {unlinkedCount > 0 && (
-          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-            <div className="flex items-center gap-2 text-sm text-amber-300">
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg p-3" style={{ border: '1px solid rgba(245,158,11,.3)', background: 'rgba(245,158,11,.1)' }}>
+            <div className="flex items-center gap-2 text-sm" style={{ color: '#fcd34d' }}>
               <IconWarning className="h-4 w-4 flex-shrink-0" />
               <span>You have active payment details that are not participating in transactions.</span>
             </div>
             <button
               onClick={() => setOnlyUnlinked((v) => !v)}
-              className="rounded-md border border-amber-500/40 px-2.5 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/20"
+              className="rounded-md px-2.5 py-1 text-xs font-medium"
+              style={{ border: '1px solid rgba(245,158,11,.4)', color: '#fcd34d' }}
             >
               {onlyUnlinked ? 'Show all' : 'Show'}
             </button>
@@ -1473,15 +1456,13 @@ function DetailsColumn({
             <div key={g.bank}>
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className={`flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-bold ${CIRCLE[methodMeta(g.items[0].account_type).color] || CIRCLE.gray}`}>
-                    {initials(g.bank)}
-                  </span>
-                  <span className="text-sm font-medium text-gray-200">{g.bank}</span>
-                  <span className="text-xs text-gray-500">INR</span>
+                  <BankBadge type={g.items[0].account_type} label={g.bank} size={28} />
+                  <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>{g.bank}</span>
+                  <span className="text-xs" style={{ color: 'var(--muted)' }}>INR</span>
                 </div>
                 <button
                   onClick={() => onAdd(BANKS.find((b) => b.name === g.bank) || null)}
-                  className="text-emerald-400 hover:text-emerald-300"
+                  style={{ color: '#22c55e' }}
                   aria-label="Add detail to bank"
                 >
                   <IconPlus className="h-4 w-4" />
@@ -1494,36 +1475,34 @@ function DetailsColumn({
                   const exhausted = isExhausted(d);
                   const unlinked = notLinked(d);
                   const highlight = exhausted || unlinked;
+                  const liveState = d.ngo_device_id ? (deviceLiveMap[d.ngo_device_id] ? 'active' : 'dead') : null;
                   return (
                     <div
                       key={d.id}
-                      className={`rounded-lg border px-3 py-2.5 ${
-                        highlight ? 'border-amber-500/40 bg-amber-500/5' : 'border-gray-800 bg-gray-950'
-                      }`}
+                      className="rounded-lg px-3 py-2.5"
+                      style={highlight
+                        ? { border: '1px solid rgba(245,158,11,.4)', background: 'rgba(245,158,11,.05)' }
+                        : { border: '1px solid var(--cardborder)', background: 'var(--hover)' }}
                     >
                       <div className="flex items-center gap-3">
                         {/* ON/OFF toggle (red off / green on) */}
                         <Toggle checked={!!d.is_active_detail} onChange={() => onToggle(d)} />
 
-                        {/* robot online/offline — real heartbeat liveness
-                            (deviceLiveMap, polled every 15s), not just
-                            whether a device is assigned at all */}
-                        <span
-                          className={d.ngo_device_id && deviceLiveMap[d.ngo_device_id] ? 'text-emerald-400' : 'text-gray-600'}
-                          title={
-                            !d.ngo_device_id
-                              ? 'No device connected'
-                              : deviceLiveMap[d.ngo_device_id]
-                                ? 'Device online — heartbeat within the last 15s'
-                                : 'Device offline — no recent heartbeat'
-                          }
-                        >
-                          <IconRobot className="h-5 w-5" />
-                        </span>
+                        {/* real heartbeat liveness (deviceLiveMap, polled every
+                            15s) — a 2-state active/dead badge; no device
+                            assigned at all shows a neutral placeholder, not a
+                            fabricated 3rd state. */}
+                        {liveState ? (
+                          <LivenessBadge state={liveState} />
+                        ) : (
+                          <span title="No device connected" style={{ color: 'var(--subtle)' }}>
+                            <IconRobot className="h-5 w-5" />
+                          </span>
+                        )}
 
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-gray-100">{d.account_name || 'Untitled'}</p>
-                          <p className="truncate text-xs text-gray-500">{d.upi_id}</p>
+                          <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{d.account_name || 'Untitled'}</p>
+                          <p className="truncate text-xs" style={{ color: 'var(--muted)' }}>{d.upi_id}</p>
                         </div>
 
                         {/* connection-type icon (apk=android/teal · web=globe/coral) */}
@@ -1535,10 +1514,10 @@ function DetailsColumn({
                         {/* limit dot + Day label */}
                         <div className="flex flex-col items-center" title={dot.title}>
                           <span className={`h-2.5 w-2.5 rounded-full ${dot.cls}`} />
-                          <span className="mt-0.5 text-[10px] text-gray-500">Day</span>
+                          <span className="mt-0.5 text-[10px]" style={{ color: 'var(--muted)' }}>Day</span>
                         </div>
 
-                        <button onClick={() => onEdit(d)} className="text-gray-500 hover:text-gray-200" aria-label="Edit detail">
+                        <button onClick={() => onEdit(d)} className="tf-hbtn" style={{ width: 30, height: 30 }} aria-label="Edit detail">
                           <IconEdit className="h-4 w-4" />
                         </button>
                       </div>
@@ -1547,18 +1526,19 @@ function DetailsColumn({
                       {highlight && (
                         <div className="mt-2 space-y-1.5 text-xs">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="text-amber-300">
+                            <span style={{ color: '#fcd34d' }}>
                               {exhausted ? 'Limit exhausted' : 'Not linked to Offer'}
                             </span>
                             {exhausted ? (
-                              <button onClick={() => onEdit(d)} className="rounded-md border border-amber-500/40 px-2 py-0.5 font-medium text-amber-200 hover:bg-amber-500/20">
+                              <button onClick={() => onEdit(d)} className="rounded-md px-2 py-0.5 font-medium" style={{ border: '1px solid rgba(245,158,11,.4)', color: '#fcd34d' }}>
                                 Update limit
                               </button>
                             ) : (
                               <button
                                 onClick={() => onLink(d)}
                                 disabled={linkChecking === d.id}
-                                className="whitespace-nowrap rounded-md border border-amber-500/40 px-2 py-0.5 font-medium text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+                                className="whitespace-nowrap rounded-md px-2 py-0.5 font-medium disabled:opacity-50"
+                                style={{ border: '1px solid rgba(245,158,11,.4)', color: '#fcd34d' }}
                               >
                                 {linkChecking === d.id ? 'Checking…' : 'Link'}
                               </button>
@@ -1568,11 +1548,12 @@ function DetailsColumn({
                               data source (device heartbeat / web session), so
                               the link was blocked instead of silently proceeding. */}
                           {!exhausted && linkBlocked[d.id] && (
-                            <div className="flex items-center justify-between gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1">
-                              <span className="text-red-300">{linkBlocked[d.id].message}</span>
+                            <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1" style={{ border: '1px solid rgba(239,68,68,.3)', background: 'rgba(239,68,68,.1)' }}>
+                              <span style={{ color: '#fca5a5' }}>{linkBlocked[d.id].message}</span>
                               <button
                                 onClick={() => onReconnect(linkBlocked[d.id])}
-                                className="whitespace-nowrap rounded-md border border-red-500/40 px-2 py-0.5 font-medium text-red-200 hover:bg-red-500/20"
+                                className="whitespace-nowrap rounded-md px-2 py-0.5 font-medium"
+                                style={{ border: '1px solid rgba(239,68,68,.4)', color: '#fca5a5' }}
                               >
                                 {linkBlocked[d.id].actionLabel}
                               </button>
@@ -1592,15 +1573,13 @@ function DetailsColumn({
             <div key={`ngo-${platform}`}>
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/20 text-[10px] font-bold text-emerald-300">
-                    {platform.slice(0, 2).toUpperCase()}
-                  </span>
-                  <span className="text-sm font-medium text-gray-200">{platformLabel(platform)}</span>
-                  <span className="text-xs text-gray-500">INR</span>
+                  <BankBadge type={platform} label={platformLabel(platform)} size={28} />
+                  <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>{platformLabel(platform)}</span>
+                  <span className="text-xs" style={{ color: 'var(--muted)' }}>INR</span>
                 </div>
                 <button
                   onClick={() => onAdd(null)}
-                  className="text-emerald-400 hover:text-emerald-300"
+                  style={{ color: '#22c55e' }}
                   aria-label="Add NGO account"
                 >
                   <IconPlus className="h-4 w-4" />
@@ -1619,15 +1598,15 @@ function DetailsColumn({
                   const otpVal = otpValues[a._id] || '';
                   const otpBusy = otpBusyId === a._id;
                   return (
-                    <div key={a._id} className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2.5">
+                    <div key={a._id} className="rounded-lg px-3 py-2.5" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
                       <div className="flex items-center gap-3">
                         <span title={live ? undefined : 'Turning this on attempts to reconnect'}>
                           <Toggle checked={live} disabled={ngoToggleBusyId === a._id} onChange={() => onToggleNGO(a)} />
                         </span>
 
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-gray-100">{a.displayName || 'Untitled'}</p>
-                          <p className="truncate text-xs text-gray-500">{a.upiId}</p>
+                          <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{a.displayName || 'Untitled'}</p>
+                          <p className="truncate text-xs" style={{ color: 'var(--muted)' }}>{a.upiId}</p>
                         </div>
 
                         {/* connection-type icon (apk=android/teal · web=globe/coral) */}
@@ -1637,16 +1616,15 @@ function DetailsColumn({
                         <LimitBadge d={a} />
 
                         {/* connection-status badge: pending/paused/failed/live */}
-                        <span className={`whitespace-nowrap rounded-md border px-2 py-0.5 text-xs ${meta.badge}`}>
-                          {meta.label}
-                        </span>
+                        <Badge color={meta.color}>{meta.label}</Badge>
 
                         {/* real SessionStore.isSessionAlive check (polled every
                             15s) disagreeing with the DB's cached 'live' status —
                             the 60s monitor loop hasn't caught up yet */}
                         {live && ngoAliveMap[a._id] === false && (
                           <span
-                            className="h-2 w-2 rounded-full bg-red-500"
+                            className="h-2 w-2 rounded-full"
+                            style={{ background: '#ef4444' }}
                             title="Marked live, but the session isn't responding right now"
                           />
                         )}
@@ -1655,7 +1633,8 @@ function DetailsColumn({
                           <button
                             onClick={() => onEdit(ngoAccountToEditable(a))}
                             disabled={!live}
-                            className="text-gray-500 hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-500"
+                            className="tf-hbtn disabled:cursor-not-allowed disabled:opacity-40"
+                            style={{ width: 30, height: 30 }}
                             aria-label="Edit detail"
                           >
                             <IconEdit className="h-4 w-4" />
@@ -1666,7 +1645,8 @@ function DetailsColumn({
                           <button
                             onClick={() => onRetryNGO(a)}
                             disabled={otpBusy}
-                            className="whitespace-nowrap rounded-md border border-red-500/40 px-2 py-1 text-xs font-medium text-red-200 hover:bg-red-500/20 disabled:opacity-50"
+                            className="whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium disabled:opacity-50"
+                            style={{ border: '1px solid rgba(239,68,68,.4)', color: '#fca5a5' }}
                           >
                             Retry
                           </button>
@@ -1674,7 +1654,8 @@ function DetailsColumn({
 
                         <button
                           onClick={() => onDeleteNGO(a)}
-                          className="text-gray-500 hover:text-red-400"
+                          className="tf-hbtn"
+                          style={{ width: 30, height: 30, color: '#ef4444' }}
                           aria-label="Delete account"
                         >
                           <IconTrash className="h-4 w-4" />
@@ -1682,7 +1663,7 @@ function DetailsColumn({
                       </div>
 
                       {showingOtp && (
-                        <div className="mt-2 flex items-center gap-2 border-t border-gray-800 pt-2">
+                        <div className="mt-2 flex items-center gap-2 pt-2" style={{ borderTop: '1px solid var(--cardborder)' }}>
                           <input
                             type="text"
                             inputMode="numeric"
@@ -1691,12 +1672,14 @@ function DetailsColumn({
                             onChange={(e) => onOtpChange(a._id, e.target.value.replace(/\D/g, ''))}
                             placeholder="6-digit OTP"
                             disabled={otpBusy}
-                            className="w-28 rounded-md border border-gray-700 bg-gray-800 px-2 py-1 text-center text-sm tracking-widest text-gray-100 outline-none focus:border-emerald-500"
+                            className="w-28 rounded-md px-2 py-1 text-center text-sm tracking-widest outline-none"
+                            style={{ border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)' }}
                           />
                           <button
                             onClick={() => onSubmitOtp(a._id)}
                             disabled={otpBusy || otpVal.length !== 6}
-                            className="rounded-md border border-emerald-500/40 px-2 py-1 text-xs font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+                            className="rounded-md px-2 py-1 text-xs font-medium disabled:opacity-50"
+                            style={{ border: '1px solid rgba(34,197,94,.4)', color: '#6ee7b7' }}
                           >
                             Verify
                           </button>
@@ -1710,7 +1693,7 @@ function DetailsColumn({
           ))}
 
           {groups.length === 0 && ngoGroups.length === 0 && (
-            <p className="py-10 text-center text-sm text-gray-500">
+            <p className="py-10 text-center text-sm" style={{ color: 'var(--muted)' }}>
               {details.length === 0 ? 'No payment details yet — add one to start receiving payments.' : 'No details match your filter.'}
             </p>
           )}
