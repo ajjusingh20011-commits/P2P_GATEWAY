@@ -111,13 +111,13 @@ const inputStyleValid = { ...inputStyle, border: '1px solid #22c55e' };
 // ---------------------------------------------------------------------------
 function LimitWindow({ title, on, onToggle, amount, onAmount, ops, onOps, showDate, date, onDate, currentPeriod }) {
   return (
-    <div className="rounded-lg border border-gray-800">
+    <div className="rounded-lg" style={{ border: '1px solid var(--cardborder)' }}>
       <div className="flex items-center justify-between px-3 py-2.5">
-        <span className="text-sm text-gray-200">{title}</span>
+        <span className="text-sm" style={{ color: 'var(--text)' }}>{title}</span>
         <Toggle checked={on} onChange={onToggle} />
       </div>
       {on && (
-        <div className="space-y-3 border-t border-gray-800 p-3">
+        <div className="space-y-3 p-3" style={{ borderTop: '1px solid var(--cardborder)' }}>
           {showDate && (
             <Field label="Start date">
               <input type="date" style={inputStyle} value={date} onChange={(e) => onDate(e.target.value)} />
@@ -129,7 +129,7 @@ function LimitWindow({ title, on, onToggle, amount, onAmount, ops, onOps, showDa
           <Field label="Disable after N operations">
             <input type="number" min="0" style={inputStyle} value={ops} onChange={(e) => onOps(e.target.value)} placeholder="e.g. 200" />
           </Field>
-          <p className="text-xs text-gray-500">Current period: {Number(currentPeriod || 0).toFixed(2)} INR</p>
+          <p className="text-xs" style={{ color: 'var(--muted)' }}>Current period: {Number(currentPeriod || 0).toFixed(2)} INR</p>
         </div>
       )}
     </div>
@@ -270,10 +270,10 @@ function LimitsForm({ form, set, caps, setCaps, usage }) {
         </Field>
       </div>
 
-      <div className="flex items-center justify-between rounded-lg border border-gray-800 px-3 py-2.5">
+      <div className="flex items-center justify-between rounded-lg px-3 py-2.5" style={{ border: '1px solid var(--cardborder)' }}>
         <div>
-          <p className="text-sm text-gray-200">Activity of details</p>
-          <p className="text-xs text-gray-500">Detail participates in transactions when ON</p>
+          <p className="text-sm" style={{ color: 'var(--text)' }}>Activity of details</p>
+          <p className="text-xs" style={{ color: 'var(--muted)' }}>Detail participates in transactions when ON</p>
         </div>
         <Toggle checked={form.is_active_detail} onChange={(v) => set('is_active_detail', v)} />
       </div>
@@ -446,35 +446,32 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
   return (
     <>
       {/* step name — was the modal header title before tabs were added */}
-      <p className="mb-3 text-sm font-medium text-gray-300">{titles[step]}</p>
+      <p className="mb-3 text-sm font-medium" style={{ color: 'var(--text)' }}>{titles[step]}</p>
 
       {/* step indicator */}
       <div className="mb-4 flex items-center gap-2">
         {[1, 2, 3].map((s) => (
-          <div key={s} className={`h-1.5 flex-1 rounded-full ${s <= step ? 'bg-emerald-500' : 'bg-gray-700'}`} />
+          <div key={s} className="h-1.5 flex-1 rounded-full" style={{ background: s <= step ? '#22c55e' : 'var(--cardborder)' }} />
         ))}
       </div>
 
       {step === 1 && (
         <div>
           <SearchInput value={bankQuery} onChange={setBankQuery} placeholder="Search bank…" />
-          <div className="mt-3 max-h-72 space-y-1 overflow-y-auto pr-1">
+          <div className="tf-scroll mt-3 max-h-72 space-y-1 overflow-y-auto pr-1">
             {filteredBanks.map((b) => (
               <button
                 key={b.name}
                 onClick={() => pickBank(b)}
-                className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition hover:bg-gray-800 ${
-                  bank?.name === b.name ? 'border-emerald-500/50 bg-gray-800' : 'border-gray-800'
-                }`}
+                className="tf-row-hover flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition"
+                style={{ border: bank?.name === b.name ? '1px solid rgba(34,197,94,.5)' : '1px solid var(--cardborder)' }}
               >
-                <span className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold ${CIRCLE[b.color]}`}>
-                  {initials(b.name)}
-                </span>
-                <span className="text-sm text-gray-100">{b.name}</span>
+                <BankBadge type={b.type} label={b.name} size={36} />
+                <span className="text-sm" style={{ color: 'var(--text)' }}>{b.name}</span>
               </button>
             ))}
             {filteredBanks.length === 0 && (
-              <p className="py-4 text-center text-sm text-gray-500">No banks match “{bankQuery}”.</p>
+              <p className="py-4 text-center text-sm" style={{ color: 'var(--muted)' }}>No banks match “{bankQuery}”.</p>
             )}
           </div>
         </div>
@@ -495,7 +492,7 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
               ))}
             </select>
             {!devicesLoading && ngoDevices.length === 0 && (
-              <span className="mt-1 block text-xs text-gray-500">
+              <span className="mt-1 block text-xs" style={{ color: 'var(--muted)' }}>
                 No paired devices yet — pair one from the Smartphones page first.
               </span>
             )}
@@ -509,7 +506,7 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
               placeholder="e.g. Rahul Sharma"
             />
             {form.account_name.length > 0 && !nameValid && (
-              <span className="mt-1 block text-xs text-red-400">Name must be at least 2 characters</span>
+              <span className="mt-1 block text-xs" style={{ color: '#ef4444' }}>Name must be at least 2 characters</span>
             )}
           </Field>
 
@@ -522,10 +519,10 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
                 placeholder="name@bank"
               />
               {upiValid && (
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" aria-hidden>✓</span>
+                <span className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: '#22c55e' }} aria-hidden>✓</span>
               )}
             </div>
-            <span className={`mt-1 block text-xs ${upiInvalid ? 'text-red-400' : 'text-gray-500'}`}>
+            <span className="mt-1 block text-xs" style={{ color: upiInvalid ? '#ef4444' : 'var(--muted)' }}>
               Enter valid UPI ID (example: name@bank)
             </span>
           </Field>
@@ -543,7 +540,7 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
 
       {step === 3 && (
         <>
-          <p className="mb-3 text-xs text-gray-500">All limits are optional — leave a section off to skip it.</p>
+          <p className="mb-3 text-xs" style={{ color: 'var(--muted)' }}>All limits are optional — leave a section off to skip it.</p>
           <LimitsForm form={form} set={set} caps={caps} setCaps={setCaps} usage={null} />
         </>
       )}
@@ -559,18 +556,7 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
         )}
 
         {step === 2 && (
-          <button
-            type="button"
-            onClick={() => step2Valid && setStep(3)}
-            disabled={!step2Valid}
-            className={`inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition ${
-              step2Valid
-                ? 'bg-black text-white hover:bg-gray-800'
-                : 'cursor-not-allowed bg-gray-700 text-gray-500'
-            }`}
-          >
-            Next
-          </button>
+          <Button onClick={() => step2Valid && setStep(3)} disabled={!step2Valid}>Next</Button>
         )}
 
         {step === 3 && (
