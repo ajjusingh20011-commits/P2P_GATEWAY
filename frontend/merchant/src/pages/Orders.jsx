@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Card, Badge, Button, Tabs, Pagination, PageHeader, Modal, Input } from '../components/ui';
-import { IconPlus, IconCopy, IconCheck } from '../components/icons';
+import { Card, Badge, Button, Tabs, Pagination, PageHeader, Modal, Input, Select } from '../components/ui';
+import { IconPlus, IconCopy, IconCheck, IconExport } from '../components/icons';
 import { orders as seedOrders, inr, usdt, checkoutUrl } from '../utils/mock';
 import { merchantApi } from '../services/api';
 
-const PER_PAGE = 10;
+// Backend order-listing is capped at 100/page (see backend's pagination()
+// helper) — loop up to this many pages so filters/tabs/CSV export operate on
+// the merchant's real recent order history rather than only its first 25
+// (the previous version's bug: a single unpaginated fetch silently hid any
+// order past the backend's default page-1 limit). Everything below this —
+// tabs, counts, search, pagination — runs client-side over this real,
+// honestly-bounded window; there is no synthetic data anywhere in it.
+const ORDER_FETCH_PAGES = 10;
 
-// Order System v2 lifecycle.
-const ORDER_STATUSES = ['pending', 'checkout_open', 'claimed_paid', 'under_review', 'success', 'failed', 'rejected', 'disputed'];
+const ORDER_STATUSES = ['pending', 'checkout_open', 'claimed_paid', 'under_review', 'success', 'failed', 'rejected', 'disputed', 'cancelled'];
 const STATUS_META = {
   pending: { label: 'Pending', color: 'gray' },
   checkout_open: { label: 'Checkout Open', color: 'sky' },
@@ -17,27 +23,72 @@ const STATUS_META = {
   failed: { label: 'Failed', color: 'gray' },
   rejected: { label: 'Rejected', color: 'red' },
   disputed: { label: 'Disputed', color: 'amber' },
+  cancelled: { label: 'Cancelled', color: 'gray' },
 };
+const TERMINAL_STATUSES = new Set(['success', 'failed', 'rejected', 'disputed', 'cancelled']);
+const DATE_PRESETS = [
+  { value: 'all', label: 'All time' },
+  { value: 'today', label: 'Today' },
+  { value: '7d', label: 'Last 7 days' },
+  { value: '30d', label: 'Last 30 days' },
+];
+const PAGE_SIZE_OPTIONS = [{ value: '10', label: '10 / page' }, { value: '20', label: '20 / page' }, { value: '50', label: '50 / page' }];
+
+function matchesDatePreset(iso, preset) {
+  if (preset === 'all' || !iso) return true;
+  const age = Date.now() - new Date(iso).getTime();
+  if (preset === 'today') return age <= 86400000;
+  if (preset === '7d') return age <= 7 * 86400000;
+  return age <= 30 * 86400000;
+}
+
+function toCsv(rows) {
+  return rows.map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+}
 
 // FTD green / STD blue.
 function DepositBadge({ type }) {
-  if (!type) return <span className="text-xs text-gray-500">—</span>;
+  if (!type) return <span className="text-xs" style={{ color: 'var(--muted)' }}>—</span>;
   return <Badge color={type === 'FTD' ? 'green' : 'sky'}>{type}</Badge>;
 }
 
-// Normalize an API order into the shape the table renders.
+// Normalize an API order into the shape the table/drawer render. Every field
+// here is a real column from the orders table (see order.model.js) — nothing
+// synthesized. `closedAt` picks the most relevant real terminal timestamp
+// (there's no single "closed_at" column) so it's an honest derived value,
+// not a fabricated one.
 function mapOrder(o) {
   return {
     id: o.uuid || o.id,
     gatewayOrderId: o.gateway_order_id || null,
     merchantOrderId: o.merchant_order_id || null,
     depositType: o.deposit_type || null,
-    amountInr: o.amount_inr,
+    amountInr: Number(o.amount_inr) || 0,
+    amountUsdt: o.amount_usdt != null ? Number(o.amount_usdt) : null,
+    traderRate: o.trader_rate != null ? Number(o.trader_rate) : null,
+    exchangeRate: o.exchange_rate != null ? Number(o.exchange_rate) : null,
     customerRef: o.customer_ref,
     status: o.status,
     createdAt: o.created_at,
+    closedAt: TERMINAL_STATUSES.has(o.status) ? (o.confirmed_at || o.rejected_at || o.reviewed_at || o.updated_at || null) : null,
     checkoutUrl: o.checkout_url || checkoutUrl(o.uuid || o.id),
+    // Real customer-proof fields (order.model.js) — used by the detail drawer.
+    utr: o.utr_number || null,
+    confirmationType: o.confirmation_type || null,
+    claimedPaidAt: o.claimed_paid_at || null,
+    customerConfirmedAt: o.customer_confirmed_at || null,
+    reviewedAt: o.reviewed_at || null,
+    rejectedAt: o.rejected_at || null,
+    rejectionReason: o.rejection_reason || null,
+    merchantFeeUsdt: o.merchant_fee_usdt != null ? Number(o.merchant_fee_usdt) : null,
+    merchantReceivesUsdt: o.merchant_receives_usdt != null ? Number(o.merchant_receives_usdt) : null,
   };
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return { time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), date: d.toLocaleDateString([], { day: '2-digit', month: 'short' }) };
 }
 
 function CreateOrderModal({ open, onClose, onCreate }) {
@@ -113,88 +164,94 @@ function CreateOrderModal({ open, onClose, onCreate }) {
     >
       {errorMsg ? (
         <div className="flex flex-col items-center gap-3 py-4 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500/10">
-            <svg viewBox="0 0 24 24" className="h-8 w-8 text-red-400" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full" style={{ background: 'rgba(239,68,68,0.1)' }}>
+            <svg viewBox="0 0 24 24" className="h-8 w-8" style={{ color: '#ef4444' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" />
             </svg>
           </div>
-          <h3 className="text-base font-semibold text-white">P2P is unavailable right now</h3>
-          <p className="max-w-xs text-sm text-gray-400">{errorMsg}</p>
+          <h3 className="text-base font-semibold" style={{ color: 'var(--text)' }}>P2P is unavailable right now</h3>
+          <p className="max-w-xs text-sm" style={{ color: 'var(--muted)' }}>{errorMsg}</p>
         </div>
       ) : !created ? (
         <div className="space-y-4">
           <div>
-            <label className="mb-1.5 block text-sm text-gray-400">Amount (INR)</label>
+            <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Amount (INR)</label>
             <Input type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 5000" />
           </div>
           <div>
-            <label className="mb-1.5 block text-sm text-gray-400">Customer Reference <span className="text-red-400">*</span></label>
+            <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Customer Reference <span style={{ color: '#ef4444' }}>*</span></label>
             <Input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="e.g. USER_123" />
-            <p className="mt-1 text-xs text-gray-500">Identifies the customer. FTD/STD is auto-detected from this.</p>
+            <p className="mt-1 text-xs" style={{ color: 'var(--subtle, var(--muted))' }}>Identifies the customer. FTD/STD is auto-detected from this.</p>
           </div>
           <div>
-            <label className="mb-1.5 block text-sm text-gray-400">Deposit Type</label>
+            <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Deposit Type</label>
             <div className="flex gap-4">
               {[['FTD', 'FTD — First Time Deposit'], ['STD', 'STD — Standard Deposit']].map(([v, l]) => (
-                <label key={v} className="flex items-center gap-2 text-sm text-gray-200">
-                  <input type="radio" name="deposit-type" value={v} checked={depositType === v} onChange={() => setDepositType(v)} className="accent-indigo-500" />
+                <label key={v} className="flex items-center gap-2 text-sm" style={{ color: 'var(--text)' }}>
+                  <input type="radio" name="deposit-type" value={v} checked={depositType === v} onChange={() => setDepositType(v)} className="accent-[var(--accent)]" />
                   {l}
                 </label>
               ))}
             </div>
-            <p className="mt-1 text-xs text-gray-500">The server auto-detects and corrects this from the customer's history.</p>
+            <p className="mt-1 text-xs" style={{ color: 'var(--subtle, var(--muted))' }}>The server auto-detects and corrects this from the customer's history.</p>
           </div>
           <div>
-            <label className="mb-1.5 block text-sm text-gray-400">Merchant Order ID <span className="text-gray-600">(optional)</span></label>
+            <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Merchant Order ID <span style={{ color: 'var(--muted)' }}>(optional)</span></label>
             <Input value={merchantOrderId} onChange={(e) => setMerchantOrderId(e.target.value)} placeholder="e.g. ORD_001" />
           </div>
-          {fieldError && <p className="text-sm text-red-400">{fieldError}</p>}
+          {fieldError && <p className="text-sm" style={{ color: '#ef4444' }}>{fieldError}</p>}
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+          <div
+            className="flex items-center gap-3 rounded-lg border px-4 py-3 text-sm"
+            style={{ borderColor: 'rgba(34,197,94,0.3)', background: 'rgba(34,197,94,0.1)', color: '#22c55e' }}
+          >
             <IconCheck className="h-5 w-5 flex-shrink-0" />
             <span>Order <strong>{created.gatewayOrderId || created.id}</strong> for {inr(created.amountInr)} is ready.</span>
           </div>
-          <div className="grid grid-cols-2 gap-3 rounded-lg border border-gray-800 bg-gray-950 px-4 py-3 text-sm">
+          <div className="grid grid-cols-2 gap-3 rounded-lg border px-4 py-3 text-sm" style={{ borderColor: 'var(--cardborder)', background: 'var(--hover)' }}>
             <div>
-              <p className="text-xs uppercase tracking-wide text-gray-500">Gateway Order ID</p>
-              <p className="mt-0.5 font-mono text-xs font-medium text-emerald-400">{created.gatewayOrderId || '—'}</p>
+              <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Gateway Order ID</p>
+              <p className="mt-0.5 font-mono text-xs font-medium" style={{ color: '#22c55e' }}>{created.gatewayOrderId || '—'}</p>
             </div>
             <div>
-              <p className="text-xs uppercase tracking-wide text-gray-500">Deposit Type</p>
+              <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Deposit Type</p>
               <p className="mt-0.5"><DepositBadge type={created.depositType} /></p>
             </div>
             {created.merchantOrderId && (
               <div>
-                <p className="text-xs uppercase tracking-wide text-gray-500">Merchant Order ID</p>
-                <p className="mt-0.5 font-mono text-xs text-gray-300">{created.merchantOrderId}</p>
+                <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Merchant Order ID</p>
+                <p className="mt-0.5 font-mono text-xs" style={{ color: 'var(--text)' }}>{created.merchantOrderId}</p>
               </div>
             )}
             <div>
-              <p className="text-xs uppercase tracking-wide text-gray-500">Amount (INR)</p>
-              <p className="mt-0.5 font-medium text-gray-100">{inr(created.amountInr)}</p>
+              <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Amount (INR)</p>
+              <p className="mt-0.5 font-medium" style={{ color: 'var(--text)' }}>{inr(created.amountInr)}</p>
             </div>
             {created.amountUsdt != null && (
               <div>
-                <p className="text-xs uppercase tracking-wide text-gray-500">Amount (USDT)</p>
-                <p className="mt-0.5 font-medium text-gray-100">{usdt(created.amountUsdt)}</p>
+                <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Amount (USDT)</p>
+                <p className="mt-0.5 font-medium" style={{ color: 'var(--text)' }}>{usdt(created.amountUsdt)}</p>
               </div>
             )}
             <div>
-              <p className="text-xs uppercase tracking-wide text-gray-500">Order ID</p>
-              <p className="mt-0.5 font-mono text-xs text-gray-300">{created.id}</p>
+              <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Order ID</p>
+              <p className="mt-0.5 font-mono text-xs" style={{ color: 'var(--text)' }}>{created.id}</p>
             </div>
             {created.expiresAt && (
               <div>
-                <p className="text-xs uppercase tracking-wide text-gray-500">Expires</p>
-                <p className="mt-0.5 text-xs text-gray-300">{new Date(created.expiresAt).toLocaleString()}</p>
+                <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Expires</p>
+                <p className="mt-0.5 text-xs" style={{ color: 'var(--text)' }}>{new Date(created.expiresAt).toLocaleString()}</p>
               </div>
             )}
           </div>
           <div>
-            <label className="mb-1.5 block text-sm text-gray-400">Checkout URL</label>
-            <code className="block truncate rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 font-mono text-xs text-gray-300">
+            <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Checkout URL</label>
+            <code
+              className="block truncate rounded-lg border px-3 py-2 font-mono text-xs"
+              style={{ borderColor: 'var(--cardborder)', background: 'var(--hover)', color: 'var(--text)' }}
+            >
               {created.checkoutUrl}
             </code>
             <div className="mt-3 flex items-center gap-2">
@@ -206,7 +263,8 @@ function CreateOrderModal({ open, onClose, onCreate }) {
                 href={created.checkoutUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+                className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors"
+                style={{ background: 'var(--accent)' }}
               >
                 Open checkout
               </a>
@@ -218,20 +276,118 @@ function CreateOrderModal({ open, onClose, onCreate }) {
   );
 }
 
+function DetailTile({ label, value, mono }) {
+  return (
+    <div>
+      <p style={{ color: 'var(--muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</p>
+      <p className={mono ? 'font-mono' : ''} style={{ color: 'var(--text)', fontSize: 13, margin: '3px 0 0' }}>{value}</p>
+    </div>
+  );
+}
+
+// Detail drawer — every field is a real order.model.js column. Deliberately
+// omits what the design's mock version showed but this system doesn't track:
+// checkout-visit counts / first-opened / last-opened (no such tracking
+// exists), payment method (this gateway is UPI-only, no method column),
+// merchant notes and "Resend confirmation" (no backend endpoint for either —
+// faking either would violate the no-local-fake-success rule).
+function OrderDetailDrawer({ order, open, onClose }) {
+  if (!order) return null;
+  const copyId = () => navigator.clipboard?.writeText(order.gatewayOrderId || order.id);
+  const proofLabel = order.confirmationType === 'utr' ? 'UTR' : order.confirmationType === 'screenshot' ? 'Screenshot' : order.confirmationType === 'no_proof' ? 'No proof required' : '—';
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      size="lg"
+      title={
+        <span className="inline-flex items-center gap-2">
+          {order.gatewayOrderId || String(order.id).slice(0, 8)}
+          <button type="button" onClick={copyId} className="tf-hbtn" style={{ width: 26, height: 26 }} aria-label="Copy order ID">
+            <IconCopy className="h-3.5 w-3.5" />
+          </button>
+        </span>
+      }
+      subtitle={order.merchantOrderId || undefined}
+    >
+      <div className="text-center rounded-xl p-5" style={{ background: 'var(--hover)', border: '1px solid var(--cardborder)' }}>
+        <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>Amount</p>
+        <p style={{ color: 'var(--text)', fontSize: 28, fontWeight: 700, margin: '6px 0' }}>{inr(order.amountInr)}</p>
+        <div className="flex items-center justify-center gap-2">
+          <DepositBadge type={order.depositType} />
+          <Badge color={(STATUS_META[order.status] || {}).color || 'gray'}>{(STATUS_META[order.status] || {}).label || order.status}</Badge>
+        </div>
+      </div>
+
+      <p className="mt-5 mb-2 text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Customer proof</p>
+      <div className="grid grid-cols-2 gap-3">
+        <DetailTile label="Proof type" value={proofLabel} />
+        <DetailTile label="UTR" value={order.utr || '—'} mono />
+        <DetailTile label='"I Paid" clicked' value={order.claimedPaidAt ? new Date(order.claimedPaidAt).toLocaleString() : '—'} />
+        <DetailTile label="Customer confirmed" value={order.customerConfirmedAt ? new Date(order.customerConfirmedAt).toLocaleString() : '—'} />
+      </div>
+
+      {(order.merchantFeeUsdt != null || order.merchantReceivesUsdt != null) ? (
+        <>
+          <p className="mt-5 mb-2 text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Settlement</p>
+          <div className="grid grid-cols-2 gap-3">
+            <DetailTile label="Rate applied" value={order.traderRate != null ? `₹${order.traderRate.toFixed(2)} / USDT` : '—'} />
+            <DetailTile label="Amount (USDT)" value={order.amountUsdt != null ? usdt(order.amountUsdt) : '—'} />
+            <DetailTile label="Fee" value={order.merchantFeeUsdt != null ? `−${usdt(order.merchantFeeUsdt)}` : '—'} />
+            <DetailTile label="Settlement credit" value={order.merchantReceivesUsdt != null ? `+${usdt(order.merchantReceivesUsdt)}` : '—'} />
+          </div>
+        </>
+      ) : (
+        <p className="mt-5 text-sm" style={{ color: 'var(--muted)' }}>Settlement hasn't been calculated yet — this happens when the order is confirmed.</p>
+      )}
+
+      {order.rejectionReason && (
+        <div className="mt-5 rounded-lg p-3 text-sm" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
+          <strong>Rejection reason:</strong> {order.rejectionReason}
+        </div>
+      )}
+
+      <div className="mt-5 pt-4" style={{ borderTop: '1px solid var(--cardborder)' }}>
+        <Button variant="ghost" onClick={() => navigator.clipboard?.writeText(order.checkoutUrl)}>
+          <IconCopy className="h-4 w-4" /> Copy checkout link
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+async function fetchAllOrders() {
+  const all = [];
+  for (let page = 1; page <= ORDER_FETCH_PAGES; page += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await merchantApi.orders(undefined, { page, limit: 100 });
+    const rows = res.data?.data?.orders || [];
+    all.push(...rows);
+    if (rows.length < 100) break;
+  }
+  return all;
+}
+
 export default function Orders() {
   const [list, setList] = useState(seedOrders);
+  const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('all');
+  const [search, setSearch] = useState('');
+  const [amountMin, setAmountMin] = useState('');
+  const [amountMax, setAmountMax] = useState('');
+  const [datePreset, setDatePreset] = useState('all');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [showCreate, setShowCreate] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [detailOrder, setDetailOrder] = useState(null);
 
-  // Load orders from the backend; keep the mock seed as fallback on error.
   const loadOrders = async () => {
     setLoading(true);
     try {
-      const { orders } = (await merchantApi.orders()).data.data;
-      setList((orders || []).map(mapOrder));
+      const rows = await fetchAllOrders();
+      setList(rows.map(mapOrder));
     } catch (_) {
       setList(seedOrders);
     } finally {
@@ -239,24 +395,15 @@ export default function Orders() {
     }
   };
 
-  useEffect(() => {
-    loadOrders();
-  }, []);
+  useEffect(() => { loadOrders(); }, []);
 
-  // Live order updates: patch the matching order's status in local state.
   useEffect(() => {
-    const onUpdate = (e) => {
-      const { order_id, status } = e.detail || {};
-      if (!order_id) return;
-      setList((l) => {
-        const found = l.some((o) => o.id === order_id);
-        if (!found) { loadOrders(); return l; }
-        return l.map((o) => (o.id === order_id ? { ...o, status } : o));
-      });
-    };
+    const onUpdate = () => loadOrders();
     window.addEventListener('order:update', onUpdate);
     return () => window.removeEventListener('order:update', onUpdate);
   }, []);
+
+  useEffect(() => { setPage(1); }, [tab, search, amountMin, amountMax, datePreset, pageSize]);
 
   const counts = useMemo(() => {
     const c = { all: list.length };
@@ -269,24 +416,51 @@ export default function Orders() {
     ...ORDER_STATUSES.map((s) => ({ key: s, label: STATUS_META[s].label, count: counts[s] })),
   ];
 
-  const filtered = useMemo(() => (tab === 'all' ? list : list.filter((o) => o.status === tab)), [list, tab]);
-  const pageRows = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+  const minAmount = amountMin ? Number(amountMin) : null;
+  const maxAmount = amountMax ? Number(amountMax) : null;
 
-  const changeTab = (k) => { setTab(k); setPage(1); };
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return list.filter((o) => {
+      if (tab !== 'all' && o.status !== tab) return false;
+      if (!matchesDatePreset(o.createdAt, datePreset)) return false;
+      if (minAmount !== null && o.amountInr < minAmount) return false;
+      if (maxAmount !== null && o.amountInr > maxAmount) return false;
+      if (query) {
+        const haystack = `${o.id} ${o.gatewayOrderId || ''} ${o.merchantOrderId || ''} ${o.customerRef || ''} ${o.utr || ''}`.toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
+      return true;
+    });
+  }, [list, tab, search, minAmount, maxAmount, datePreset]);
+
+  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const totalInr = filtered.reduce((s, o) => s + o.amountInr, 0);
+
+  const clearFilters = () => { setAmountMin(''); setAmountMax(''); setDatePreset('all'); setSearch(''); };
+
+  const exportCsv = () => {
+    const header = ['Order ID', 'Merchant Order ID', 'Customer Ref', 'Amount INR', 'Rate', 'Type', 'Created', 'Closed', 'Status'];
+    const rows = filtered.map((o) => [
+      o.gatewayOrderId || o.id, o.merchantOrderId, o.customerRef, o.amountInr.toFixed(2),
+      o.traderRate != null ? o.traderRate.toFixed(2) : '', o.depositType, o.createdAt, o.closedAt || '', STATUS_META[o.status]?.label || o.status,
+    ]);
+    const blob = new Blob([toCsv([header, ...rows])], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `payin-transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   // Local/mock create — used as a fallback when the backend is unreachable.
   const createLocal = (body) => {
     const id = `ORD-${48211 + (list.length - 20)}`;
-    const order = {
-      id,
-      gatewayOrderId: null,
-      depositType: body.deposit_type,
-      amountInr: body.amount_inr,
-      customerRef: body.customer_ref,
-      status: 'pending',
-      createdAt: '(just now)',
-      checkoutUrl: checkoutUrl(id),
-    };
+    const order = mapOrder({
+      uuid: id, amount_inr: body.amount_inr, customer_ref: body.customer_ref,
+      deposit_type: body.deposit_type, status: 'pending', created_at: new Date().toISOString(),
+    });
     setList((l) => [order, ...l]);
     return order;
   };
@@ -305,7 +479,6 @@ export default function Orders() {
         amountUsdt: d.amount_usdt,
         customerRef: d.customer_ref ?? body.customer_ref,
         status: d.status || 'pending',
-        createdAt: '(just now)',
         checkoutUrl: d.checkout_url,
         expiresAt: d.expires_at,
       };
@@ -325,7 +498,8 @@ export default function Orders() {
     }
   };
 
-  const copyRow = (o) => {
+  const copyRow = (e, o) => {
+    e.stopPropagation();
     navigator.clipboard?.writeText(o.checkoutUrl);
     setCopiedId(o.id);
     setTimeout(() => setCopiedId((c) => (c === o.id ? null : c)), 1500);
@@ -334,57 +508,96 @@ export default function Orders() {
   return (
     <div>
       <PageHeader
-        title="Orders"
-        subtitle={loading ? 'Loading orders…' : 'Payment orders and checkout links'}
-        actions={<Button onClick={() => setShowCreate(true)}><IconPlus className="h-4 w-4" /> Create New Order</Button>}
+        title="Pay-in"
+        subtitle={loading ? 'Loading orders…' : 'Every incoming pay-in transaction.'}
+        actions={
+          <>
+            <Button variant="ghost" onClick={exportCsv}><IconExport className="h-4 w-4" /> Export CSV</Button>
+            <Button onClick={() => setShowCreate(true)}><IconPlus className="h-4 w-4" /> Create New Order</Button>
+          </>
+        }
       />
+
+      <Card className="p-4 mb-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ID, customer ref, or UTR" />
+          <Input type="number" value={amountMin} onChange={(e) => setAmountMin(e.target.value)} placeholder="Min amount (₹)" />
+          <Input type="number" value={amountMax} onChange={(e) => setAmountMax(e.target.value)} placeholder="Max amount (₹)" />
+          <Select value={datePreset} onChange={setDatePreset} options={DATE_PRESETS} />
+          <Button variant="ghost" onClick={clearFilters}>Clear filters</Button>
+        </div>
+      </Card>
 
       <Card>
         <div className="px-4 pt-2">
-          <Tabs tabs={tabs} active={tab} onChange={changeTab} />
+          <Tabs tabs={tabs} active={tab} onChange={setTab} />
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-800 text-left text-xs uppercase tracking-wide text-gray-500">
-                <th className="px-4 py-3 font-medium">Gateway ID</th>
+              <tr className="text-left text-xs uppercase tracking-wide" style={{ borderBottom: '1px solid var(--cardborder)', color: 'var(--muted)' }}>
+                <th className="px-4 py-3 font-medium">Order ID</th>
                 <th className="px-4 py-3 font-medium">Amount</th>
-                <th className="px-4 py-3 font-medium">Customer Ref</th>
+                <th className="px-4 py-3 font-medium">Rate</th>
+                <th className="px-4 py-3 font-medium">Customer</th>
                 <th className="px-4 py-3 font-medium">Type</th>
-                <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Created</th>
+                <th className="px-4 py-3 font-medium">Closed</th>
+                <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-800">
-              {pageRows.map((o) => (
-                <tr key={o.id} className="text-gray-200 hover:bg-gray-800/40">
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400">{o.gatewayOrderId || String(o.id).slice(0, 8)}</td>
-                  <td className="px-4 py-3 font-medium">{inr(o.amountInr)}</td>
-                  <td className="px-4 py-3 text-gray-300">{o.customerRef}</td>
-                  <td className="px-4 py-3"><DepositBadge type={o.depositType} /></td>
-                  <td className="px-4 py-3"><Badge color={(STATUS_META[o.status] || { color: 'gray' }).color}>{(STATUS_META[o.status] || { label: o.status }).label}</Badge></td>
-                  <td className="px-4 py-3 text-xs text-gray-400">{o.createdAt}</td>
-                  <td className="px-4 py-3 text-right">
-                    <Button size="sm" variant="ghost" onClick={() => copyRow(o)}>
-                      {copiedId === o.id ? <IconCheck className="h-3.5 w-3.5" /> : <IconCopy className="h-3.5 w-3.5" />}
-                      {copiedId === o.id ? 'Copied' : 'Copy link'}
-                    </Button>
-                  </td>
-                </tr>
-              ))}
+            <tbody>
+              {pageRows.map((o) => {
+                const created = fmtDateTime(o.createdAt);
+                const closed = o.closedAt ? fmtDateTime(o.closedAt) : null;
+                return (
+                  <tr
+                    key={o.id}
+                    className="tf-row-hover cursor-pointer"
+                    style={{ color: 'var(--text)', borderTop: '1px solid var(--cardborder)' }}
+                    onClick={() => setDetailOrder(o)}
+                  >
+                    <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>{o.gatewayOrderId || String(o.id).slice(0, 8)}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium">{inr(o.amountInr)}</div>
+                      {o.amountUsdt != null && <div className="text-xs" style={{ color: 'var(--muted)' }}>{usdt(o.amountUsdt)}</div>}
+                    </td>
+                    <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>{o.traderRate != null ? `₹${o.traderRate.toFixed(2)}` : '—'}</td>
+                    <td className="px-4 py-3" style={{ color: 'var(--text)' }}>{o.customerRef}</td>
+                    <td className="px-4 py-3"><DepositBadge type={o.depositType} /></td>
+                    <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>
+                      <div>{created === '—' ? '—' : created.time}</div>
+                      {created !== '—' && <div style={{ opacity: 0.7 }}>{created.date}</div>}
+                    </td>
+                    <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>
+                      {closed ? (<><div>{closed.time}</div><div style={{ opacity: 0.7 }}>{closed.date}</div></>) : 'Open'}
+                    </td>
+                    <td className="px-4 py-3"><Badge color={(STATUS_META[o.status] || { color: 'gray' }).color}>{(STATUS_META[o.status] || { label: o.status }).label}</Badge></td>
+                    <td className="px-4 py-3 text-right">
+                      <Button size="sm" variant="ghost" onClick={(e) => copyRow(e, o)}>
+                        {copiedId === o.id ? <IconCheck className="h-3.5 w-3.5" /> : <IconCopy className="h-3.5 w-3.5" />}
+                        {copiedId === o.id ? 'Copied' : 'Copy link'}
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
               {pageRows.length === 0 && (
-                <tr><td colSpan={7} className="py-10 text-center text-sm text-gray-500">No orders in this view</td></tr>
+                <tr><td colSpan={9} className="py-10 text-center text-sm" style={{ color: 'var(--muted)' }}>No pay-in transactions match your filters</td></tr>
               )}
             </tbody>
           </table>
         </div>
-        <div className="border-t border-gray-800">
-          <Pagination page={page} perPage={PER_PAGE} total={filtered.length} onPage={setPage} />
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3" style={{ borderTop: '1px solid var(--cardborder)' }}>
+          <span className="text-xs" style={{ color: 'var(--muted)' }}>{filtered.length.toLocaleString()} transactions · {inr(totalInr)} total</span>
+          <Select value={String(pageSize)} onChange={(v) => setPageSize(Number(v))} options={PAGE_SIZE_OPTIONS} className="w-32" />
         </div>
+        <Pagination page={page} perPage={pageSize} total={filtered.length} onPage={setPage} />
       </Card>
 
       <CreateOrderModal open={showCreate} onClose={() => setShowCreate(false)} onCreate={createOrder} />
+      <OrderDetailDrawer order={detailOrder} open={!!detailOrder} onClose={() => setDetailOrder(null)} />
     </div>
   );
 }
