@@ -396,13 +396,21 @@ export default function Smartphones() {
             It will read notifications and automatically verify payments.
           </p>
           <p style={{ color: 'var(--accent)', fontSize: 13, fontWeight: 600, margin: '0 0 16px' }}>PaymentBot</p>
-          <a
-            href="#"
-            className="mb-2.5 block w-full rounded-lg py-2.5 text-sm font-semibold"
-            style={{ background: 'var(--accent)', color: '#fff', textDecoration: 'none' }}
+          {/* No public APK download is hosted yet — a working link here would
+              either dead-end (no route serves one) or point at a debug-signed
+              local build artifact, which isn't safe to distribute. Disabled
+              + labeled, matching the sidebar's "Downloads · Soon" item,
+              instead of a live-looking link that silently does nothing. */}
+          <div
+            className="mb-2.5 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold"
+            style={{ background: 'var(--hover)', color: 'var(--muted)', border: '1px solid var(--cardborder)', cursor: 'not-allowed' }}
           >
             Download Android APK
-          </a>
+            <Badge color="gray">Coming soon</Badge>
+          </div>
+          <p style={{ color: 'var(--muted)', fontSize: 11, margin: '0 0 12px' }}>
+            Ask support for the current install file in the meantime.
+          </p>
           <Button variant="ghost" className="mb-4 w-full" onClick={handleAppInstalled} disabled={generating}>
             {generating ? 'Generating code…' : 'The app is installed'}
           </Button>
