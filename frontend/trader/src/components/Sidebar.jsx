@@ -6,7 +6,6 @@ import {
   Landmark,
   Bell,
   Smartphone,
-  Download,
   Settings as SettingsIcon,
   LogOut,
   HelpCircle,
@@ -14,14 +13,22 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { usdt } from '../utils/mock';
 
+// ₹ lakh-compact formatter, matching the reference's `compact()` helper —
+// used only for the sidebar's secondary (INR-equivalent) balance line.
+const compactInr = (n) => (n >= 100000 ? `₹${(n / 100000).toFixed(2)}L` : `₹${Math.round(n).toLocaleString('en-IN')}`);
+
+// Order and badge placement match the MaxPay reference NAV exactly (Overview,
+// Sell USDT, Buy USDT, Payment details, Notifications, Smartphones, Settings).
+// The reference has no "Downloads" entry — that item never had a real route
+// here either (disabled placeholder only), so it's dropped rather than kept
+// as a dead nav item the design doesn't show.
 const NAV = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { to: '/trades', label: 'Sell USDT', icon: ArrowUpRight },
-  { to: '/offers', label: 'Payment details', icon: Landmark },
   { to: '/buy-usdt', label: 'Buy USDT', icon: ArrowDownLeft, badge: 'buyUsdt' },
+  { to: '/offers', label: 'Payment details', icon: Landmark },
   { to: '/notifications', label: 'Notifications', icon: Bell, badge: 'notifications' },
   { to: '/smartphones', label: 'Smartphones', icon: Smartphone, badge: 'smartphones' },
-  { to: '/downloads', label: 'Downloads', icon: Download, disabled: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
 
@@ -44,7 +51,7 @@ function CountBadge({ value }) {
  * header (single collapse control), so this is a presentational component that
  * only reads `collapsed`. Balance is real (from the trader's dashboard).
  */
-export default function Sidebar({ balance, badges = {}, collapsed = false }) {
+export default function Sidebar({ balance, baseRate, badges = {}, collapsed = false }) {
   const { logout } = useAuth();
 
   const linkClass = ({ isActive }) => `tf-nav${isActive ? ' active' : ''}${collapsed ? ' tf-tip' : ''}`;
@@ -54,11 +61,11 @@ export default function Sidebar({ balance, badges = {}, collapsed = false }) {
     <aside
       className="flex h-screen flex-shrink-0 flex-col"
       style={{
-        width: collapsed ? 78 : 280,
+        width: collapsed ? 78 : 260,
         background: 'var(--sidebar)',
         borderRight: '1px solid var(--cardborder)',
-        padding: collapsed ? '18px 12px' : '18px 14px',
-        transition: 'width .25s ease, padding .25s ease, background-color .3s',
+        padding: '18px 14px',
+        transition: 'width .25s ease, background-color .3s',
       }}
     >
       {/* Brand mark */}
@@ -77,42 +84,33 @@ export default function Sidebar({ balance, badges = {}, collapsed = false }) {
         )}
       </div>
 
-      {/* Purple-gradient balance card (expanded only) — real available balance */}
+      {/* Purple-gradient balance card (expanded only) — real available balance.
+          Reference also shows an INR-equivalent + a period delta%; the delta
+          has no real backing (no balance-history endpoint), so only the real,
+          derivable INR-equivalent (balance × current base rate) is shown. */}
       {!collapsed && (
         <div style={{ margin: '10px 2px 16px', padding: 16, borderRadius: 14, background: 'linear-gradient(145deg,#4f46e5,#3730a3)', color: '#fff' }}>
           <p style={{ opacity: 0.72, fontSize: 12, margin: 0 }}>Available balance</p>
-          <p style={{ fontWeight: 800, fontSize: 21, margin: '7px 0 0' }}>{usdt(balance)}</p>
+          <p style={{ fontWeight: 800, fontSize: 21, margin: '7px 0 0' }}>
+            {usdt(balance)}
+          </p>
+          {baseRate > 0 && (
+            <div className="flex items-center justify-between" style={{ fontSize: 12 }}>
+              <span style={{ opacity: 0.85 }}>{compactInr(balance * baseRate)}</span>
+            </div>
+          )}
         </div>
       )}
 
       {/* Workspace nav */}
       <nav className="tf-hidescroll mt-1 flex-1 space-y-1 overflow-y-auto overflow-x-hidden">
-        {!collapsed && (
-          <small style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--subtle)', padding: '9px 11px', letterSpacing: '.12em' }}>
-            WORKSPACE
-          </small>
-        )}
-        {NAV.map(({ to, label, icon: Icon, badge, disabled }) => {
+        <small style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--subtle)', padding: '9px 11px', letterSpacing: '.12em' }}>
+          {collapsed ? '•••' : 'WORKSPACE'}
+        </small>
+        {NAV.map(({ to, label, icon: Icon, badge }) => {
           const count = badge ? badges[badge] : null;
           const hasCount = count != null && count > 0;
-          return disabled ? (
-            <span
-              key={to}
-              className={`tf-nav${collapsed ? ' tf-tip' : ''}`}
-              data-tip={collapsed ? label : undefined}
-              style={{ cursor: 'not-allowed', opacity: 0.5, ...collapsedNavStyle }}
-            >
-              <span style={{ position: 'relative', display: 'flex' }}>
-                <Icon className="h-[19px] w-[19px]" />
-              </span>
-              {!collapsed && (
-                <>
-                  {label}
-                  <span className="ml-auto text-[10px] uppercase tracking-wide">soon</span>
-                </>
-              )}
-            </span>
-          ) : (
+          return (
             <NavLink key={to} to={to} className={linkClass} data-tip={collapsed ? label : undefined} style={collapsedNavStyle}>
               <span style={{ position: 'relative', display: 'flex' }}>
                 <Icon className="h-[19px] w-[19px]" />

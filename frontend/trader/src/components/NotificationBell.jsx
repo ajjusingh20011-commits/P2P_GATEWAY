@@ -95,18 +95,15 @@ export default function NotificationBell({ socket }) {
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      <button className="tf-hbtn" aria-label="Notifications" onClick={toggle}>
+      <button className="tf-hbtn" aria-label={`Notifications${unread > 0 ? ` (${unread} unread)` : ''}`} onClick={toggle}>
         <Bell size={18} />
         {unread > 0 && (
           <span
             style={{
-              position: 'absolute', top: 3, right: 3, minWidth: 15, height: 15, padding: '0 4px',
-              borderRadius: 99, background: '#ef4444', color: '#fff', fontSize: 9, fontWeight: 700,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+              position: 'absolute', right: 6, top: 6, width: 6, height: 6,
+              background: '#f04438', border: '2px solid var(--card)', borderRadius: '50%',
             }}
-          >
-            {unread > 9 ? '9+' : unread}
-          </span>
+          />
         )}
       </button>
 
@@ -114,7 +111,7 @@ export default function NotificationBell({ socket }) {
         <div
           className="tf-scroll"
           style={{
-            position: 'absolute', right: 0, top: 'calc(100% + 8px)', width: 340, maxHeight: 420,
+            position: 'absolute', right: 0, top: 'calc(100% + 8px)', width: 360, maxHeight: 420,
             overflowY: 'auto', background: 'var(--card)', border: '1px solid var(--cardborder)',
             borderRadius: 14, boxShadow: 'var(--shadow)', zIndex: 60,
           }}

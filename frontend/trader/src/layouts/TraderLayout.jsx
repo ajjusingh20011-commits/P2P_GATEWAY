@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Outlet } from 'react-router-dom';
-import { Sun, Moon, Menu } from 'lucide-react';
+import { Sun, Moon, Menu, ChevronDown } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import NotificationBell from '../components/NotificationBell';
 import HeaderSearch from '../components/HeaderSearch';
@@ -22,6 +22,8 @@ export default function TraderLayout() {
   const [online, setOnline] = useState(false);
   // Real USDT balance from the traders table (via /trader/dashboard).
   const [liveBalance, setLiveBalance] = useState(null);
+  // Real base exchange rate (INR/USDT), for the sidebar's INR-equivalent line.
+  const [baseRate, setBaseRate] = useState(null);
 
   // Panel light/dark theme (the one allowed new UI state), persisted locally.
   // Read synchronously via the lazy initializer — reading it in a mount
@@ -56,6 +58,7 @@ export default function TraderLayout() {
         if (!d || Array.isArray(d)) return;
         setOnline(!!d.is_online);
         if (d.balance_usdt != null) setLiveBalance(Number(d.balance_usdt));
+        if (d.base_rate != null) setBaseRate(Number(d.base_rate));
       })
       .catch(() => {});
   }, []);
@@ -135,6 +138,7 @@ export default function TraderLayout() {
     <div className="tf-scope flex" style={{ height: '100vh', overflow: 'hidden' }} data-theme={theme}>
       <Sidebar
         balance={displayBalance}
+        baseRate={baseRate}
         collapsed={collapsed}
         // No `notifications` key here — its only real source
         // (traderApi.notifications()) reads a confirmed-dead table, so the
@@ -147,7 +151,7 @@ export default function TraderLayout() {
         {/* Top bar */}
         <header
           className="flex items-center justify-between"
-          style={{ height: 72, flexShrink: 0, padding: '0 24px', background: 'var(--headbar)', borderBottom: '1px solid var(--cardborder)', transition: 'background-color .3s' }}
+          style={{ height: 68, flexShrink: 0, padding: '0 26px', background: 'var(--headbar)', borderBottom: '1px solid var(--cardborder)', transition: 'background-color .3s' }}
         >
           {/* Left — single collapse control + search */}
           <div className="flex items-center gap-2.5" style={{ flex: 1, minWidth: 0 }}>
@@ -185,15 +189,18 @@ export default function TraderLayout() {
             <NotificationBell socket={socket} />
 
             {/* User */}
-            <span
-              className="flex items-center justify-center font-semibold"
-              style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 13 }}
-            >
-              {(user?.email || 'T')[0].toUpperCase()}
-            </span>
-            <div style={{ lineHeight: 1.2 }}>
-              <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, margin: 0 }}>{user?.email || 'trader@p2p.com'}</p>
-              <p style={{ color: 'var(--muted)', fontSize: 11, margin: 0, textTransform: 'capitalize' }}>{user?.role || 'trader'}</p>
+            <div className="flex items-center gap-2.5">
+              <span
+                className="flex items-center justify-center font-semibold"
+                style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 13 }}
+              >
+                {(user?.email || 'T')[0].toUpperCase()}
+              </span>
+              <div style={{ lineHeight: 1.2 }}>
+                <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, margin: 0 }}>{user?.email || 'trader@p2p.com'}</p>
+                <p style={{ color: 'var(--muted)', fontSize: 11, margin: 0, textTransform: 'capitalize' }}>{user?.role || 'trader'}</p>
+              </div>
+              <ChevronDown size={16} style={{ color: 'var(--subtle)' }} />
             </div>
           </div>
         </header>

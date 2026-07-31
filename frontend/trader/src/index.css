@@ -101,11 +101,11 @@
 
 /* Slim-header icon buttons */
 .tf-hbtn {
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
-  background: var(--hover);
-  border: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--card);
+  border: 1px solid var(--cardborder);
   color: var(--muted);
   display: flex;
   align-items: center;

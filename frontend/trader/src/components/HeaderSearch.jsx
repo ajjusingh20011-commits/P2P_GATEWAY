@@ -91,10 +91,10 @@ export default function HeaderSearch() {
   const short = (uuid) => String(uuid || '').split('-')[0].toUpperCase();
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative' }}>
+    <div ref={wrapRef} style={{ position: 'relative', width: 360 }}>
       <div
         className="flex items-center gap-2"
-        style={{ background: 'var(--hover)', borderRadius: 11, padding: '8px 13px', color: 'var(--muted)', fontSize: 13, minWidth: 200 }}
+        style={{ height: 38, border: '1px solid var(--cardborder)', background: 'var(--card)', borderRadius: 9, padding: '0 11px', color: 'var(--subtle)', fontSize: 13 }}
       >
         <Search size={16} />
         <input
@@ -102,9 +102,12 @@ export default function HeaderSearch() {
           onChange={(e) => setQ(e.target.value)}
           onFocus={() => { setOpen(true); load(); }}
           onKeyDown={(e) => { if (e.key === 'Enter') { setDebounced(q.trim().toLowerCase()); load(true); } }}
-          placeholder="Search here..."
+          placeholder="Search orders, accounts, payouts…"
           style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13, width: '100%' }}
         />
+        <kbd style={{ fontSize: 10, border: '1px solid var(--cardborder)', background: 'var(--surface2)', padding: '2px 6px', borderRadius: 5, color: 'var(--subtle)', flexShrink: 0 }}>
+          ⌘ K
+        </kbd>
       </div>
 
       {showDropdown && (
