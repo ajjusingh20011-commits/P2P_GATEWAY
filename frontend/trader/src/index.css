@@ -275,3 +275,64 @@
   pointer-events: none;
   box-shadow: var(--shadow);
 }
+
+/* ============================================================================
+   Trades ("Sell USDT") — reference's simplePageHead / tradeFilters /
+   tradeLedger, ported 1:1 with this app's existing token names.
+   ========================================================================== */
+.simplePageHead { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 20px; }
+.simplePageHead h1 { font-size: 28px; letter-spacing: -.7px; margin: 0; color: var(--text); }
+.simplePageHead p { margin: 5px 0 0; color: var(--muted); }
+
+.tradeFilterCard { padding: 14px; margin-bottom: 14px; }
+.tradeFilters { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)) minmax(150px, .8fr) auto; gap: 9px; align-items: center; }
+
+.tradeLedger { padding: 0; overflow: hidden; }
+.tradeLedgerHead, .tradeLedgerRow {
+  display: grid;
+  grid-template-columns: 38px minmax(120px, 1.05fr) minmax(105px, .8fr) minmax(90px, .65fr) minmax(95px, .72fr) minmax(95px, .75fr) minmax(110px, .8fr) 88px 88px minmax(150px, 1fr);
+  gap: 9px;
+  align-items: center;
+}
+.tradeLedgerHead {
+  padding: 11px 13px;
+  background: var(--surface2);
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .04em;
+}
+.tradeLedgerRow { padding: 12px 13px; border-top: 1px solid var(--line2); min-height: 74px; }
+.tradeLedgerRow:hover { background: var(--hover); }
+.tradeInfo { border: 0; background: transparent; color: var(--subtle); cursor: pointer; padding: 0; }
+.tradeProvider { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.tradeProvider strong, .tradeProvider small,
+.tradeAmount strong, .tradeAmount span,
+.rateCell strong, .rateCell span,
+.personCell strong, .personCell span,
+.dateCell strong, .dateCell span { display: block; }
+.tradeProvider strong { font-size: 11px; color: var(--text); }
+.tradeProvider small, .tradeAmount span, .rateCell span, .personCell span, .dateCell span { font-size: 10px; color: var(--muted); margin-top: 3px; }
+.tradeAmount strong, .rateCell strong, .personCell strong, .dateCell strong { font-size: 12px; color: var(--text); }
+.tradeAmount strong small { display: inline; font-size: 10px; color: var(--muted); font-weight: 500; }
+.resolutionCell { display: flex; align-items: center; gap: 8px; justify-content: flex-start; }
+.autoClose, .manualReview, .canceledState, .manualConfirmed {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 650;
+}
+.autoClose { color: #22c55e; }
+.manualReview { color: #b45309; }
+.canceledState { color: #ef4444; }
+.manualConfirmed { color: #22c55e; }
+.confirmTrade {
+  height: 30px; border: 0; background: #22c55e; color: #fff; border-radius: 8px;
+  padding: 0 10px; font-size: 11px; font-weight: 700; cursor: pointer; flex-shrink: 0;
+}
+.confirmTrade:disabled { opacity: .6; cursor: default; }
+
+.tradePagination { border-top: 1px solid var(--cardborder); }
+
+@media (max-width: 1250px) {
+  .tradeLedgerHead, .tradeLedgerRow { min-width: 1300px; }
+  .tradeLedger { overflow-x: auto; }
+}

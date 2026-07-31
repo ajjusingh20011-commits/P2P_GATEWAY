@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Clock3, ExternalLink, Hand, CheckCircle2, XCircle, AlertTriangle, Copy, Check } from 'lucide-react';
-import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, DataTable, Th, EmptyState, LoadingState } from '../components/ui';
-import { IconExport } from '../components/icons';
+import { Clock3, Hand, CheckCircle2, X, AlertTriangle, Copy, Check, HelpCircle, Bot, Download, RotateCcw } from 'lucide-react';
+import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, BankBadge, EmptyState, LoadingState } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { useSocket } from '../hooks/useSocket';
 import { traderApi } from '../services/api';
@@ -9,25 +8,6 @@ import { toast } from '../components/Toaster';
 import { trades, inr, usdt, ACCOUNT_TYPES } from '../utils/mock';
 
 const PER_PAGE = 25;
-
-// Short order id (first 8 chars) with a copy-to-clipboard button.
-function CopyId({ id }) {
-  const [copied, setCopied] = useState(false);
-  const full = String(id || '');
-  const copy = () => {
-    navigator.clipboard?.writeText(full);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1000);
-  };
-  return (
-    <div className="flex items-center gap-2">
-      <div className="font-mono text-[11px]" style={{ color: 'var(--muted)' }}>{full.slice(0, 8) || '—'}…</div>
-      <button onClick={copy} title="Copy full ID" className="tf-hbtn" style={{ width: 26, height: 26 }}>
-        {copied ? <Check size={12} /> : <Copy size={12} />}
-      </button>
-    </div>
-  );
-}
 
 // Split a timestamp into two display lines: time (18:15) + date (04.07.2026),
 // in the viewer's local timezone (no trader tz is exposed by the API). Returns
@@ -44,28 +24,31 @@ function formatStamp(value) {
   };
 }
 
-// Two-line timestamp cell: big time over small date, or a muted dash.
-function Stamp({ value }) {
+// Reference's dateCell: two stacked lines, or a muted dash for missing values.
+function DateCell({ value }) {
   const s = formatStamp(value);
-  if (!s) return <span className="text-xs" style={{ color: 'var(--muted)' }}>—</span>;
+  if (!s) return <div className="dateCell"><strong style={{ color: 'var(--muted)' }}>—</strong></div>;
   return (
-    <div>
-      <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>{s.time}</div>
-      <div className="text-xs" style={{ color: 'var(--muted)' }}>{s.date}</div>
+    <div className="dateCell">
+      <strong>{s.time}</strong>
+      <span>{s.date}</span>
     </div>
   );
 }
 
 // Terminal statuses that count as "closed" for the Closed-timestamp column.
 const CLOSED_STATUSES = new Set([
-  'confirmed', 'completed', 'auto_close', 'cancelled', 'expired', 'disputed', 'dispute',
+  'success', 'failed', 'rejected', 'cancelled', 'disputed',
 ]);
 
-// Map a backend order onto the shape this table renders. The API lacks some of
-// the rich mock fields (myRate/binanceRate/bank/client/closedAt) — show `—`.
-// No deposit_type (FTD/STD) field is read here — that's an admin-only
-// trader-classification/routing concept and is deliberately never surfaced
-// on the trader panel, on this page or any other.
+// Automatic-detection engines (see smartMerge.confirmOrder's `engine` tag,
+// persisted via the confirm_engine column) vs. a human explicitly confirming.
+const AUTO_ENGINES = new Set(['apk_notification', 'scraper', 'sms', 'notification', 'screen_scraper']);
+
+// Map a backend order onto the shape this table renders. The API lacks a
+// client-identity field — shows `—`. No deposit_type (FTD/STD) field is read
+// here — that's an admin-only trader-classification/routing concept and is
+// deliberately never surfaced on the trader panel, on this page or any other.
 function orderToRow(o) {
   return {
     id: o.order_id || o.id,
@@ -73,42 +56,39 @@ function orderToRow(o) {
     amountInr: o.amount_inr,
     amountUsdt: o.amount_usdt,
     // USDT the trader actually gives up = amount_inr / trader_rate. Persisted on
-    // confirmed orders; null on active ones (computed at render from trader_rate).
+    // confirmed orders (real field, previously silently omitted by the API);
+    // null on active ones (computed at render from trader_rate).
     traderDeductionUsdt: o.trader_deduction_usdt != null ? Number(o.trader_deduction_usdt) : null,
     // Persisted trader_rate on confirmed orders; else filled from current rate.
     traderRate: o.trader_rate != null ? Number(o.trader_rate) : null,
-    myRate: '—',
-    binanceRate: '—',
     client: '—',
-    createdAt: o.created_at || '—',
-    // Closed/confirmed orders get a real close stamp; open ones stay null → "—".
-    // confirmed_at is the settlement time; cancelled/expired have no dedicated
-    // column, so fall back to updated_at for those terminal states.
+    createdAt: o.created_at || null,
+    // Real settlement/close time. confirmed_at covers success; other terminal
+    // states (cancelled/failed/rejected/disputed) fall back to updated_at —
+    // both fields were missing from the API response entirely until this
+    // pass, so this column was always "—" regardless of real order state.
     closedAt: o.confirmed_at || (CLOSED_STATUSES.has(o.status) ? o.updated_at || null : null),
     status: o.status,
+    confirmEngine: o.confirm_engine || null,
+    matchTier: o.match_tier,
     upiId: o.paymentDetail?.upi_id || '',
+    accountName: o.paymentDetail?.account_name || '',
     accountType: o.paymentDetail?.account_type || '',
   };
 }
 
 // Order System v2 statuses (backend/src/models/order.model.js STATUSES) —
-// every real value is represented, nothing invented. claimed_paid/under_review
-// share the same "manual review" icon+tone (the reference file's distinction
-// between auto-resolved and manual-review states) since both are exactly
-// Order.REVIEWABLE_STATUSES — a real backend-defined grouping. There is no
-// exposed signal for "was this auto-verified" (auto_verified isn't part of
-// the GET /orders response), so `success` is labelled plainly rather than
-// claiming an unverifiable "auto-closed" distinction.
+// every real value is represented, nothing invented.
 const STATUS = {
   pending: { color: 'gray', label: 'Pending', icon: Clock3 },
-  checkout_open: { color: 'sky', label: 'Checkout Open', icon: ExternalLink },
+  checkout_open: { color: 'sky', label: 'Checkout Open', icon: Clock3 },
   claimed_paid: { color: 'amber', label: 'Claimed Paid', icon: Hand },
   under_review: { color: 'amber', label: 'Under Review', icon: Hand },
   success: { color: 'green', label: 'Success', icon: CheckCircle2 },
-  failed: { color: 'gray', label: 'Failed', icon: XCircle },
-  rejected: { color: 'red', label: 'Rejected', icon: XCircle },
+  failed: { color: 'gray', label: 'Failed', icon: X },
+  rejected: { color: 'red', label: 'Rejected', icon: X },
   disputed: { color: 'amber', label: 'Disputed', icon: AlertTriangle },
-  cancelled: { color: 'gray', label: 'Canceled', icon: XCircle },
+  cancelled: { color: 'gray', label: 'Canceled', icon: X },
 };
 
 const STATUS_OPTIONS = [
@@ -116,10 +96,10 @@ const STATUS_OPTIONS = [
   ...Object.entries(STATUS).map(([value, s]) => ({ value, label: s.label })),
 ];
 
-function toCsv(rows) {
-  const header = ['ID', 'Amount INR', 'Amount USDT', 'My Rate', 'Binance Rate', 'UPI', 'Client', 'Created', 'Closed', 'Status'];
+function toCsv(rows, traderUsdt) {
+  const header = ['ID', 'Amount INR', 'Amount USDT', 'My Rate', 'UPI', 'Account', 'Created', 'Closed', 'Status', 'Confirmed by'];
   const lines = rows.map((t) =>
-    [t.id, t.amountInr, t.amountUsdt, t.myRate, t.binanceRate, t.upiId, t.client, t.createdAt, t.closedAt, t.status].join(',')
+    [t.id, t.amountInr, traderUsdt(t), t.traderRate ?? '', t.upiId, t.accountName, t.createdAt, t.closedAt, t.status, t.confirmEngine || ''].join(',')
   );
   return [header.join(','), ...lines].join('\n');
 }
@@ -130,15 +110,53 @@ function mockToRow(t) {
     id: t.id,
     amountInr: t.amountInr,
     amountUsdt: t.amountUsdt,
-    myRate: t.myRate,
-    binanceRate: t.binanceRate,
     client: t.client,
     createdAt: t.createdAt,
     closedAt: t.closedAt,
     status: t.status,
+    confirmEngine: null,
+    matchTier: null,
     upiId: t.bank?.upiId || '',
+    accountName: t.bank?.accountName || '',
     accountType: t.bank?.type || '',
   };
+}
+
+// Reference's combined "Resolution" cell (status + action in one place)
+// mapped onto every real order status — the reference's own demo data only
+// ever shows 3 conceptual outcomes (auto/manual-review/canceled), but real
+// orders reach 9 distinct statuses, so pending/checkout_open/claimed_paid and
+// disputed get their own honest badge instead of being forced into one of
+// the reference's 3 slots.
+function Resolution({ t, busy, onConfirm }) {
+  if (t.status === 'under_review') {
+    return (
+      <div className="resolutionCell">
+        <span className="manualReview"><Hand size={17} />Manual review</span>
+        <button className="confirmTrade" disabled={busy} onClick={onConfirm}>
+          {busy ? 'Confirming…' : 'Confirm'}
+        </button>
+      </div>
+    );
+  }
+  if (t.status === 'success') {
+    const isAuto = t.matchTier != null || AUTO_ENGINES.has(t.confirmEngine);
+    if (isAuto) {
+      return <div className="resolutionCell"><span className="autoClose"><Bot size={18} />Auto-close</span></div>;
+    }
+    const by = t.confirmEngine === 'trader_manual' ? 'you' : t.confirmEngine === 'admin_manual' ? 'admin' : null;
+    return (
+      <div className="resolutionCell">
+        <span className="manualConfirmed"><CheckCircle2 size={17} />{by ? `Confirmed by ${by}` : 'Confirmed'}</span>
+      </div>
+    );
+  }
+  if (t.status === 'cancelled' || t.status === 'failed' || t.status === 'rejected') {
+    return <div className="resolutionCell"><span className="canceledState"><X size={17} />{STATUS[t.status].label}</span></div>;
+  }
+  const s = STATUS[t.status] || { color: 'gray', label: t.status || '—', icon: null };
+  const Icon = s.icon;
+  return <div className="resolutionCell"><Badge color={s.color}>{Icon && <Icon size={12} />}{s.label}</Badge></div>;
 }
 
 export default function Trades() {
@@ -179,14 +197,14 @@ export default function Trades() {
     }
   };
 
-  // Current rate info (base = "Binance", trader_rate = "My Rate") for rows that
-  // don't have a persisted rate yet (assigned/paid orders).
+  // Current rate info (base + trader margin %) for rows that don't have a
+  // persisted rate yet (assigned/paid orders).
   const { data: rateInfo } = useApi(
     () => traderApi.dashboard().then((res) => res.data.data),
-    { fallback: { base_rate: 100, trader_rate: 104 } }
+    { fallback: { base_rate: 100, trader_rate: 104, trader_margin: 4 } }
   );
-  const baseRate = rateInfo?.base_rate ?? 100;
   const currentTraderRate = rateInfo?.trader_rate ?? 104;
+  const currentMargin = rateInfo?.trader_margin;
 
   // USDT the trader loses on a row. Prefer the stored trader_deduction_usdt the
   // confirm step already computed; else derive amount_inr / trader_rate (using
@@ -202,12 +220,17 @@ export default function Trades() {
     setFilters((f) => ({ ...f, [k]: v }));
     setPage(1);
   };
+  const clearFilters = () => {
+    setFilters({ id: '', amount: '', bank: '', client: '', status: 'all' });
+    setPage(1);
+  };
+  const filtersActive = filters.id || filters.amount || filters.bank || filters.client || filters.status !== 'all';
 
   const filtered = useMemo(() => {
     return rows.filter((t) => {
       if (filters.id && !String(t.id).includes(filters.id.trim())) return false;
       if (filters.amount && !String(t.amountInr).includes(filters.amount.trim())) return false;
-      if (filters.bank && !String(t.upiId).toLowerCase().includes(filters.bank.toLowerCase())) return false;
+      if (filters.bank && !`${t.accountName} ${t.upiId}`.toLowerCase().includes(filters.bank.toLowerCase())) return false;
       if (filters.client && !String(t.client).toLowerCase().includes(filters.client.toLowerCase())) return false;
       if (filters.status !== 'all' && t.status !== filters.status) return false;
       return true;
@@ -217,7 +240,7 @@ export default function Trades() {
   const pageRows = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
   const exportCsv = () => {
-    const blob = new Blob([toCsv(filtered)], { type: 'text/csv' });
+    const blob = new Blob([toCsv(filtered, traderUsdt)], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -228,115 +251,112 @@ export default function Trades() {
 
   return (
     <div>
-      <PageHeader
-        title="Sell USDT"
-        subtitle="Your outgoing trades"
-        actions={
-          <>
-            {loading && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</span>}
-            <Button variant="ghost" onClick={exportCsv}>
-              <IconExport className="h-4 w-4" />
-              Export CSV
-            </Button>
-          </>
-        }
-      />
+      <div className="simplePageHead">
+        <div>
+          <h1>Sell USDT</h1>
+          <p>Incoming donor orders and automated payment resolution</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {loading && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</span>}
+          <Button variant="ghost" onClick={exportCsv}>
+            <Download size={16} />
+            Export CSV
+          </Button>
+        </div>
+      </div>
 
-      {/* Filters */}
-      <Card className="mb-4 p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <Card className="tradeFilterCard">
+        <div className="tradeFilters">
           <SearchInput value={filters.id} onChange={set('id')} placeholder="Trade ID" />
           <SearchInput value={filters.amount} onChange={set('amount')} placeholder="Amount" />
-          <SearchInput value={filters.bank} onChange={set('bank')} placeholder="Bank details" />
+          <SearchInput value={filters.bank} onChange={set('bank')} placeholder="My bank details" />
           <SearchInput value={filters.client} onChange={set('client')} placeholder="Client details" />
           <Select value={filters.status} onChange={set('status')} options={STATUS_OPTIONS} />
+          <Button variant="ghost" onClick={clearFilters} disabled={!filtersActive}>
+            <RotateCcw size={15} />
+            Clear
+          </Button>
         </div>
       </Card>
 
-      <Card style={{ padding: 0, overflow: 'hidden' }}>
-        <DataTable minWidth={1080}>
-          <thead>
-            <tr>
-              <Th>Gateway ID</Th>
-              <Th>Amount</Th>
-              <Th>My Rate</Th>
-              <Th>Exchange rate</Th>
-              <Th>My Bank</Th>
-              <Th>Client</Th>
-              <Th>Created</Th>
-              <Th>Closed</Th>
-              <Th>Status</Th>
-              <Th>Actions</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {pageRows.map((t) => {
-              const s = STATUS[t.status] || { color: 'gray', label: t.status || '—', icon: null };
-              const StatusIcon = s.icon;
-              const type = ACCOUNT_TYPES[t.accountType];
-              return (
-                <tr key={t.id} className="tf-row-hover" style={{ borderBottom: '1px solid var(--cardborder)', color: 'var(--text)' }}>
-                  <td className="px-4 py-3">
-                    {t.gatewayOrderId
-                      ? <span className="font-mono text-[11px]" style={{ color: 'var(--text)' }}>{t.gatewayOrderId}</span>
-                      : <CopyId id={t.id} />}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{inr(t.amountInr)}</div>
-                    <div className="text-xs" style={{ color: 'var(--muted)' }}>{usdt(traderUsdt(t))}</div>
-                  </td>
-                  <td className="px-4 py-3 font-medium" style={{ color: '#22c55e' }}>₹{t.traderRate ?? currentTraderRate}</td>
-                  <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>₹{baseRate}</td>
-                  <td className="px-4 py-3">
-                    <div className="text-xs" style={{ color: 'var(--muted)' }}>{t.upiId || '—'}</div>
-                    {type ? (
-                      <Badge color={type.color} className="mt-1">{type.label}</Badge>
-                    ) : (
-                      t.accountType && <Badge color="gray" className="mt-1">{t.accountType}</Badge>
-                    )}
-                  </td>
-                  <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{t.client}</td>
-                  <td className="px-4 py-3"><Stamp value={t.createdAt} /></td>
-                  <td className="px-4 py-3"><Stamp value={t.closedAt} /></td>
-                  <td className="px-4 py-3">
-                    <Badge color={s.color}>
-                      {StatusIcon && <StatusIcon size={12} />}
-                      {s.label}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3">
-                    {t.status === 'under_review' ? (
-                      <Button
-                        variant="primary"
-                        disabled={confirmingId === t.id}
-                        onClick={() => handleConfirm(t.id)}
-                      >
-                        {confirmingId === t.id ? 'Confirming…' : 'Confirm'}
-                      </Button>
-                    ) : (
-                      <span className="text-xs" style={{ color: 'var(--muted)' }}>—</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-            {pageRows.length === 0 && (
-              <tr>
-                <td colSpan={10}>
-                  {loading && rows.length === 0 ? (
-                    <LoadingState label="Loading trades…" />
-                  ) : (
-                    <EmptyState
-                      title={rows.length === 0 ? 'No trades yet' : 'No trades match your filters'}
-                      message={rows.length === 0 ? 'Incoming orders routed to your payment details will show up here.' : undefined}
-                    />
-                  )}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </DataTable>
-        <div style={{ borderTop: '1px solid var(--cardborder)' }}>
+      <Card className="tradeLedger">
+        <div className="tradeLedgerHead">
+          <span>Info</span>
+          <span>Payment method</span>
+          <span>Amount</span>
+          <span>My rate</span>
+          <span>Exchange rate</span>
+          <span>My bank</span>
+          <span>Client</span>
+          <span>Created</span>
+          <span>Closed</span>
+          <span>Resolution</span>
+        </div>
+
+        {pageRows.length === 0 ? (
+          loading && rows.length === 0 ? (
+            <LoadingState label="Loading trades…" />
+          ) : (
+            <EmptyState
+              title={rows.length === 0 ? 'No trades yet' : 'No trades match your filters'}
+              message={rows.length === 0 ? 'Incoming orders routed to your payment details will show up here.' : undefined}
+            />
+          )
+        ) : (
+          pageRows.map((t) => {
+            const type = ACCOUNT_TYPES[t.accountType];
+            return (
+              <div className="tradeLedgerRow" key={t.id}>
+                <button
+                  className="tradeInfo"
+                  title={t.id}
+                  onClick={() => { navigator.clipboard?.writeText(String(t.id)); toast('Trade ID copied', 'success'); }}
+                >
+                  <HelpCircle size={16} />
+                </button>
+
+                <div className="tradeProvider">
+                  <BankBadge type={t.accountType} label={type?.label || t.accountType} size={28} />
+                  <div>
+                    <strong>{type?.label || t.accountType || '—'}</strong>
+                    <small>UPI</small>
+                  </div>
+                </div>
+
+                <div className="tradeAmount">
+                  <strong>{inr(t.amountInr)} <small>INR</small></strong>
+                  <span>{usdt(traderUsdt(t))}</span>
+                </div>
+
+                <div className="rateCell">
+                  <strong>{(t.traderRate ?? currentTraderRate).toFixed?.(2) ?? t.traderRate} INR</strong>
+                  <span>{currentMargin != null ? `${currentMargin}% margin` : '—'}</span>
+                </div>
+
+                <div className="rateCell">
+                  <strong>{Number(rateInfo?.base_rate ?? 100).toFixed(2)} INR</strong>
+                  <span>Base rate</span>
+                </div>
+
+                <div className="personCell">
+                  <strong>{t.accountName || '—'}</strong>
+                  <span>{t.upiId || '—'}</span>
+                </div>
+
+                <div className="personCell">
+                  <strong>{t.client}</strong>
+                </div>
+
+                <DateCell value={t.createdAt} />
+                <DateCell value={t.closedAt} />
+
+                <Resolution t={t} busy={confirmingId === t.id} onConfirm={() => handleConfirm(t.id)} />
+              </div>
+            );
+          })
+        )}
+
+        <div className="tradePagination">
           <Pagination page={page} perPage={PER_PAGE} total={filtered.length} onPage={setPage} />
         </div>
       </Card>

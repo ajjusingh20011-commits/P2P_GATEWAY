@@ -24,6 +24,8 @@ const telegramService = require('../services/telegramService');
 const upiService = require('../services/upiService');
 const orderService = require('../services/orderService');
 const rateService = require('../services/rateService');
+const smartMerge = require('../services/smartMerge');
+const { isJunkUtr } = require('../utils/utrValidation');
 const { emitToTrader, emitToMerchant, emitToAdmin, emitToOrder } = require('../websocket');
 
 /** Resolve an order by numeric id or uuid. */
@@ -43,11 +45,23 @@ function orderView(order) {
     amount_inr: order.amount_inr,
     amount_usdt: order.amount_usdt,
     exchange_rate: order.exchange_rate,
+    // Persisted-at-confirm trader rate/deduction and settlement timestamp —
+    // real columns on the model that were never actually serialized here, so
+    // every trader-facing consumer reading them (Trades.jsx's My Rate/Closed
+    // columns) always fell back to today's live rate / "—" even for orders
+    // that genuinely have a persisted value. Purely additive.
+    trader_rate: order.trader_rate,
+    trader_deduction_usdt: order.trader_deduction_usdt,
+    confirmed_at: order.confirmed_at,
+    updated_at: order.updated_at,
     status: order.status,
     deposit_type: order.deposit_type,
     customer_ref: order.customer_ref,
     upi_ref_id: order.upi_ref_id,
     utr_number: order.utr_number,
+    donor_submitted_utr: order.donor_submitted_utr,
+    match_tier: order.match_tier,
+    confirm_engine: order.confirm_engine,
     confirmation_type: order.confirmation_type,
     redirect_url: order.redirect_url,
     expires_at: order.expires_at,
@@ -184,10 +198,18 @@ const claimPaid = asyncHandler(async (req, res) => {
   let confirmationType = req.body?.confirmation_type;
   if (!allowedProof.includes(confirmationType)) confirmationType = utrNumber ? 'utr' : 'no_proof';
 
+  // Server-side re-validation — never trust the client-side check alone.
+  if (utrNumber && isJunkUtr(utrNumber)) {
+    return fail(res, 422, "That doesn't look like a valid reference number, please check");
+  }
+
   await order.update({
     status: 'claimed_paid',
     claimed_paid_at: new Date(),
     utr_number: utrNumber || order.utr_number,
+    // Donor-entered UTR, compared against the receiver-side UTR by
+    // matchingEngineV2's Tier 0/1 logic (services/matchingEngineV2.js).
+    donor_submitted_utr: utrNumber || order.donor_submitted_utr,
     confirmation_type: confirmationType,
     customer_confirmed_at: new Date(),
     screenshot_path: req.body?.screenshot_path || order.screenshot_path,
@@ -289,6 +311,32 @@ const expire = asyncHandler(async (req, res) => {
   webhookService.sendWebhook(order.merchant_id, 'order.expired', { order_id: order.uuid }).catch(() => {});
 
   return ok(res, { order: orderView(order) });
+});
+
+/* ------------------------ POST /:id/trader-confirm ------------------------ */
+// The trader has manually checked their own bank/UPI app outside the system
+// and confirms an order sitting in under_review. Bare click, no UTR input —
+// distinguishable from auto-matched Tier 0/1/2 settlements via engine:
+// 'trader_manual' (see smartMerge.confirmOrder's `engine` tag).
+const traderConfirm = asyncHandler(async (req, res) => {
+  const trader = await db.Trader.findOne({ where: { user_id: req.user.id } });
+  if (!trader) return fail(res, 404, 'Trader profile not found');
+
+  const order = await findOrder(req.params.id);
+  if (!order) return fail(res, 404, 'Order not found');
+  if (order.trader_id !== trader.id) return fail(res, 403, 'This order does not belong to you');
+  // Hard guard — not just a UI assumption. smartMerge.confirmOrder's own
+  // idempotency check only catches "already success"; it does not care what
+  // status an order was in before that, so the under_review requirement has
+  // to be enforced here.
+  if (order.status !== 'under_review') {
+    return fail(res, 409, `Order must be under_review to confirm (current status: ${order.status})`);
+  }
+
+  await smartMerge.confirmOrder(order, { engine: 'trader_manual' });
+  await order.reload();
+
+  return ok(res, { success: true, status: order.status, order: orderView(order) });
 });
 
 /* --------------------------- POST /:id/dispute ---------------------------- */
@@ -434,4 +482,4 @@ const list = asyncHandler(async (req, res) => {
   return ok(res, { orders: rows.map(orderView), pagination: { page, limit, total: count } });
 });
 
-module.exports = { create, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, markPaid, cancel, cancelCheckout, verifyPayment };
+module.exports = { create, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, markPaid, cancel, cancelCheckout, verifyPayment, traderConfirm };

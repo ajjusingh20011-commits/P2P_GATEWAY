@@ -162,35 +162,43 @@ export function Tabs({ tabs, active, onChange }) {
   );
 }
 
+// Reference's numbered .tradePagination — first/last + current±1, "…" gaps.
+// Shared across every paginated page (Trades, Notifications, Payouts), so
+// this one upgrade carries to all of them, not just the page being migrated.
 export function Pagination({ page, perPage, total, onPage }) {
   const pageCount = Math.max(1, Math.ceil(total / perPage));
   const from = total === 0 ? 0 : (page - 1) * perPage + 1;
   const to = Math.min(page * perPage, total);
-  const btn = { background: 'var(--hover)', border: '1px solid var(--cardborder)', color: 'var(--text)' };
+
+  const pages = [];
+  for (let n = 1; n <= pageCount; n++) {
+    if (n === 1 || n === pageCount || Math.abs(n - page) <= 1) pages.push(n);
+    else if (pages[pages.length - 1] !== '…') pages.push('…');
+  }
+
+  const navBtn = { width: 30, height: 30, borderRadius: 7, display: 'grid', placeItems: 'center', border: '1px solid var(--cardborder)', background: 'var(--card)', color: 'var(--muted)' };
+  const pageBtn = (active) => ({
+    minWidth: 30, height: 30, padding: '0 8px', borderRadius: 7, fontSize: 12,
+    border: `1px solid ${active ? 'var(--accent)' : 'var(--cardborder)'}`,
+    background: active ? 'var(--accent)' : 'var(--card)', color: active ? '#fff' : 'var(--muted)',
+  });
+
   return (
-    <div className="flex items-center justify-between px-4 py-3 text-sm" style={{ color: 'var(--muted)' }}>
-      <span>
-        Showing {from}–{to} of {total.toLocaleString()}
-      </span>
+    <div className="flex items-center justify-between px-3.5 py-3 text-xs" style={{ color: 'var(--muted)' }}>
+      <span>Showing {from}–{to} of {total.toLocaleString()}</span>
       <div className="flex items-center gap-1">
-        <button
-          onClick={() => onPage(Math.max(1, page - 1))}
-          disabled={page <= 1}
-          className="rounded-lg px-3 py-1.5 disabled:opacity-40"
-          style={btn}
-        >
-          Prev
+        <button onClick={() => onPage(Math.max(1, page - 1))} disabled={page <= 1} className="disabled:opacity-40" style={navBtn}>
+          <IconChevron className="h-3.5 w-3.5" style={{ transform: 'rotate(90deg)' }} />
         </button>
-        <span className="px-2">
-          {page} / {pageCount}
-        </span>
-        <button
-          onClick={() => onPage(Math.min(pageCount, page + 1))}
-          disabled={page >= pageCount}
-          className="rounded-lg px-3 py-1.5 disabled:opacity-40"
-          style={btn}
-        >
-          Next
+        {pages.map((n, i) =>
+          n === '…' ? (
+            <span key={`e${i}`} style={{ padding: '0 4px' }}>…</span>
+          ) : (
+            <button key={n} onClick={() => onPage(n)} style={pageBtn(n === page)}>{n}</button>
+          )
+        )}
+        <button onClick={() => onPage(Math.min(pageCount, page + 1))} disabled={page >= pageCount} className="disabled:opacity-40" style={navBtn}>
+          <IconChevron className="h-3.5 w-3.5" style={{ transform: 'rotate(-90deg)' }} />
         </button>
       </div>
     </div>
