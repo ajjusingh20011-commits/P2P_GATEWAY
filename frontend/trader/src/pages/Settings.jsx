@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { UserRound, ShieldCheck, Wallet, Globe2, Send } from 'lucide-react';
+import { useOutletContext } from 'react-router-dom';
+import { UserRound, ShieldCheck, Wallet, Sun, ToggleLeft, ToggleRight } from 'lucide-react';
 import { Card, Badge, Button, Select, PageHeader } from '../components/ui';
 import { IconWallet } from '../components/icons';
 import { useAuth } from '../context/AuthContext';
@@ -32,6 +33,17 @@ const rowStyle = {
   background: 'var(--hover)',
   padding: '12px 16px',
 };
+// Reference's compact .settingRow — a plain space-between line under a
+// bottom border, no card-within-card chrome (used for Change password and
+// Dark mode, which don't need the boxed treatment 2FA's richer state does).
+const plainRowStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  padding: '13px 0',
+  borderBottom: '1px solid var(--cardborder)',
+};
 
 function Section({ title, description, badge, icon: Icon, accent = '#4f46e5', children }) {
   return (
@@ -61,8 +73,11 @@ function Section({ title, description, badge, icon: Icon, accent = '#4f46e5', ch
 }
 
 // Two-Factor Authentication panel: enable (QR + verify + backup codes) / disable.
-// Real, working, backed by authApi's /auth/2fa/* routes — the only section on
-// this page that isn't a "coming soon" placeholder.
+// Real, working, backed by authApi's /auth/2fa/* routes — the only genuinely
+// interactive section on this page. The reference collapses this to a single
+// "Enabled" status row inside the Security card; a real trader still needs
+// the actual setup/disable flow, so the full interactive state lives here,
+// just restyled onto the reference's row/field language.
 function TwoFactorSection() {
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(false);
@@ -150,146 +165,139 @@ function TwoFactorSection() {
   };
 
   return (
-    <Section title="Two-Factor Authentication" description="Extra security for your account" icon={ShieldCheck} accent="#22c55e">
-      <div style={rowStyle}>
-        <div>
-          <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, margin: 0 }}>
-            2FA {loading ? '…' : enabled ? 'enabled' : 'disabled'}
-          </p>
-          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '3px 0 0' }}>Authenticator app (TOTP)</p>
-        </div>
-        <Badge color={enabled ? 'green' : 'gray'}>{loading ? '…' : enabled ? 'ON' : 'OFF'}</Badge>
-      </div>
+    <div style={plainRowStyle}>
+      <div style={{ flex: 1 }}>
+        <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 700, margin: 0 }}>Two-factor authentication</p>
+        <p style={{ color: 'var(--muted)', fontSize: 11, margin: '3px 0 0' }}>
+          {loading ? 'Checking status…' : enabled ? 'Authenticator app enabled' : 'Not enabled'}
+        </p>
 
-      {/* One-time backup codes shown right after enabling. */}
-      {backupCodes && (
-        <div className="mt-4 rounded-lg p-4" style={{ border: '1px solid rgba(34,197,94,.3)', background: 'rgba(34,197,94,.08)' }}>
-          <div className="mb-2 flex items-center justify-between">
-            <p style={{ color: '#22c55e', fontSize: 13, fontWeight: 600, margin: 0 }}>Save your backup codes</p>
-            <Button variant="ghost" onClick={copyCodes}>Copy</Button>
-          </div>
-          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 12px' }}>
-            Store these somewhere safe. Each code can be used once if you lose your device.
-          </p>
-          <ul className="grid grid-cols-2 gap-2">
-            {backupCodes.map((c) => (
-              <li
-                key={c}
-                className="rounded-md px-3 py-1.5 text-center font-mono text-sm"
-                style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)', color: 'var(--text)' }}
-              >
-                {c}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Disabled state: offer to enable. */}
-      {!loading && !enabled && !setup && !backupCodes && (
-        <div className="mt-4">
-          <Button onClick={startSetup} disabled={busy}>
-            {busy ? 'Please wait…' : 'Enable 2FA'}
-          </Button>
-        </div>
-      )}
-
-      {/* Setup in progress: QR + secret + verify. */}
-      {setup && (
-        <div className="mt-4 space-y-4">
-          <p style={{ color: 'var(--text)', fontSize: 13, margin: 0 }}>
-            Scan this QR code with your authenticator app, then enter the 6-digit code to confirm.
-          </p>
-          {setup.qr_code && (
-            <img
-              src={setup.qr_code}
-              alt="2FA QR code"
-              className="h-44 w-44 rounded-lg bg-white p-2"
-              style={{ border: '1px solid var(--cardborder)' }}
-            />
-          )}
-          {setup.secret && (
-            <div>
-              <label style={labelStyle}>Manual entry key</label>
-              <div className="flex items-center gap-2">
-                <code
-                  className="flex-1 truncate rounded-lg px-3 py-2 font-mono text-sm"
+        {/* One-time backup codes shown right after enabling. */}
+        {backupCodes && (
+          <div className="mt-3 rounded-lg p-4" style={{ border: '1px solid rgba(34,197,94,.3)', background: 'rgba(34,197,94,.08)' }}>
+            <div className="mb-2 flex items-center justify-between">
+              <p style={{ color: '#22c55e', fontSize: 13, fontWeight: 600, margin: 0 }}>Save your backup codes</p>
+              <Button variant="ghost" onClick={copyCodes}>Copy</Button>
+            </div>
+            <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 12px' }}>
+              Store these somewhere safe. Each code can be used once if you lose your device.
+            </p>
+            <ul className="grid grid-cols-2 gap-2">
+              {backupCodes.map((c) => (
+                <li
+                  key={c}
+                  className="rounded-md px-3 py-1.5 text-center font-mono text-sm"
                   style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)', color: 'var(--text)' }}
                 >
-                  {setup.secret}
-                </code>
-                <Button variant="ghost" onClick={() => navigator.clipboard?.writeText(setup.secret)}>
-                  Copy
-                </Button>
-              </div>
-            </div>
-          )}
-          <div>
-            <label style={labelStyle}>Verification code</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={6}
-              value={enableCode}
-              onChange={(e) => setEnableCode(e.target.value.replace(/\D/g, ''))}
-              placeholder="000000"
-              style={inputStyle}
-            />
+                  {c}
+                </li>
+              ))}
+            </ul>
           </div>
-          <div className="flex items-center gap-2">
-            <Button onClick={verifySetup} disabled={busy || enableCode.length < 6}>
-              {busy ? 'Verifying…' : 'Verify & Enable'}
-            </Button>
-            <Button variant="ghost" onClick={cancelSetup} disabled={busy}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
+        )}
 
-      {/* Enabled state: offer to disable. */}
-      {!loading && enabled && !backupCodes && (
-        <div className="mt-4 space-y-4">
-          <div>
-            <label style={labelStyle}>Authenticator code</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={6}
-              value={disableCode}
-              onChange={(e) => setDisableCode(e.target.value.replace(/\D/g, ''))}
-              placeholder="000000"
-              style={inputStyle}
-            />
+        {/* Setup in progress: QR + secret + verify. */}
+        {setup && (
+          <div className="mt-3 space-y-4">
+            <p style={{ color: 'var(--text)', fontSize: 13, margin: 0 }}>
+              Scan this QR code with your authenticator app, then enter the 6-digit code to confirm.
+            </p>
+            {setup.qr_code && (
+              <img
+                src={setup.qr_code}
+                alt="2FA QR code"
+                className="h-44 w-44 rounded-lg bg-white p-2"
+                style={{ border: '1px solid var(--cardborder)' }}
+              />
+            )}
+            {setup.secret && (
+              <div>
+                <label style={labelStyle}>Manual entry key</label>
+                <div className="flex items-center gap-2">
+                  <code
+                    className="flex-1 truncate rounded-lg px-3 py-2 font-mono text-sm"
+                    style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)', color: 'var(--text)' }}
+                  >
+                    {setup.secret}
+                  </code>
+                  <Button variant="ghost" onClick={() => navigator.clipboard?.writeText(setup.secret)}>
+                    Copy
+                  </Button>
+                </div>
+              </div>
+            )}
+            <div>
+              <label style={labelStyle}>Verification code</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                value={enableCode}
+                onChange={(e) => setEnableCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="000000"
+                style={inputStyle}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button onClick={verifySetup} disabled={busy || enableCode.length < 6}>
+                {busy ? 'Verifying…' : 'Verify & Enable'}
+              </Button>
+              <Button variant="ghost" onClick={cancelSetup} disabled={busy}>
+                Cancel
+              </Button>
+            </div>
           </div>
-          <div>
-            <label style={labelStyle}>Password</label>
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={disablePassword}
-              onChange={(e) => setDisablePassword(e.target.value)}
-              placeholder="Enter your password"
-              style={inputStyle}
-            />
+        )}
+
+        {/* Enabled state: offer to disable. */}
+        {!loading && enabled && !backupCodes && (
+          <div className="mt-3 space-y-4">
+            <div>
+              <label style={labelStyle}>Authenticator code</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                value={disableCode}
+                onChange={(e) => setDisableCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="000000"
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Password</label>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={disablePassword}
+                onChange={(e) => setDisablePassword(e.target.value)}
+                placeholder="Enter your password"
+                style={inputStyle}
+              />
+            </div>
+            <Button
+              variant="danger"
+              onClick={disable}
+              disabled={busy || disableCode.length < 6 || !disablePassword}
+            >
+              {busy ? 'Disabling…' : 'Disable 2FA'}
+            </Button>
           </div>
-          <Button
-            variant="danger"
-            onClick={disable}
-            disabled={busy || disableCode.length < 6 || !disablePassword}
-          >
-            {busy ? 'Disabling…' : 'Disable 2FA'}
-          </Button>
-        </div>
+        )}
+      </div>
+
+      {!loading && !enabled && !setup && !backupCodes && (
+        <Button onClick={startSetup} disabled={busy}>
+          {busy ? 'Please wait…' : 'Enable 2FA'}
+        </Button>
       )}
-    </Section>
+      {!loading && enabled && (
+        <Badge color="green">Enabled</Badge>
+      )}
+    </div>
   );
 }
 
-const LANGUAGES = [
-  { value: 'en', label: 'English' },
-  { value: 'hi', label: 'Hindi' },
-];
 const TIMEZONES = [
   { value: 'gmt+0530', label: 'GMT+05:30 (India)' },
   { value: 'gmt+0000', label: 'GMT+00:00 (UTC)' },
@@ -300,16 +308,64 @@ const comingSoon = <Badge color="gray">Coming soon</Badge>;
 
 export default function Settings() {
   const { user } = useAuth();
-  const [language, setLanguage] = useState('en');
+  const { theme, setTheme } = useOutletContext();
+  const isLight = theme === 'light';
   const [timezone, setTimezone] = useState('gmt+0530');
 
   return (
     <div>
-      <PageHeader title="Settings" subtitle="Account preferences and security" />
+      <PageHeader eyebrow="ACCOUNT" title="Settings" subtitle="Security, preferences and payout settlement configuration." />
 
+      {/* 4-card grid: Profile, Security, Settlement wallet, Appearance. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Deposit address — no per-trader wallet endpoint exists yet. */}
-        <Section title="Deposit Address" description="Your USDT (TRC20) wallet" badge={<Badge color="gray">Not configured</Badge>} icon={Wallet} accent="#f59e0b">
+        {/* Profile — email is real (from the authenticated session); no
+            display-name field or profile-update endpoint exists on the
+            backend at all, so that field and the save action stay disabled
+            and clearly labeled rather than pretending to save anything. */}
+        <Section title="Profile" description="Your trader identity" badge={comingSoon} icon={UserRound} accent="#8b5cf6">
+          <div className="space-y-4">
+            <div>
+              <label style={labelStyle}>Display name</label>
+              <input
+                readOnly
+                disabled
+                placeholder="Not available yet"
+                className="cursor-not-allowed"
+                style={{ ...inputStyle, background: 'var(--hover)', color: 'var(--muted)' }}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Email address</label>
+              <input
+                readOnly
+                value={user?.email || 'trader@p2p.com'}
+                className="cursor-not-allowed"
+                style={{ ...inputStyle, background: 'var(--hover)', color: 'var(--muted)' }}
+              />
+            </div>
+            <Button variant="ghost" disabled>Save profile</Button>
+          </div>
+        </Section>
+
+        {/* Security — 2FA (real) + password change (no backend route) in one card. */}
+        <Section title="Security" description="Protect account access" icon={ShieldCheck} accent="#22c55e">
+          <TwoFactorSection />
+          <div style={{ ...plainRowStyle, borderBottom: 'none', paddingBottom: 0 }}>
+            <div>
+              <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 700, margin: 0 }}>Change password</p>
+              <p style={{ color: 'var(--muted)', fontSize: 11, margin: '3px 0 0' }}>No self-service reset yet — contact support</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" disabled>Update</Button>
+              {comingSoon}
+            </div>
+          </div>
+        </Section>
+
+        {/* Settlement wallet — no per-trader deposit-address field exists on
+            the backend yet, so this stays an honest "not configured" state
+            rather than the reference's example (verified) TRC20 address. */}
+        <Section title="Settlement wallet" description="USDT receiving address" badge={<Badge color="gray">Not configured</Badge>} icon={Wallet} accent="#f59e0b">
           <div style={rowStyle}>
             <IconWallet className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--muted)' }} />
             <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>
@@ -318,62 +374,26 @@ export default function Settings() {
           </div>
         </Section>
 
-        {/* Preferences — neither field has a backend effect today. */}
-        <Section title="Preferences" description="Language and timezone" badge={comingSoon} icon={Globe2} accent="#3b82f6">
-          <div className="space-y-4">
+        {/* Appearance — dark mode is real (same state the header's toggle
+            uses, shared via TraderLayout's Outlet context); timezone has no
+            backend effect today. */}
+        <Section title="Appearance" description="Choose a comfortable interface" icon={Sun} accent="#f59e0b">
+          <div style={{ ...plainRowStyle, borderBottom: 'none' }}>
             <div>
-              <label style={labelStyle}>Language</label>
-              <Select value={language} onChange={setLanguage} options={LANGUAGES} disabled />
+              <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 700, margin: 0 }}>Dark mode</p>
+              <p style={{ color: 'var(--muted)', fontSize: 11, margin: '3px 0 0' }}>Apply across the trader panel</p>
             </div>
-            <div>
-              <label style={labelStyle}>Timezone</label>
-              <Select value={timezone} onChange={setTimezone} options={TIMEZONES} disabled />
-            </div>
+            <button
+              onClick={() => setTheme(isLight ? 'dark' : 'light')}
+              aria-label="Toggle dark mode"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: isLight ? 'var(--subtle)' : 'var(--accent)', display: 'flex' }}
+            >
+              {isLight ? <ToggleLeft size={30} /> : <ToggleRight size={30} />}
+            </button>
           </div>
-        </Section>
-
-        {/* Account — email display is real (from the authenticated session);
-            password change has no backend route, so only that part is marked. */}
-        <Section title="Account" description="Login and password" icon={UserRound} accent="#8b5cf6">
-          <div className="space-y-4">
-            <div>
-              <label style={labelStyle}>Email</label>
-              <input
-                readOnly
-                value={user?.email || 'trader@p2p.com'}
-                className="cursor-not-allowed"
-                style={{ ...inputStyle, background: 'var(--hover)', color: 'var(--muted)' }}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" disabled>Change password</Button>
-              {comingSoon}
-            </div>
-          </div>
-        </Section>
-
-        {/* Security / 2FA — the one real, working section on this page. */}
-        <TwoFactorSection />
-
-        {/* Telegram bots — no connect endpoint exists; telegram_chat_id is an
-            admin-set field the outbound alert service reads, not something a
-            trader can self-link today. */}
-        <Section title="Telegram Bots" description="Connect automation and alert bots" badge={comingSoon} icon={Send} accent="#14b8c4">
-          <div className="space-y-3">
-            <div style={rowStyle}>
-              <div>
-                <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, margin: 0 }}>PayIn Bot</p>
-                <p style={{ color: 'var(--muted)', fontSize: 11, margin: '3px 0 0' }}>Automation confirmations</p>
-              </div>
-              <Button variant="ghost" disabled>Connect</Button>
-            </div>
-            <div style={rowStyle}>
-              <div>
-                <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, margin: 0 }}>Notification Bot</p>
-                <p style={{ color: 'var(--muted)', fontSize: 11, margin: '3px 0 0' }}>Real-time alerts</p>
-              </div>
-              <Button variant="ghost" disabled>Open link</Button>
-            </div>
+          <div className="mt-1">
+            <label style={labelStyle}>Timezone</label>
+            <Select value={timezone} onChange={setTimezone} options={TIMEZONES} disabled />
           </div>
         </Section>
       </div>

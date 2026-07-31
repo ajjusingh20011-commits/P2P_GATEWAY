@@ -353,12 +353,17 @@ export function Modal({ open, onClose, title, subtitle, width = 460, children, f
   );
 }
 
-export function PageHeader({ title, subtitle, actions }) {
+export function PageHeader({ eyebrow, title, subtitle, actions }) {
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 style={{ color: 'var(--text)', fontWeight: 800, fontSize: 28, margin: 0, letterSpacing: '-.8px' }}>{title}</h1>
-        {subtitle && <p style={{ color: 'var(--muted)', fontSize: 14, margin: '4px 0 0' }}>{subtitle}</p>}
+        {eyebrow && (
+          <small style={{ display: 'block', color: 'var(--accent)', fontWeight: 750, fontSize: 10, letterSpacing: '.11em', textTransform: 'uppercase' }}>
+            {eyebrow}
+          </small>
+        )}
+        <h1 style={{ color: 'var(--text)', fontWeight: 800, fontSize: 28, margin: eyebrow ? '6px 0 0' : 0, letterSpacing: '-.8px' }}>{title}</h1>
+        {subtitle && <p style={{ color: 'var(--muted)', fontSize: 14, margin: '6px 0 0' }}>{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>

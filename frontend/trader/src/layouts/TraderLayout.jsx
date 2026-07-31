@@ -13,7 +13,10 @@ import { inr, balance } from '../utils/mock';
 
 /**
  * Shell for all authenticated trader pages: sidebar + top bar + routed content.
- * Shares { online, setOnline, connected } with child pages via Outlet context.
+ * Shares { online, setOnline, connected, theme, setTheme } with child pages
+ * via Outlet context — theme/setTheme is the same real, localStorage-persisted
+ * state the header's own theme toggle uses, so a page-level dark-mode control
+ * (Settings' Appearance card) stays backed by one real source, not a second one.
  */
 export default function TraderLayout() {
   const { user } = useAuth();
@@ -207,7 +210,7 @@ export default function TraderLayout() {
 
         {/* Routed page */}
         <main className="tf-scroll flex-1 overflow-y-auto" style={{ padding: '24px 24px 40px' }}>
-          <Outlet context={{ online, setOnline: toggleOnline, connected }} />
+          <Outlet context={{ online, setOnline: toggleOnline, connected, theme, setTheme }} />
         </main>
       </div>
 
