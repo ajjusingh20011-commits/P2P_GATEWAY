@@ -51,6 +51,16 @@ export default function TraderLayout() {
     localStorage.setItem('sidebar-collapsed', String(collapsed));
   }, [collapsed]);
 
+  // Below 900px the sidebar becomes an off-canvas drawer (matches the design's
+  // .sidebar.mobileOpen) instead of the desktop width-collapse — the same
+  // header button drives both, branching on viewport at click time.
+  const MOBILE_QUERY = '(max-width: 900px)';
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const toggleSidebar = () => {
+    if (window.matchMedia(MOBILE_QUERY).matches) setMobileNavOpen((v) => !v);
+    else setCollapsed((c) => !c);
+  };
+
   // Load the trader's real is_online + balance on mount so the sidebar/toggle
   // reflect the DB (not the mock 0 fallback).
   const refreshProfile = useCallback(() => {
@@ -139,10 +149,13 @@ export default function TraderLayout() {
 
   return (
     <div className="tf-scope flex" style={{ height: '100vh', overflow: 'hidden' }} data-theme={theme}>
+      {mobileNavOpen && <div className="tf-mobile-backdrop" onClick={() => setMobileNavOpen(false)} />}
       <Sidebar
         balance={displayBalance}
         baseRate={baseRate}
         collapsed={collapsed}
+        mobileOpen={mobileNavOpen}
+        onNavigate={() => setMobileNavOpen(false)}
         // No `notifications` key here — its only real source
         // (traderApi.notifications()) reads a confirmed-dead table, so the
         // badge stays hidden (CountBadge renders nothing for a null/absent
@@ -158,10 +171,12 @@ export default function TraderLayout() {
         >
           {/* Left — single collapse control + search */}
           <div className="flex items-center gap-2.5" style={{ flex: 1, minWidth: 0 }}>
-            <button className="tf-hbtn" onClick={() => setCollapsed((c) => !c)} aria-label="Toggle sidebar" title="Toggle sidebar">
+            <button className="tf-hbtn" onClick={toggleSidebar} aria-label="Toggle sidebar" title="Toggle sidebar">
               <Menu size={18} />
             </button>
-            <HeaderSearch />
+            <div className="tf-header-search">
+              <HeaderSearch />
+            </div>
           </div>
 
           {/* Right — online pill (toggles the trader's routing state), theme, bell, user */}
@@ -169,7 +184,7 @@ export default function TraderLayout() {
             <button
               onClick={() => toggleOnline(!online)}
               title={online ? 'Receiving orders — click to go offline' : 'Offline — click to go online'}
-              className="flex items-center gap-2"
+              className="tf-online-pill flex items-center gap-2"
               style={{
                 height: 32, borderRadius: 999, padding: '0 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
                 border: online ? '1px solid #abefc6' : '1px solid var(--cardborder)',

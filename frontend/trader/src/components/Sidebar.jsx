@@ -51,7 +51,7 @@ function CountBadge({ value }) {
  * header (single collapse control), so this is a presentational component that
  * only reads `collapsed`. Balance is real (from the trader's dashboard).
  */
-export default function Sidebar({ balance, baseRate, badges = {}, collapsed = false }) {
+export default function Sidebar({ balance, baseRate, badges = {}, collapsed = false, mobileOpen = false, onNavigate }) {
   const { logout } = useAuth();
 
   const linkClass = ({ isActive }) => `tf-nav${isActive ? ' active' : ''}${collapsed ? ' tf-tip' : ''}`;
@@ -59,7 +59,7 @@ export default function Sidebar({ balance, baseRate, badges = {}, collapsed = fa
 
   return (
     <aside
-      className="flex h-screen flex-shrink-0 flex-col"
+      className={`tf-sidebar flex h-screen flex-shrink-0 flex-col${mobileOpen ? ' tf-sidebar-mobile-open' : ''}`}
       style={{
         width: collapsed ? 72 : 216,
         background: 'var(--sidebar)',
@@ -111,7 +111,7 @@ export default function Sidebar({ balance, baseRate, badges = {}, collapsed = fa
           const count = badge ? badges[badge] : null;
           const hasCount = count != null && count > 0;
           return (
-            <NavLink key={to} to={to} className={linkClass} data-tip={collapsed ? label : undefined} style={collapsedNavStyle}>
+            <NavLink key={to} to={to} onClick={onNavigate} className={linkClass} data-tip={collapsed ? label : undefined} style={collapsedNavStyle}>
               <span style={{ position: 'relative', display: 'flex' }}>
                 <Icon className="h-[19px] w-[19px]" />
                 {collapsed && hasCount && (

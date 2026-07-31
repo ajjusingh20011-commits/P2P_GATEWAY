@@ -276,6 +276,23 @@
   box-shadow: var(--shadow);
 }
 
+/* Mobile sidebar — reference's .sidebar.mobileOpen / .mobileNavBackdrop.
+   Below 900px the sidebar becomes an off-canvas drawer instead of a
+   permanent column; the header's collapse button toggles it open instead
+   of the desktop width-collapse. */
+@media (max-width: 900px) {
+  .tf-sidebar {
+    position: fixed; top: 0; left: 0; height: 100vh; z-index: 40;
+    transform: translateX(-100%); transition: transform .25s ease;
+    width: 216px !important;
+  }
+  .tf-sidebar.tf-sidebar-mobile-open { transform: translateX(0); }
+}
+@media (max-width: 650px) {
+  .tf-header-search, .tf-online-pill { display: none; }
+}
+.tf-mobile-backdrop { position: fixed; inset: 0; background: rgba(16,24,40,.45); z-index: 35; }
+
 /* Smartphones page — reference's .deviceHealth / .deviceTop / .deviceStats /
    .deviceActions. Colors use the same alpha-tint pattern as the rest of this
    file (not the reference's light-only hex) so dark mode stays correct. */
