@@ -1,127 +1,116 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Card, StatCard, Badge, PageHeader } from '../components/ui';
-import { IconRupee, IconTransactions, IconActivity, IconClock, IconBalance, IconTrendUp } from '../components/icons';
-import { stats, revenue30Days, transactions, ACCOUNT_TYPES, inr, usdt, pct } from '../utils/mock';
-import { useApi } from '../hooks/useApi';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ArrowDownToLine, ArrowUpFromLine, ShieldAlert, Wallet } from 'lucide-react';
+import { PageHeader } from '../components/ui';
+import { OverviewMetric, TransactionActivityChart, TrafficOverviewCard } from '../components/DashboardSections';
+import { inr, usdt } from '../utils/mock';
 import { merchantApi } from '../services/api';
 
-function RevenueChart({ data }) {
-  const [hover, setHover] = useState(null);
-  if (!data || data.length === 0) {
-    return (
-      <div className="flex h-44 items-center justify-center text-sm" style={{ color: 'var(--muted)' }}>
-        No revenue data yet
-      </div>
-    );
+// Orders pagination is capped server-side at 100/page (see backend's
+// pagination() helper) — loop up to this many pages so the KPI totals below
+// cover the merchant's real order history rather than just its first page.
+// Real, not fabricated: for a merchant with more orders than this covers,
+// the totals are an honest "most recent N" window, not a full lifetime sum.
+const ORDER_FETCH_PAGES = 5;
+
+async function fetchAllOrders() {
+  const all = [];
+  for (let page = 1; page <= ORDER_FETCH_PAGES; page += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await merchantApi.orders(undefined, { page, limit: 100 });
+    const rows = res.data?.data?.orders || [];
+    all.push(...rows);
+    if (rows.length < 100) break;
   }
-  const max = Math.max(...data.map((d) => d.inr)) || 1;
-  return (
-    <div>
-      <div className="flex h-44 items-end gap-1">
-        {data.map((d, i) => {
-          const h = Math.round((d.inr / max) * 100);
-          return (
-            <div
-              key={d.day}
-              className="group relative flex flex-1 items-end"
-              style={{ minHeight: '150px' }}
-              onMouseEnter={() => setHover(i)}
-              onMouseLeave={() => setHover(null)}
-            >
-              <div
-                className="w-full rounded-t bg-gradient-to-t from-violet-500/40 to-violet-500 transition-all hover:to-violet-400"
-                style={{ height: `${h}%` }}
-              />
-              {hover === i && (
-                <div
-                  className="pointer-events-none absolute -top-10 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-md px-2 py-1 text-[10px] shadow-lg"
-                  style={{ background: 'var(--card)', border: '1px solid var(--cardborder)', color: 'var(--text)', boxShadow: 'var(--shadow)' }}
-                >
-                  {d.day}<br />{inr(d.inr)}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-2 flex justify-between text-[10px]" style={{ color: 'var(--muted)' }}>
-        <span>{data[0].day}</span>
-        <span>{data[Math.floor(data.length / 2)].day}</span>
-        <span>{data[data.length - 1].day}</span>
-      </div>
-    </div>
-  );
+  return all;
 }
 
+const NON_COUNTED_PAYOUT_STATUSES = new Set(['canceled']);
+
 export default function Dashboard() {
-  const recent = transactions.slice(0, 10);
+  const navigate = useNavigate();
+  const [balanceUsdt, setBalanceUsdt] = useState(null);
+  const [orders, setOrders] = useState([]);
+  const [payouts, setPayouts] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const { data: d, loading, refetch } = useApi(
-    () => merchantApi.dashboard().then((res) => res.data.data),
-    { fallback: stats }
-  );
+  const load = useCallback(() => {
+    setLoading(true);
+    Promise.allSettled([
+      merchantApi.dashboard(),
+      fetchAllOrders(),
+      merchantApi.myPayouts(),
+    ]).then(([dashRes, ordersRes, payoutsRes]) => {
+      if (dashRes.status === 'fulfilled') setBalanceUsdt(dashRes.value.data?.data?.balance_usdt ?? null);
+      setOrders(ordersRes.status === 'fulfilled' ? ordersRes.value : []);
+      setPayouts(payoutsRes.status === 'fulfilled' ? (payoutsRes.value.data?.data?.payout_requests || []) : []);
+    }).finally(() => setLoading(false));
+  }, []);
 
-  // Refresh dashboard stats when a real-time order event arrives.
+  useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    const onUpdate = () => { if (typeof refetch === 'function') refetch(); };
-    window.addEventListener('order:update', onUpdate);
-    return () => window.removeEventListener('order:update', onUpdate);
-  }, [refetch]);
+    window.addEventListener('order:update', load);
+    return () => window.removeEventListener('order:update', load);
+  }, [load]);
 
-  const cards = useMemo(
-    () => [
-      { label: "Today's Collections", value: inr(d.today_collections_inr ?? stats.todayCollections), icon: IconRupee, accent: 'indigo', trend: { up: true, value: '9.2% vs yesterday' } },
-      { label: 'Total Transactions', value: (d.total_orders_today ?? stats.totalTransactions).toLocaleString(), icon: IconTransactions, accent: 'sky' },
-      { label: 'Success Rate', value: pct(d.success_rate ?? stats.successRate), icon: IconActivity, accent: 'emerald' },
-      { label: 'Pending Orders', value: d.pending_orders ?? stats.pendingOrders, icon: IconClock, accent: 'amber' },
-      { label: 'USDT Balance', value: usdt(d.balance_usdt ?? d.balance ?? stats.balanceUsdt), icon: IconBalance, accent: 'violet' },
-      { label: 'Pay-in Fee', value: `${d.payin_fee_percent ?? 0}%`, sub: d.payout_fee_percent != null ? `Pay-out ${d.payout_fee_percent}%` : undefined, icon: IconTrendUp, accent: 'rose' },
-    ],
-    [d]
-  );
+  const kpis = useMemo(() => {
+    const successOrders = orders.filter((o) => o.status === 'success');
+    const totalPayInInr = successOrders.reduce((s, o) => s + (Number(o.amount_inr) || 0), 0);
+
+    const countedPayouts = payouts.filter((p) => !NON_COUNTED_PAYOUT_STATUSES.has(p.status));
+    const totalPayoutInr = countedPayouts.reduce((s, p) => s + (Number(p.amount_inr) || 0), 0);
+    const pendingSettlementInr = payouts
+      .filter((p) => ['awaiting_processing', 'in_processing', 'awaiting_settlement'].includes(p.status))
+      .reduce((s, p) => s + (Number(p.amount_inr) || 0), 0);
+
+    const disputedCount = orders.filter((o) => o.status === 'disputed').length + payouts.filter((p) => p.status === 'dispute').length;
+    const underReviewCount = orders.filter((o) => o.status === 'under_review').length;
+
+    return { successOrders, totalPayInInr, countedPayouts, totalPayoutInr, pendingSettlementInr, disputedCount, underReviewCount };
+  }, [orders, payouts]);
 
   return (
     <div>
-      <PageHeader
-        title="Dashboard"
-        subtitle={loading ? 'Loading your payments…' : 'Your payments at a glance'}
-      />
+      <PageHeader title="Dashboard" subtitle={loading ? 'Loading your payments…' : 'Your payments at a glance'} />
 
-      <div className="tf-grid">
-        {cards.map((c, i) => (
-          <StatCard key={c.label} {...c} index={i} />
-        ))}
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
+        <OverviewMetric
+          icon={ArrowDownToLine}
+          tone="green"
+          label="Total Pay-in"
+          value={loading ? '—' : inr(kpis.totalPayInInr)}
+          footnote={`${kpis.successOrders.length.toLocaleString()} transactions`}
+          onSeeMore={() => navigate('/orders')}
+        />
+        <OverviewMetric
+          icon={ArrowUpFromLine}
+          tone="blue"
+          label="Total Payout"
+          value={loading ? '—' : inr(kpis.totalPayoutInr)}
+          footnote={`${kpis.countedPayouts.length.toLocaleString()} ${kpis.countedPayouts.length === 1 ? 'payout' : 'payouts'}`}
+          onSeeMore={() => navigate('/payouts')}
+        />
+        <OverviewMetric
+          icon={Wallet}
+          tone="green"
+          label="Settlement"
+          value={balanceUsdt != null ? usdt(balanceUsdt) : '—'}
+          footnote={kpis.pendingSettlementInr > 0 ? `${inr(kpis.pendingSettlementInr)} pending settlement` : undefined}
+          onSeeMore={() => navigate('/balance')}
+        />
+        <OverviewMetric
+          icon={ShieldAlert}
+          tone="amber"
+          label="Open Disputes"
+          value={loading ? '—' : kpis.disputedCount}
+          footnote={`${kpis.underReviewCount} orders under review`}
+          onSeeMore={() => navigate('/orders')}
+        />
       </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <Card className="p-5 xl:col-span-2">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>Daily Revenue</h2>
-            <Badge color="indigo">Last 30 days</Badge>
-          </div>
-          <RevenueChart data={revenue30Days} />
-        </Card>
-
-        <Card className="flex flex-col">
-          <div className="flex items-center justify-between p-4" style={{ borderBottom: '1px solid var(--cardborder)' }}>
-            <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>Recent Transactions</h2>
-            <span className="text-xs" style={{ color: 'var(--muted)' }}>Last 10</span>
-          </div>
-          <ul>
-            {recent.length === 0 && (
-              <li className="px-4 py-10 text-center text-sm" style={{ color: 'var(--muted)' }}>No data yet</li>
-            )}
-            {recent.map((t, i) => (
-              <li key={t.id} className="flex items-center justify-between px-4 py-2.5" style={{ borderTop: i === 0 ? 'none' : '1px solid var(--cardborder)' }}>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{t.sender}</p>
-                  <p className="truncate text-xs" style={{ color: 'var(--muted)' }}>{t.id} · {ACCOUNT_TYPES[t.method].label}</p>
-                </div>
-                <span className="text-sm font-semibold" style={{ color: '#22c55e' }}>{inr(t.amountInr)}</span>
-              </li>
-            ))}
-          </ul>
-        </Card>
+      <div className="mt-4 grid grid-cols-1 gap-3.5 xl:grid-cols-[1.65fr_.75fr]" style={{ alignItems: 'start' }}>
+        <TransactionActivityChart orders={kpis.successOrders} payouts={kpis.countedPayouts} loading={loading} />
+        <TrafficOverviewCard orders={orders} payInCount={kpis.successOrders.length} payoutCount={kpis.countedPayouts.length} loading={loading} />
       </div>
     </div>
   );

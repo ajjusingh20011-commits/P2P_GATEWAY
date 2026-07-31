@@ -71,11 +71,12 @@ export const authApi = {
 // { success: true, data: {...} } — callers should read `res.data.data`.
 export const merchantApi = {
   dashboard: () => api.get('/merchant/dashboard'),
-  orders: (status) => api.get('/merchant/orders', { params: status ? { status } : undefined }),
+  orders: (status, opts) => api.get('/merchant/orders', { params: { ...(status ? { status } : undefined), ...opts } }),
   createOrder: (body) => api.post('/merchant/orders', body),
   transactions: () => api.get('/merchant/transactions'),
   balance: () => api.get('/merchant/balance'),
   apiCredentials: () => api.get('/merchant/api-credentials'),
+  regenerateApiCredentials: () => api.post('/merchant/api-credentials/regenerate'),
   setWebhook: (webhook_url) => api.post('/merchant/webhook', { webhook_url }),
 
   // Payout requests — merchant creates a payout, then tracks its status.

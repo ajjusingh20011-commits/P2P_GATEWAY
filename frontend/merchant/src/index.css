@@ -139,6 +139,26 @@
 }
 .tf-scroll::-webkit-scrollbar-track { background: transparent; }
 
+/* Segmented pill control (metric/range toggles) + the Transaction Activity
+   bar chart primitives — same shape used by the trader panel's dashboard
+   chart, ported 1:1 (only the bar colors are set per-instance via inline
+   style so each panel keeps its own accent). */
+.tf-segments { display: flex; border: 1px solid var(--cardborder); border-radius: 8px; padding: 2px; flex-shrink: 0; }
+.tf-segments button {
+  border: 0; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700;
+  padding: 5px 10px; border-radius: 6px; cursor: pointer;
+}
+.tf-segments button.active { background: var(--surface2, var(--hover)); color: var(--text); }
+
+.tf-chart-bars { display: flex; align-items: flex-end; gap: 6px; height: 200px; border-bottom: 1px solid var(--cardborder); }
+.tf-chart-group { flex: 1; min-width: 0; display: flex; align-items: flex-end; justify-content: center; gap: 3px; height: 100%; }
+.tf-chart-bar { flex: 1; max-width: 16px; border-radius: 3px 3px 1px 1px; min-height: 2px; transition: height .25s ease; }
+.tf-chart-axis { display: flex; gap: 6px; margin-top: 8px; }
+.tf-chart-axis span { flex: 1; min-width: 0; text-align: center; font-size: 9px; color: var(--subtle, var(--muted)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tf-chart-legend { display: flex; align-items: center; gap: 16px; margin-top: 14px; font-size: 11px; color: var(--muted); }
+.tf-chart-legend b { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.tf-chart-legend i { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
 /* Mobile sidebar — reference's .sidebar.mobileOpen / .mobileNavBackdrop.
    Below 900px the sidebar becomes an off-canvas drawer instead of a
    permanent column; the header's collapse button toggles it open instead

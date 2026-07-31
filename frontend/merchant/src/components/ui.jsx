@@ -2,18 +2,21 @@
  * Reusable presentational primitives for the Merchant Panel.
  * Theme-aware: colors are driven by the CSS variables on `.tf-scope`
  * (index.css), so every primitive follows the light/dark toggle. Merchant
- * accent = purple. Legacy accent names are remapped so the panel reads as
- * purple + rotating blue/green/amber/teal.
+ * accent = green (MaxPay visual system). Legacy accent names are remapped so
+ * the panel reads as green + rotating blue/amber/teal, while `green`/`emerald`
+ * stay a distinct semantic-success hex — brand accent and semantic success
+ * are conceptually different even though both are greens (same precedent as
+ * Admin's red brand accent vs. red danger semantics).
  */
 import { useEffect } from 'react';
 import { IconSearch, IconChevron, IconClose } from './icons';
 
-/* Named accent (legacy) or hex → hex. indigo/violet map to purple; rose → teal
-   so the stat cards rotate purple + blue/green/amber/teal. */
+/* Named accent (legacy) or hex → hex. indigo/violet/purple map to the new
+   green brand accent; rose → teal so the stat cards keep rotating colors. */
 const ACCENT_HEX = {
-  indigo: '#8b5cf6',
-  violet: '#8b5cf6',
-  purple: '#8b5cf6',
+  indigo: '#15803d',
+  violet: '#15803d',
+  purple: '#15803d',
   sky: '#3b82f6',
   blue: '#3b82f6',
   emerald: '#22c55e',
@@ -76,7 +79,7 @@ export function StatCard({ label, value, sub, icon: Icon, accent = 'indigo', tre
 
 const BADGE_HEX = {
   green: '#22c55e', emerald: '#22c55e', gray: '#94a3b8', red: '#ef4444',
-  amber: '#f59e0b', sky: '#3b82f6', blue: '#3b82f6', violet: '#8b5cf6', indigo: '#8b5cf6', purple: '#8b5cf6', rose: '#14b8c4', teal: '#14b8c4',
+  amber: '#f59e0b', sky: '#3b82f6', blue: '#3b82f6', violet: '#15803d', indigo: '#15803d', purple: '#15803d', rose: '#14b8c4', teal: '#14b8c4',
 };
 
 export function Badge({ color = 'gray', children, className = '' }) {
@@ -193,7 +196,7 @@ export function Tabs({ tabs, active, onChange }) {
             {t.count != null && (
               <span
                 className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-                style={isActive ? { background: hexA('#8b5cf6', 0.18), color: '#8b5cf6' } : { background: 'var(--hover)', color: 'var(--text)' }}
+                style={isActive ? { background: 'var(--accent-soft)', color: 'var(--accent)' } : { background: 'var(--hover)', color: 'var(--text)' }}
               >
                 {t.count}
               </span>
@@ -226,6 +229,23 @@ export function Pagination({ page, perPage, total, onPage }) {
           Next
         </button>
       </div>
+    </div>
+  );
+}
+
+export function Segments({ options, value, onChange }) {
+  return (
+    <div className="tf-segments">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          className={value === o.value ? 'active' : ''}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }
