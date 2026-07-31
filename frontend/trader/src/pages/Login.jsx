@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { Button } from '../components/ui.jsx';
 
 export default function Login() {
   const navigate = useNavigate();
   const { login, validate2fa } = useAuth();
+  const [theme] = useState(() => localStorage.getItem('panel-theme') || 'light');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -61,32 +63,47 @@ export default function Login() {
     </svg>
   );
 
+  const inputStyle = {
+    background: 'var(--input-bg)',
+    borderColor: 'var(--input-border)',
+    color: 'var(--text)',
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-950 px-4">
+    <div
+      className="tf-scope flex min-h-screen items-center justify-center px-4"
+      data-theme={theme}
+      style={{ background: 'var(--bg)' }}
+    >
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-600 text-lg font-bold text-white">
-            P2P
+          <div
+            className="mx-auto mb-4 flex h-[52px] w-[52px] items-center justify-center rounded-xl text-lg font-extrabold text-white"
+            style={{ background: 'linear-gradient(145deg,#5b55ee,#3d36bd)', boxShadow: '0 7px 20px rgba(79,70,229,.3)' }}
+          >
+            M
           </div>
-          <h1 className="text-2xl font-semibold text-white">Trader Panel</h1>
-          <p className="mt-1 text-sm text-gray-400">
+          <h1 className="text-2xl font-semibold" style={{ color: 'var(--text)' }}>
+            MaxPay Trader
+          </h1>
+          <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
             {tempToken ? 'Enter your authenticator code' : 'Sign in to your trader account'}
           </p>
         </div>
 
         {tempToken ? (
-          <form
-            onSubmit={handleVerify}
-            className="space-y-5 rounded-2xl border border-gray-800 bg-gray-900 p-8 shadow-xl"
-          >
+          <form onSubmit={handleVerify} className="tf-card space-y-5 p-8">
             {error && (
-              <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2.5 text-sm text-red-400">
+              <div
+                className="rounded-lg border px-4 py-2.5 text-sm"
+                style={{ borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+              >
                 {error}
               </div>
             )}
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-300">
+              <label className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--text)' }}>
                 Two-factor code
               </label>
               <input
@@ -99,18 +116,15 @@ export default function Login() {
                 value={code}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
                 placeholder="000000"
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3.5 py-2.5 text-center text-lg tracking-[0.4em] text-gray-100 placeholder-gray-600 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                style={inputStyle}
+                className="w-full rounded-lg border px-3.5 py-2.5 text-center text-lg tracking-[0.4em] outline-none focus:ring-1"
               />
-              <p className="mt-1.5 text-xs text-gray-500">
+              <p className="mt-1.5 text-xs" style={{ color: 'var(--subtle)' }}>
                 Open your authenticator app and enter the 6-digit code.
               </p>
             </div>
 
-            <button
-              type="submit"
-              disabled={loading || code.length < 6}
-              className="flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-2.5 font-medium text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-            >
+            <Button type="submit" disabled={loading || code.length < 6} className="w-full">
               {loading ? (
                 <>
                   {spinner}
@@ -119,29 +133,32 @@ export default function Login() {
               ) : (
                 'Verify'
               )}
-            </button>
+            </Button>
 
             <button
               type="button"
               onClick={backToLogin}
-              className="w-full text-center text-xs font-medium text-gray-400 hover:text-gray-200"
+              className="w-full text-center text-xs font-medium hover:opacity-80"
+              style={{ color: 'var(--muted)' }}
             >
               Back to sign in
             </button>
           </form>
         ) : (
-          <form
-            onSubmit={handleSubmit}
-            className="space-y-5 rounded-2xl border border-gray-800 bg-gray-900 p-8 shadow-xl"
-          >
+          <form onSubmit={handleSubmit} className="tf-card space-y-5 p-8">
             {error && (
-              <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2.5 text-sm text-red-400">
+              <div
+                className="rounded-lg border px-4 py-2.5 text-sm"
+                style={{ borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+              >
                 {error}
               </div>
             )}
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-300">Email</label>
+              <label className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--text)' }}>
+                Email
+              </label>
               <input
                 type="email"
                 autoComplete="email"
@@ -149,12 +166,15 @@ export default function Login() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3.5 py-2.5 text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                style={inputStyle}
+                className="w-full rounded-lg border px-3.5 py-2.5 outline-none focus:ring-1"
               />
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-300">Password</label>
+              <label className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--text)' }}>
+                Password
+              </label>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -163,23 +183,21 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
-                  className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3.5 py-2.5 pr-16 text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                  style={inputStyle}
+                  className="w-full rounded-lg border px-3.5 py-2.5 pr-16 outline-none focus:ring-1"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 px-3 text-xs font-medium text-gray-400 hover:text-gray-200"
+                  className="absolute inset-y-0 right-0 px-3 text-xs font-medium hover:opacity-80"
+                  style={{ color: 'var(--muted)' }}
                 >
                   {showPassword ? 'Hide' : 'Show'}
                 </button>
               </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-2.5 font-medium text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-            >
+            <Button type="submit" disabled={loading} className="w-full">
               {loading ? (
                 <>
                   {spinner}
@@ -188,11 +206,11 @@ export default function Login() {
               ) : (
                 'Sign in'
               )}
-            </button>
+            </Button>
           </form>
         )}
 
-        <p className="mt-6 text-center text-xs text-gray-600">
+        <p className="mt-6 text-center text-xs" style={{ color: 'var(--subtle)' }}>
           P2P UPI Payment Gateway · Trader Panel
         </p>
       </div>

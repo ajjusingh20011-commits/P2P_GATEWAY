@@ -61,10 +61,10 @@ export default function Sidebar({ balance, baseRate, badges = {}, collapsed = fa
     <aside
       className="flex h-screen flex-shrink-0 flex-col"
       style={{
-        width: collapsed ? 78 : 260,
+        width: collapsed ? 72 : 216,
         background: 'var(--sidebar)',
         borderRight: '1px solid var(--cardborder)',
-        padding: '18px 14px',
+        padding: '16px 10px',
         transition: 'width .25s ease, background-color .3s',
       }}
     >
@@ -89,7 +89,7 @@ export default function Sidebar({ balance, baseRate, badges = {}, collapsed = fa
           has no real backing (no balance-history endpoint), so only the real,
           derivable INR-equivalent (balance × current base rate) is shown. */}
       {!collapsed && (
-        <div style={{ margin: '10px 2px 16px', padding: 16, borderRadius: 14, background: 'linear-gradient(145deg,#4f46e5,#3730a3)', color: '#fff' }}>
+        <div style={{ margin: '10px 2px 18px', padding: 16, borderRadius: 14, background: 'linear-gradient(145deg,#4f46e5,#3730a3)', color: '#fff' }}>
           <p style={{ opacity: 0.72, fontSize: 12, margin: 0 }}>Available balance</p>
           <p style={{ fontWeight: 800, fontSize: 21, margin: '7px 0 0' }}>
             {usdt(balance)}

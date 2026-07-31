@@ -80,7 +80,7 @@
   padding: 0 11px;
   border-radius: 10px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 500;
   cursor: pointer;
   border: none;
@@ -336,3 +336,41 @@
   .tradeLedgerHead, .tradeLedgerRow { min-width: 1300px; }
   .tradeLedger { overflow-x: auto; }
 }
+
+/* ============================================================================
+   Buy USDT — reference's summary3 / flush+tabs / payout row.
+   ========================================================================== */
+.summary3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px; }
+.summary3 small, .summary3 strong, .summary3 span { display: block; }
+.summary3 small { color: var(--muted); font-size: 12px; }
+.summary3 strong { font-size: 21px; margin: 8px 0; color: var(--text); }
+.summary3 span { font-size: 11px; color: var(--muted); }
+
+.flush { padding: 0; overflow: hidden; }
+.tabs { display: flex; gap: 2px; padding: 12px 14px; border-bottom: 1px solid var(--cardborder); overflow-x: auto; }
+.tabs button {
+  border: 0; background: transparent; color: var(--muted); padding: 8px 10px; border-radius: 8px;
+  font-size: 12px; font-weight: 650; display: flex; align-items: center; gap: 7px; white-space: nowrap; cursor: pointer;
+}
+.tabs button span { background: var(--surface2); padding: 2px 6px; border-radius: 999px; font-size: 10px; }
+.tabs button.active { background: var(--accent-soft); color: var(--accent); }
+
+.payout { display: grid; grid-template-columns: 38px 1.5fr .8fr .7fr .7fr auto; align-items: center; gap: 12px; padding: 15px 18px; border-bottom: 1px solid var(--line2); }
+.payout strong, .payout small { display: block; }
+.payout small { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.payout .method { width: 36px; height: 36px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; flex-shrink: 0; }
+.payout .timer { color: #ef4444 !important; font-weight: 700; }
+
+@media (max-width: 900px) {
+  .summary3 { grid-template-columns: 1fr; }
+  .payout { grid-template-columns: 38px 1fr auto; }
+  .payout > div:nth-child(3), .payout > div:nth-child(4) { display: none; }
+}
+
+/* Reference's modal "done" confirmation screen (BuyUsdt's transferred step). */
+.done { text-align: center; padding: 20px; }
+.done > span {
+  width: 64px; height: 64px; border-radius: 50%; background: rgba(34,197,94,.14); color: #22c55e;
+  display: grid; place-items: center; margin: 0 auto;
+}
+.done p { color: var(--muted); line-height: 1.6; }

@@ -6,7 +6,6 @@ import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Trades from './pages/Trades.jsx';
 import Offers from './pages/Offers.jsx';
-import Payouts from './pages/Payouts.jsx';
 import BuyUsdt from './pages/BuyUsdt.jsx';
 import Notifications from './pages/Notifications.jsx';
 import Smartphones from './pages/Smartphones.jsx';
@@ -31,7 +30,6 @@ export default function App() {
             <Route path="/trades" element={<Trades />} />
             <Route path="/offers" element={<Offers />} />
             <Route path="/buy-usdt" element={<BuyUsdt />} />
-            <Route path="/payouts" element={<Payouts />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/smartphones" element={<Smartphones />} />
             <Route path="/settings" element={<Settings />} />
