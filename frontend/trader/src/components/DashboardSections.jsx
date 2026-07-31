@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Coins, Smartphone, Clock3, ChevronRight, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Coins, Smartphone, Clock3, ChevronRight, CheckCircle2, ArrowRight, MoreHorizontal } from 'lucide-react';
 import { traderApi } from '../services/api';
 import { getDevices } from '../lib/ngoApi';
 import { BankBadge, ScoreCircle } from './ui';
+import { toast } from './Toaster';
 import { ACCOUNT_TYPES, inr } from '../utils/mock';
 
 /*
@@ -106,63 +107,85 @@ export function CommissionSection() {
       : (raw > 0 ? '+' : '') + fmtValue(shown, cur);
 
   return (
-    <div className="tf-card" style={{ padding: '20px 22px', position: 'relative' }}>
-      <div className="flex items-start justify-between">
-        <p style={{ color: 'var(--muted)', fontWeight: 500, fontSize: 13, margin: '0 0 7px' }}>Commission earned</p>
-        <span
-          className="tf-badge"
-          style={{
-            width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center',
-            justifyContent: 'center', flexShrink: 0, background: hexA('#f59e0b', 0.14), color: '#f59e0b',
-          }}
-        >
-          <Coins size={20} />
-        </span>
-      </div>
-      <button
-        type="button"
-        onClick={toggleCur}
-        title="Click to switch currency"
+    <div
+      className="tf-card"
+      style={{ position: 'relative', minHeight: 148, padding: 18, display: 'grid', gridTemplateColumns: '46px 1fr', gap: 12, alignItems: 'start' }}
+    >
+      <span
+        className="tf-badge"
         style={{
-          display: 'block', fontWeight: 800, fontSize: 23, margin: 0, letterSpacing: '-.4px', lineHeight: 1,
-          background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left',
-          color: error ? 'var(--muted)' : 'var(--text)',
+          width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', flexShrink: 0, background: hexA('#f59e0b', 0.14), color: '#f59e0b',
         }}
       >
-        {valueText}
-        {delta != null && (
-          <span style={{ marginLeft: 8, color: delta >= 0 ? '#22c55e' : '#ef4444', fontSize: 11, fontWeight: 700 }}>
-            {(delta >= 0 ? '▲ ' : '▼ ') + Math.abs(delta) + '%'}
-          </span>
-        )}
-      </button>
-      <div className="flex items-center justify-between" style={{ marginTop: 9 }}>
-        <span style={{ color: 'var(--muted)', fontSize: 11 }}>
-          {NOTE[period]} · {error ? '—' : `${data?.trades ?? 0} trades`}
-        </span>
-        <select
-          value={period}
-          onChange={(e) => setPeriod(e.target.value)}
+        <Coins size={20} />
+      </span>
+      <div>
+        <small style={{ display: 'block', color: 'var(--muted)', fontSize: 12 }}>Commission earned</small>
+        <button
+          type="button"
+          onClick={toggleCur}
+          title="Click to switch currency"
           style={{
-            fontSize: 10, fontWeight: 600, color: 'var(--muted)', background: 'var(--surface2)',
-            border: '1px solid var(--cardborder)', borderRadius: 7, padding: '3px 6px', outline: 'none',
+            display: 'block', fontWeight: 800, fontSize: 23, margin: '8px 0', letterSpacing: '-.4px', lineHeight: 1,
+            background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left',
+            color: error ? 'var(--muted)' : 'var(--text)',
           }}
         >
-          {PERIODS.map((k) => (
-            <option key={k} value={k}>{TAB_LABEL[k]}</option>
-          ))}
-        </select>
+          {valueText}
+          {delta != null && (
+            <span style={{ marginLeft: 8, color: delta >= 0 ? '#22c55e' : '#ef4444', fontSize: 11, fontWeight: 700 }}>
+              {(delta >= 0 ? '▲ ' : '▼ ') + Math.abs(delta) + '%'}
+            </span>
+          )}
+        </button>
+        <em style={{ display: 'block', fontStyle: 'normal', color: 'var(--muted)', fontSize: 11 }}>
+          {NOTE[period]} · {error ? '—' : `${data?.trades ?? 0} trades`}
+        </em>
       </div>
+      <select
+        value={period}
+        onChange={(e) => setPeriod(e.target.value)}
+        style={{
+          position: 'absolute', right: 12, top: 12, fontSize: 10, fontWeight: 600, color: 'var(--muted)', background: 'var(--surface2)',
+          border: '1px solid var(--cardborder)', borderRadius: 7, padding: '5px 7px', outline: 'none',
+        }}
+      >
+        {PERIODS.map((k) => (
+          <option key={k} value={k}>{TAB_LABEL[k]}</option>
+        ))}
+      </select>
     </div>
   );
 }
 
 // ---- Live pool (REAL payment-details data, joined with real devices +
 // real in-processing payout totals) --------------------------------------
-export function LivePoolSection({ details, todayVolumeInr }) {
+export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
   const navigate = useNavigate();
   const [deviceNames, setDeviceNames] = useState({});
   const [payoutSummary, setPayoutSummary] = useState({ count: 0, total: 0 });
+  const [busyId, setBusyId] = useState(null);
+
+  // Every row here is already live (is_active), so this control only ever
+  // turns an account OFF — the same real field (is_active_detail) Offers.jsx's
+  // own toggle writes. Turning an account back ON stays Offers-only: that path
+  // runs a liveness check (device heartbeat / web-session status) this page
+  // has no access to, and skipping it would let a trader "activate" an
+  // account with no live data source with no warning.
+  const deactivate = async (d) => {
+    if (!window.confirm(`Turn off "${d.account_name}"? It will stop receiving new orders.`)) return;
+    setBusyId(d.id);
+    try {
+      await traderApi.updatePaymentDetail(d.id, { is_active_detail: false });
+      toast('Account turned off', 'success');
+      onChanged?.();
+    } catch (e) {
+      toast(e.response?.data?.message || 'Could not turn off this account', 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -188,7 +211,11 @@ export function LivePoolSection({ details, todayVolumeInr }) {
     return () => { alive = false; };
   }, []);
 
-  const live = (details || []).filter((d) => d.is_active);
+  // Routing requires BOTH flags (routingEngine.pickEligibleAccount: is_active
+  // is the linkage/admin gate, is_active_detail is the trader's own on/off
+  // intent) — filtering on is_active alone would keep showing an account
+  // here as "live" even after the trader had turned it off.
+  const live = (details || []).filter((d) => d.is_active && d.is_active_detail !== false);
   const rows = live.slice(0, 6);
 
   return (
@@ -225,15 +252,16 @@ export function LivePoolSection({ details, todayVolumeInr }) {
         </div>
       </div>
 
-      <div style={{ borderTop: '1px solid var(--cardborder)' }}>
+      <div style={{ borderTop: '1px solid var(--cardborder)', borderRadius: 10, overflow: 'hidden', margin: '0 22px 6px', border: '1px solid var(--cardborder)' }}>
         <div
-          className="grid"
-          style={{ gridTemplateColumns: '2fr 1.3fr 1fr 60px', gap: 8, padding: '9px 22px', background: 'var(--surface2)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', fontWeight: 700, color: 'var(--muted)' }}
+          className="tf-pool-grid"
+          style={{ padding: '8px 11px', background: 'var(--surface2)', fontSize: 9, textTransform: 'uppercase', letterSpacing: '.05em', fontWeight: 700, color: 'var(--muted)' }}
         >
-          <span>Account</span>
+          <span style={{ gridColumn: '1 / 3' }}>Account</span>
           <span>Device / session</span>
-          <span>Orders today</span>
-          <span style={{ textAlign: 'right' }}>Score</span>
+          <span>Orders / today</span>
+          <span>Score</span>
+          <span />
         </div>
         {rows.length === 0 ? (
           <p style={{ padding: '22px', color: 'var(--muted)', fontSize: 13, margin: 0, textAlign: 'center' }}>No live accounts right now.</p>
@@ -246,28 +274,52 @@ export function LivePoolSection({ details, todayVolumeInr }) {
               : d.ngo_device_id
                 ? (deviceNames[d.ngo_device_id] || 'APK device')
                 : '—';
+            const hasLimit = !!(d.max_per_day || d.daily_limit_amount);
+            const isRoutable = d.is_active && d.is_active_detail !== false;
             return (
-              <button
+              <div
                 key={d.id}
-                onClick={() => navigate('/offers')}
-                className="tf-row-hover grid w-full items-center text-left"
-                style={{ gridTemplateColumns: '2fr 1.3fr 1fr 60px', gap: 8, padding: '10px 22px', border: 0, borderTop: '1px solid var(--cardborder)', background: 'transparent', cursor: 'pointer' }}
+                className="tf-pool-grid tf-row-hover"
+                style={{ padding: '9px 11px', borderTop: '1px solid var(--cardborder)' }}
               >
-                <span className="flex min-w-0 items-center gap-2.5">
-                  <BankBadge type={d.account_type} label={type.label} size={30} />
+                <button
+                  className={`tf-pool-toggle ${isRoutable ? 'on' : 'off'}`}
+                  onClick={isRoutable ? () => deactivate(d) : undefined}
+                  disabled={busyId === d.id}
+                  aria-label={isRoutable ? `Turn off ${d.account_name}` : `${d.account_name} is off`}
+                  title={isRoutable ? 'Turn off — stop receiving new orders on this account' : 'Off — turn on from Payment details'}
+                />
+                <span className="flex min-w-0 items-center gap-2">
+                  <BankBadge type={d.account_type} label={type.label} size={26} />
                   <span className="min-w-0">
-                    <p className="truncate" style={{ margin: 0, fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{d.account_name}</p>
-                    <p className="truncate" style={{ margin: 0, fontSize: 10, color: 'var(--muted)' }}>{type.label}</p>
+                    <p className="truncate" style={{ margin: 0, fontSize: 11, fontWeight: 600, color: 'var(--text)' }}>{d.account_name}</p>
+                    <p className="truncate" style={{ margin: '1px 0 0', fontSize: 9, color: 'var(--muted)' }}>{type.label}</p>
                   </span>
                 </span>
-                <span className="truncate" style={{ fontSize: 11, color: 'var(--muted)' }}>{sessionLabel}</span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
-                  {d.usage?.used_today ?? 0}{d.max_per_day ? ` / ${d.max_per_day}` : ''}
+                <span className="flex min-w-0 items-center gap-1.5" style={{ color: 'var(--muted)' }}>
+                  {isWeb ? (
+                    <span style={{ fontSize: 8, fontWeight: 800, background: 'var(--accent-soft)', color: 'var(--accent)', borderRadius: 5, padding: 4 }}>WWW</span>
+                  ) : (
+                    <Smartphone size={13} style={{ flexShrink: 0 }} />
+                  )}
+                  <span className="truncate" style={{ fontSize: 10 }}>{sessionLabel}</span>
                 </span>
-                <span style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <ScoreCircle size={28} />
+                <span className="flex items-center gap-1.5">
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>
+                    {d.usage?.used_today ?? 0}{d.max_per_day ? ` / ${d.max_per_day}` : ''}
+                  </span>
+                  {hasLimit && <CheckCircle2 size={12} style={{ color: '#22c55e', flexShrink: 0 }} />}
                 </span>
-              </button>
+                <ScoreCircle size={32} />
+                <button
+                  className="tf-hbtn"
+                  style={{ width: 28, height: 28 }}
+                  onClick={() => navigate('/offers')}
+                  aria-label={`Open ${d.account_name} in Payment details`}
+                >
+                  <MoreHorizontal size={15} />
+                </button>
+              </div>
             );
           })
         )}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layers3, TrendingUp, ShieldCheck, Plus } from 'lucide-react';
-import { Card, StatCard, Badge, SearchInput, Button } from '../components/ui';
+import { Card, Badge, SearchInput, Button } from '../components/ui';
 import { CommissionSection, AttentionSection, LivePoolSection } from '../components/DashboardSections';
 import { useApi } from '../hooks/useApi';
 import { traderApi } from '../services/api';
@@ -23,6 +23,38 @@ function deriveMetrics(d) {
   const rate = hasUsage ? Math.round((successful / total) * 100) : 0;
   return { successful, total, hasUsage, rate };
 }
+
+// ₹ lakh-compact formatter, matching the reference's `compact()` helper.
+const compact = (n) => (n >= 100000 ? `₹${(n / 100000).toFixed(2)}L` : inr(n));
+
+// Reference's .overviewMetric shell: icon in a left column, label/value/sub
+// stacked on the right. No `delta`/`period` slot is rendered unless a real
+// one is passed in — the reference shows a delta% and a period dropdown on
+// every card, but today's volume and success rate have no real weekly/
+// monthly or trend source on this backend, so those stay single-period with
+// no fabricated comparison number.
+function OverviewMetric({ label, value, sub, icon: Icon, tone, period }) {
+  return (
+    <Card style={{ position: 'relative', minHeight: 148, padding: 18, display: 'grid', gridTemplateColumns: '46px 1fr', gap: 12, alignItems: 'start' }}>
+      <span
+        style={{ width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: tone.bg, color: tone.fg }}
+      >
+        <Icon size={20} />
+      </span>
+      <div>
+        <small style={{ display: 'block', color: 'var(--muted)', fontSize: 12 }}>{label}</small>
+        <strong style={{ display: 'block', fontSize: 23, letterSpacing: '-.4px', margin: '8px 0', color: 'var(--text)' }}>{value}</strong>
+        {sub && <em style={{ display: 'block', fontStyle: 'normal', color: 'var(--muted)', fontSize: 11 }}>{sub}</em>}
+      </div>
+      {period}
+    </Card>
+  );
+}
+const METRIC_TONE = {
+  purple: { bg: 'var(--accent-soft)', fg: 'var(--accent)' },
+  green: { bg: 'rgba(34,197,94,.14)', fg: '#22c55e' },
+  blue: { bg: 'rgba(59,130,246,.14)', fg: '#3b82f6' },
+};
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -95,10 +127,6 @@ export default function Dashboard() {
     ];
   }, [filtered]);
 
-  // Live pool = payment details actually gated live for routing right now
-  // (is_active), not just toggled on — same distinction Offers.jsx enforces.
-  const livePoolCount = useMemo(() => details.filter((d) => d.is_active).length, [details]);
-
   // Real success-rate distribution across accounts with order history — same
   // red/amber/green bands rateColor() uses above. Replaces a previous
   // permanently-hardcoded-full-width "Values by Currency" widget that never
@@ -128,9 +156,9 @@ export default function Dashboard() {
   // card with a real period selector since /trader/commission genuinely
   // backs today/week/month.
   const statCards = [
-    { label: 'Total UPI Accounts', value: details.length, sub: 'All connected accounts', icon: Layers3, accent: '#8b5cf6' },
-    { label: "Today's Volume", value: inr(dash.today_volume_inr ?? 0), sub: 'Today', icon: TrendingUp, accent: '#14b8c4' },
-    { label: 'Success Rate', value: `${dash.success_rate}%`, sub: 'Today', icon: ShieldCheck, accent: '#22c55e' },
+    { label: 'Total UPI accounts', value: details.length, sub: 'All connected accounts', icon: Layers3, tone: METRIC_TONE.purple },
+    { label: "Today's volume", value: compact(dash.today_volume_inr ?? 0), sub: `${dash.today_trades ?? 0} processed orders`, icon: TrendingUp, tone: METRIC_TONE.blue },
+    { label: 'Success rate', value: `${dash.success_rate}%`, sub: 'Today', icon: ShieldCheck, tone: METRIC_TONE.green },
   ];
 
   return (
@@ -143,29 +171,26 @@ export default function Dashboard() {
         </Button>
       </div>
 
-      {/* 4 equal top-row cards: 3 real single-period metrics + Commission
-          Earned (its own component — the only one with a real period toggle).
+      {/* 4 equal top-row cards: 3 real single-period metrics (no delta% or
+          period dropdown — the backend has no weekly/monthly or trend source
+          for volume/success-rate, so nothing fake is shown in their place)
+          + Commission Earned (its own component, with a real today/week/month
+          period selector since /trader/commission genuinely backs all three).
           Balance lives in the sidebar, so it is not duplicated here. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" style={{ marginBottom: 18 }}>
         {statCards.map((s, i) => (
-          <StatCard
-            key={s.label}
-            label={s.label}
-            value={s.value}
-            sub={s.sub}
-            icon={s.icon}
-            accent={s.accent}
-            index={i}
-          />
+          <div key={s.label} className="tf-enter" style={{ animationDelay: `${i * 0.1}s` }}>
+            <OverviewMetric label={s.label} value={s.value} sub={s.sub} icon={s.icon} tone={s.tone} />
+          </div>
         ))}
         <div className="tf-enter" style={{ animationDelay: '0.3s' }}><CommissionSection /></div>
       </div>
 
       {/* Live pool (65%, real payment-details data) + Requires attention
           (35%, real device/payout data) — same row. */}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.85fr_1fr]" style={{ marginBottom: 18 }}>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.65fr_.72fr]" style={{ marginBottom: 18 }}>
         <div className="tf-enter" style={{ animationDelay: '0.15s' }}>
-          <LivePoolSection details={details} todayVolumeInr={dash.today_volume_inr ?? 0} />
+          <LivePoolSection details={details} todayVolumeInr={dash.today_volume_inr ?? 0} onChanged={loadDetails} />
         </div>
         <div className="tf-enter" style={{ animationDelay: '0.25s' }}><AttentionSection /></div>
       </div>

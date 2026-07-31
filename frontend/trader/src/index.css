@@ -213,6 +213,49 @@
 .tf-hidescroll { scrollbar-width: none; -ms-overflow-style: none; }
 .tf-hidescroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
+/* Dashboard "Live pool" table — 6 columns: toggle, account, device/session,
+   orders+volume, score, action. Matches the reference's exact template. */
+.tf-pool-grid {
+  display: grid;
+  grid-template-columns: 44px minmax(180px, 1.3fr) minmax(175px, 1fr) minmax(130px, .72fr) 56px 36px;
+  align-items: center;
+  gap: 8px;
+}
+@media (max-width: 700px) {
+  .tf-pool-grid { grid-template-columns: 44px minmax(160px, 1fr) 90px 40px; }
+  .tf-pool-grid > :nth-child(3),
+  .tf-pool-grid > :nth-child(5) { display: none; }
+}
+
+/* Reference's intent-toggle pill, read-only status here (deactivation is a
+   real action; reactivation requires the liveness check on Payment details). */
+.tf-pool-toggle {
+  width: 31px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--track);
+  position: relative;
+  flex-shrink: 0;
+  transition: background-color .18s;
+  border: none;
+  padding: 0;
+}
+.tf-pool-toggle::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  top: 2px;
+  left: 2px;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.2);
+  transition: transform .18s;
+}
+.tf-pool-toggle.on { background: #12b76a; cursor: pointer; }
+.tf-pool-toggle.on::after { transform: translateX(13px); }
+.tf-pool-toggle.off { cursor: default; }
+
 /* Tooltip shown to the right of collapsed-sidebar items on hover */
 .tf-tip { position: relative; }
 .tf-tip:hover::after {

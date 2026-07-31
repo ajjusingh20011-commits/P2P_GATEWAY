@@ -41,33 +41,6 @@ export function Card({ className = '', children, style }) {
   );
 }
 
-export function StatCard({ label, value, sub, icon: Icon, accent = 'teal', index = 0 }) {
-  const hex = accentHex(accent);
-  return (
-    <Card style={{ padding: '20px 22px' }}>
-      <div className="flex items-start justify-between">
-        <div>
-          <p style={{ color: 'var(--muted)', fontWeight: 500, fontSize: 13, margin: '0 0 7px' }}>{label}</p>
-          <p style={{ color: 'var(--text)', fontWeight: 800, fontSize: 23, margin: 0, letterSpacing: '-.4px' }}>{value}</p>
-          {sub && <p style={{ color: 'var(--muted)', fontSize: 11, margin: '7px 0 0' }}>{sub}</p>}
-        </div>
-        {Icon && (
-          <span
-            className="tf-badge"
-            style={{
-              width: 48, height: 48, borderRadius: 14, display: 'flex', alignItems: 'center',
-              justifyContent: 'center', flexShrink: 0, background: hexA(hex, 0.13), color: hex,
-              animationDelay: `${index * 0.3}s`,
-            }}
-          >
-            <Icon className="h-[22px] w-[22px]" />
-          </span>
-        )}
-      </div>
-    </Card>
-  );
-}
-
 const BADGE_HEX = {
   green: '#22c55e', emerald: '#22c55e', gray: '#94a3b8', red: '#ef4444',
   amber: '#f59e0b', sky: '#3b82f6', blue: '#3b82f6', violet: '#8b5cf6', purple: '#8b5cf6',
