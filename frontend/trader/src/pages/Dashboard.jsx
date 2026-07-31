@@ -99,6 +99,26 @@ export default function Dashboard() {
   // (is_active), not just toggled on — same distinction Offers.jsx enforces.
   const livePoolCount = useMemo(() => details.filter((d) => d.is_active).length, [details]);
 
+  // Real success-rate distribution across accounts with order history — same
+  // red/amber/green bands rateColor() uses above. Replaces a previous
+  // permanently-hardcoded-full-width "Values by Currency" widget that never
+  // reflected any real data (there's also only one currency, INR, so a
+  // by-currency breakdown never applied here).
+  const rateBands = useMemo(() => {
+    const withUsage = details.filter((d) => deriveMetrics(d).hasUsage);
+    const bands = [
+      { range: 'Up to 30%', bar: 'bg-red-500', text: 'text-red-400', note: 'Payment details can be disabled automatically', test: (r) => r < 30 },
+      { range: '30–50%', bar: 'bg-amber-500', text: 'text-amber-400', note: 'Average success rate. Keep monitoring', test: (r) => r >= 30 && r < 50 },
+      { range: '50%+', bar: 'bg-emerald-500', text: 'text-emerald-400', note: 'Good conversion rate', test: (r) => r >= 50 },
+    ];
+    return bands.map((b) => {
+      const count = withUsage.filter((d) => b.test(deriveMetrics(d).rate)).length;
+      const pct = withUsage.length ? Math.round((count / withUsage.length) * 100) : 0;
+      return { ...b, count, pct };
+    });
+  }, [details]);
+  const hasRateData = rateBands.some((b) => b.count > 0);
+
   // Top stat row — exactly the set the approved design calls for. No My
   // Rate / FTD / STD cards (FTD/STD is an admin-only concept, not shown on
   // the trader panel at all) and no score/health metric (none is computed
@@ -221,28 +241,31 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        {/* Values by Currency — a color-threshold legend for the rates above,
-            not live data of its own. */}
+        {/* Success Rate Distribution — real counts/percentages of this
+            trader's own accounts, grouped into the same rate bands used
+            above (formerly a "Values by Currency" widget whose bars were
+            hardcoded to 100% width regardless of any real data). */}
         <Card className="flex flex-col">
           <div className="p-4" style={{ borderBottom: '1px solid var(--cardborder)' }}>
-            <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>Values by Currency</h2>
+            <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>Success Rate Distribution</h2>
+            <p style={{ color: 'var(--muted)', fontSize: 12, margin: '3px 0 0' }}>Accounts with order history, by conversion rate</p>
           </div>
           <div className="space-y-4 p-4">
-            {[
-              { range: 'Up to 30%', bar: 'bg-red-500', text: 'text-red-400', note: 'Payment details can be disabled automatically' },
-              { range: '30–50%', bar: 'bg-amber-500', text: 'text-amber-400', note: 'Average success rate. Keep monitoring' },
-              { range: '50%+', bar: 'bg-emerald-500', text: 'text-emerald-400', note: 'Good conversion rate' },
-            ].map((r) => (
+            {rateBands.map((r) => (
               <div key={r.range} className="p-3" style={{ borderRadius: 12, border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
                 <div className="flex items-center justify-between">
                   <span className={`text-sm font-semibold ${r.text}`}>{r.range}</span>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>{r.count} account{r.count === 1 ? '' : 's'}</span>
                 </div>
                 <div className="mt-2 h-2 overflow-hidden rounded-full" style={{ background: 'var(--hover)' }}>
-                  <div className={`h-full w-full ${r.bar}`} />
+                  <div className={`h-full ${r.bar}`} style={{ width: `${r.pct}%` }} />
                 </div>
                 <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>{r.note}</p>
               </div>
             ))}
+            {!hasRateData && (
+              <p className="py-2 text-center text-xs" style={{ color: 'var(--muted)' }}>No accounts with order history yet.</p>
+            )}
           </div>
         </Card>
       </div>
