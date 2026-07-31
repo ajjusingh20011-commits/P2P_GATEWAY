@@ -24,11 +24,12 @@ export default function TraderLayout() {
   const [liveBalance, setLiveBalance] = useState(null);
 
   // Panel light/dark theme (the one allowed new UI state), persisted locally.
-  const [theme, setTheme] = useState('light');
-  useEffect(() => {
-    const saved = localStorage.getItem('panel-theme');
-    if (saved) setTheme(saved);
-  }, []);
+  // Read synchronously via the lazy initializer — reading it in a mount
+  // effect instead raced against the persist-on-change effect below (both
+  // fire in the same commit, and the persist effect would overwrite the
+  // just-read saved value with the stale initial 'light' state before the
+  // read could take effect), so dark mode never survived a reload.
+  const [theme, setTheme] = useState(() => localStorage.getItem('panel-theme') || 'light');
   useEffect(() => {
     localStorage.setItem('panel-theme', theme);
   }, [theme]);
