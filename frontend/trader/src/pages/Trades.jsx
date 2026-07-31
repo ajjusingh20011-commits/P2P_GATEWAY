@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Clock3, ExternalLink, Hand, CheckCircle2, XCircle, AlertTriangle, Copy, Check } from 'lucide-react';
 import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, DataTable, Th, EmptyState, LoadingState } from '../components/ui';
 import { IconExport } from '../components/icons';
 import { useApi } from '../hooks/useApi';
+import { useSocket } from '../hooks/useSocket';
 import { traderApi } from '../services/api';
+import { toast } from '../components/Toaster';
 import { trades, inr, usdt, ACCOUNT_TYPES } from '../utils/mock';
 
 const PER_PAGE = 25;
@@ -142,12 +144,40 @@ function mockToRow(t) {
 export default function Trades() {
   const [filters, setFilters] = useState({ id: '', amount: '', bank: '', client: '', status: 'all' });
   const [page, setPage] = useState(1);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [confirmingId, setConfirmingId] = useState(null);
 
   // Real orders overlay the mock; mock stays as instant value + fallback on error.
   const { data: rows, loading } = useApi(
     () => traderApi.orders().then((res) => (res.data.data.orders || []).map(orderToRow)),
-    { fallback: trades.map(mockToRow) }
+    { fallback: trades.map(mockToRow), deps: [refreshKey] }
   );
+
+  // Real-time update on settlement — smartMerge.confirmOrder emits
+  // 'order:confirmed' to the trader's room for every settlement path (auto
+  // Tier 0/1/2 match, admin confirm, and this page's own trader-confirm
+  // button), so a single listener here covers all of them without a refresh.
+  const { socket } = useSocket();
+  useEffect(() => {
+    if (!socket) return undefined;
+    const onConfirmed = () => setRefreshKey((k) => k + 1);
+    socket.on('order:confirmed', onConfirmed);
+    return () => socket.off('order:confirmed', onConfirmed);
+  }, [socket]);
+
+  const handleConfirm = async (id) => {
+    if (!window.confirm('Confirm this order as paid? This settles the trade immediately.')) return;
+    setConfirmingId(id);
+    try {
+      await traderApi.confirmOrder(id);
+      toast('Order confirmed', 'success');
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      toast(err.response?.data?.message || 'Failed to confirm order', 'error');
+    } finally {
+      setConfirmingId(null);
+    }
+  };
 
   // Current rate info (base = "Binance", trader_rate = "My Rate") for rows that
   // don't have a persisted rate yet (assigned/paid orders).
@@ -236,6 +266,7 @@ export default function Trades() {
               <Th>Created</Th>
               <Th>Closed</Th>
               <Th>Status</Th>
+              <Th>Actions</Th>
             </tr>
           </thead>
           <tbody>
@@ -273,12 +304,25 @@ export default function Trades() {
                       {s.label}
                     </Badge>
                   </td>
+                  <td className="px-4 py-3">
+                    {t.status === 'under_review' ? (
+                      <Button
+                        variant="primary"
+                        disabled={confirmingId === t.id}
+                        onClick={() => handleConfirm(t.id)}
+                      >
+                        {confirmingId === t.id ? 'Confirming…' : 'Confirm'}
+                      </Button>
+                    ) : (
+                      <span className="text-xs" style={{ color: 'var(--muted)' }}>—</span>
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {pageRows.length === 0 && (
               <tr>
-                <td colSpan={9}>
+                <td colSpan={10}>
                   {loading && rows.length === 0 ? (
                     <LoadingState label="Loading trades…" />
                   ) : (
