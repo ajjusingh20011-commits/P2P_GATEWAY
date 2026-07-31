@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Coins, Smartphone, Clock3, ChevronRight, CheckCircle2, ArrowRight, MoreHorizontal } from 'lucide-react';
 import { traderApi } from '../services/api';
 import { getDevices } from '../lib/ngoApi';
-import { BankBadge, ScoreCircle } from './ui';
+import { BankBadge, Segments } from './ui';
+import { IconRobot, IconGlobe } from './icons';
 import { toast } from './Toaster';
 import { ACCOUNT_TYPES, inr } from '../utils/mock';
 
@@ -12,12 +13,17 @@ import { ACCOUNT_TYPES, inr } from '../utils/mock';
 
   - CommissionSection: REAL data from GET /trader/commission?period=. The big
     number toggles between ₹ (INR) and USDT on click; it counts up on change.
+  - TransactionActivityChart: REAL data — confirmed orders (pay-in) and
+    completed payout requests (payout), fetched once and bucketed client-side
+    into the selected range (1H/1D/7D/30D). No random/synthetic points; an
+    empty range shows a genuine empty state.
   - LivePoolSection: REAL payment-details data already fetched by Dashboard
     (is_active accounts), joined with real device names (getDevices(), same
     source Smartphones.jsx/AttentionSection already read) and real
     in-processing payout totals (traderApi.payoutRequests, same source
-    BuyUsdt.jsx reads) for the pay-in/payout summary strip. Score is a
-    placeholder (ScoreCircle) — no success-score metric exists yet.
+    BuyUsdt.jsx reads) for the summary strip. Success rate is the same real
+    confirmed/total ratio used elsewhere on this page — no separate "score"
+    metric is shown since none is computed anywhere in the backend.
   - AttentionSection: REAL data from two existing sources — device online
     state (same field Smartphones.jsx's own poll reads) and in-processing
     payout requests' expires_at (same field BuyUsdt.jsx reads). No score/
@@ -34,6 +40,10 @@ const prefersReduced = () =>
   typeof window !== 'undefined' &&
   window.matchMedia &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Column widths for the Dashboard's full-width Live Pool table (reuses
+// Trades' .tradeLedgerHead/.tradeLedgerRow typography at a wider template).
+const LIVE_POOL_GRID = '31px minmax(170px,1.3fr) minmax(110px,.8fr) minmax(130px,.9fr) 70px minmax(90px,.7fr) minmax(100px,.85fr) minmax(85px,.7fr) 56px 40px';
 
 const PERIODS = ['today', 'week', 'month'];
 const TAB_LABEL = { today: 'Today', week: 'Weekly', month: 'Monthly' };
@@ -159,6 +169,141 @@ export function CommissionSection() {
   );
 }
 
+// ---- Transaction activity (REAL data: confirmed orders = pay-in, completed
+// payout requests = payout) — bucketed client-side, never randomly generated.
+// A trader with more history than the fetch below just shows the most recent
+// slice; nothing is backfilled or estimated to fill empty buckets. -------
+const TXN_RANGES = [
+  { value: '1H', label: '1H' },
+  { value: '1D', label: '1D' },
+  { value: '7D', label: '7D' },
+  { value: '30D', label: '30D' },
+];
+const TXN_METRICS = [
+  { value: 'volume', label: 'Volume' },
+  { value: 'count', label: 'Count' },
+];
+
+function bucketConfig(range) {
+  if (range === '1H') return { buckets: 6, stepMs: 10 * 60000, fmt: (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) };
+  if (range === '1D') return { buckets: 24, stepMs: 3600000, fmt: (d) => d.toLocaleTimeString([], { hour: 'numeric' }) };
+  if (range === '7D') return { buckets: 7, stepMs: 86400000, fmt: (d) => d.toLocaleDateString([], { weekday: 'short' }) };
+  return { buckets: 30, stepMs: 86400000, fmt: (d) => d.toLocaleDateString([], { month: 'short', day: 'numeric' }) };
+}
+
+function buildActivitySeries(orders, payoutReqs, range) {
+  const { buckets, stepMs, fmt } = bucketConfig(range);
+  const now = Date.now();
+  const points = Array.from({ length: buckets }, (_, i) => {
+    const start = now - (buckets - i) * stepMs;
+    return { label: fmt(new Date(start + stepMs)), payInVolume: 0, payoutVolume: 0, payInCount: 0, payoutCount: 0, _start: start, _end: start + stepMs };
+  });
+  const place = (list, dateField, volKey, countKey) => {
+    (list || []).forEach((r) => {
+      const raw = r[dateField];
+      if (!raw) return;
+      const ts = new Date(raw).getTime();
+      if (!Number.isFinite(ts) || ts < points[0]._start) return;
+      const bucket = points.find((p) => ts >= p._start && ts < p._end) || points[points.length - 1];
+      bucket[volKey] += Number(r.amount_inr) || 0;
+      bucket[countKey] += 1;
+    });
+  };
+  place(orders, 'created_at', 'payInVolume', 'payInCount');
+  place(payoutReqs, 'settled_at', 'payoutVolume', 'payoutCount');
+  return points;
+}
+
+export function TransactionActivityChart() {
+  const [range, setRange] = useState('7D');
+  const [metric, setMetric] = useState('volume');
+  const [orders, setOrders] = useState([]);
+  const [payoutReqs, setPayoutReqs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    Promise.allSettled([
+      traderApi.orders('success', { limit: 500 }),
+      traderApi.payoutRequests('settlement_completed'),
+    ]).then(([oRes, pRes]) => {
+      setOrders(oRes.status === 'fulfilled' ? (oRes.value.data?.data?.orders || []) : []);
+      setPayoutReqs(pRes.status === 'fulfilled' ? (pRes.value.data?.data?.payout_requests || []) : []);
+    }).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    window.addEventListener('order:new', load);
+    window.addEventListener('order:update', load);
+    return () => {
+      window.removeEventListener('order:new', load);
+      window.removeEventListener('order:update', load);
+    };
+  }, []);
+
+  const data = useMemo(() => buildActivitySeries(orders, payoutReqs, range), [orders, payoutReqs, range]);
+  const isVolume = metric === 'volume';
+  const values = data.flatMap((p) => [isVolume ? p.payInVolume : p.payInCount, isVolume ? p.payoutVolume : p.payoutCount]);
+  const max = Math.max(1, ...values);
+  const hasAny = values.some((v) => v > 0);
+
+  return (
+    <div className="tf-card" style={{ padding: '20px 22px', height: '100%' }}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0 }}>Transaction activity</h3>
+          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0 0' }}>
+            {isVolume ? 'Pay-in vs payout volume (INR)' : 'Pay-in vs payout count'}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Segments options={TXN_METRICS} value={metric} onChange={setMetric} />
+          <Segments options={TXN_RANGES} value={range} onChange={setRange} />
+        </div>
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        {loading ? (
+          <p style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', padding: '40px 0' }}>Loading…</p>
+        ) : !hasAny ? (
+          <p style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', padding: '40px 0' }}>No transactions in this range yet.</p>
+        ) : (
+          <>
+            <div className="tf-chart-bars">
+              {data.map((p, i) => {
+                const inVal = isVolume ? p.payInVolume : p.payInCount;
+                const outVal = isVolume ? p.payoutVolume : p.payoutCount;
+                return (
+                  <div className="tf-chart-group" key={i}>
+                    <div
+                      className="tf-chart-bar"
+                      style={{ height: `${Math.max(2, (inVal / max) * 100)}%`, background: 'linear-gradient(180deg,#818cf8,#4f46e5)' }}
+                      title={`${p.label} · Pay-in ${isVolume ? inr(inVal) : inVal}`}
+                    />
+                    <div
+                      className="tf-chart-bar"
+                      style={{ height: `${Math.max(2, (outVal / max) * 100)}%`, background: 'linear-gradient(180deg,#94a3b8,#475569)' }}
+                      title={`${p.label} · Payout ${isVolume ? inr(outVal) : outVal}`}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div className="tf-chart-axis">
+              {data.map((p, i) => <span key={i}>{p.label}</span>)}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="tf-chart-legend">
+        <b><i style={{ background: '#4f46e5' }} />Pay-in</b>
+        <b><i style={{ background: '#475569' }} />Payout</b>
+      </div>
+    </div>
+  );
+}
+
 // ---- Live pool (REAL payment-details data, joined with real devices +
 // real in-processing payout totals) --------------------------------------
 export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
@@ -216,10 +361,15 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
   // intent) — filtering on is_active alone would keep showing an account
   // here as "live" even after the trader had turned it off.
   const live = (details || []).filter((d) => d.is_active && d.is_active_detail !== false);
-  const rows = live.slice(0, 6);
+
+  const liveOrdersToday = live.reduce((sum, d) => sum + (Number(d.usage?.used_today) || 0), 0);
+  const withUsage = live.filter((d) => (d.usage?.orders_total || 0) > 0);
+  const avgSuccess = withUsage.length
+    ? Math.round(withUsage.reduce((sum, d) => sum + (d.usage.orders_confirmed / d.usage.orders_total) * 100, 0) / withUsage.length)
+    : null;
 
   return (
-    <div className="tf-card" style={{ padding: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div className="tf-card tf-livepool-full" style={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '20px 22px 16px' }}>
         <div>
           <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0 }}>Live pool</h3>
@@ -234,39 +384,40 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
         </button>
       </div>
 
-      <div className="flex items-center" style={{ margin: '0 22px 16px', border: '1px solid var(--cardborder)', borderRadius: 11, padding: '12px 4px' }}>
-        <div className="flex flex-1 items-center justify-center gap-2.5">
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#12b76a', flexShrink: 0 }} />
-          <div>
-            <p style={{ margin: 0, fontSize: 11, color: 'var(--muted)' }}>Pay-in today</p>
-            <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{inr(todayVolumeInr || 0)} <span style={{ fontWeight: 500, color: 'var(--muted)', fontSize: 11 }}>· {live.length} accounts</span></p>
+      {/* Real 5-tile summary strip — every figure derived from `details` /
+          the payout-requests fetch above, nothing estimated. */}
+      <div className="grid grid-cols-2 sm:grid-cols-5" style={{ margin: '0 22px 16px', border: '1px solid var(--cardborder)', borderRadius: 11, overflow: 'hidden' }}>
+        {[
+          { label: 'Live accounts', value: live.length },
+          { label: 'Pay-in today', value: inr(todayVolumeInr || 0) },
+          { label: 'Orders today', value: liveOrdersToday },
+          { label: 'Payout processing', value: inr(payoutSummary.total) },
+          { label: 'Avg success rate', value: avgSuccess == null ? '—' : `${avgSuccess}%` },
+        ].map((s, i) => (
+          <div key={s.label} style={{ padding: '11px 13px', borderTop: i >= 2 && i < 3 ? undefined : undefined, borderLeft: '1px solid var(--cardborder)' }}>
+            <p style={{ margin: 0, fontSize: 10, color: 'var(--muted)' }}>{s.label}</p>
+            <p style={{ margin: '4px 0 0', fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{s.value}</p>
           </div>
-        </div>
-        <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--cardborder)' }} />
-        <div className="flex flex-1 items-center justify-center gap-2.5">
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#f04438', flexShrink: 0 }} />
-          <div>
-            <p style={{ margin: 0, fontSize: 11, color: 'var(--muted)' }}>Payout processing</p>
-            <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{inr(payoutSummary.total)} <span style={{ fontWeight: 500, color: 'var(--muted)', fontSize: 11 }}>· {payoutSummary.count} accounts</span></p>
-          </div>
-        </div>
+        ))}
       </div>
 
-      <div style={{ borderTop: '1px solid var(--cardborder)', borderRadius: 10, overflow: 'hidden', margin: '0 22px 6px', border: '1px solid var(--cardborder)' }}>
-        <div
-          className="tf-pool-grid"
-          style={{ padding: '8px 11px', background: 'var(--surface2)', fontSize: 9, textTransform: 'uppercase', letterSpacing: '.05em', fontWeight: 700, color: 'var(--muted)' }}
-        >
-          <span style={{ gridColumn: '1 / 3' }}>Account</span>
+      <div className="tradeLedger tf-livepool-full-table" style={{ margin: '0 22px 20px', border: '1px solid var(--cardborder)', borderRadius: 11 }}>
+        <div className="tradeLedgerHead" style={{ gridTemplateColumns: LIVE_POOL_GRID }}>
+          <span />
+          <span>Account</span>
+          <span>Payment method</span>
           <span>Device / session</span>
-          <span>Orders / today</span>
-          <span>Score</span>
+          <span>Connection</span>
+          <span>Orders today</span>
+          <span>Pay-in volume</span>
+          <span>Success rate</span>
+          <span>Limit</span>
           <span />
         </div>
-        {rows.length === 0 ? (
+        {live.length === 0 ? (
           <p style={{ padding: '22px', color: 'var(--muted)', fontSize: 13, margin: 0, textAlign: 'center' }}>No live accounts right now.</p>
         ) : (
-          rows.map((d) => {
+          live.map((d) => {
             const type = ACCOUNT_TYPES[d.account_type] || { label: d.account_type };
             const isWeb = d.connectionType === 'web';
             const sessionLabel = isWeb
@@ -275,42 +426,42 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
                 ? (deviceNames[d.ngo_device_id] || 'APK device')
                 : '—';
             const hasLimit = !!(d.max_per_day || d.daily_limit_amount);
-            const isRoutable = d.is_active && d.is_active_detail !== false;
+            const total = d.usage?.orders_total || 0;
+            const rate = total ? Math.round((d.usage.orders_confirmed / total) * 100) : null;
             return (
-              <div
-                key={d.id}
-                className="tf-pool-grid tf-row-hover"
-                style={{ padding: '9px 11px', borderTop: '1px solid var(--cardborder)' }}
-              >
+              <div key={d.id} className="tradeLedgerRow" style={{ gridTemplateColumns: LIVE_POOL_GRID }}>
                 <button
-                  className={`tf-pool-toggle ${isRoutable ? 'on' : 'off'}`}
-                  onClick={isRoutable ? () => deactivate(d) : undefined}
+                  className="tf-pool-toggle on"
+                  onClick={() => deactivate(d)}
                   disabled={busyId === d.id}
-                  aria-label={isRoutable ? `Turn off ${d.account_name}` : `${d.account_name} is off`}
-                  title={isRoutable ? 'Turn off — stop receiving new orders on this account' : 'Off — turn on from Payment details'}
+                  aria-label={`Turn off ${d.account_name}`}
+                  title="Turn off — stop receiving new orders on this account"
                 />
-                <span className="flex min-w-0 items-center gap-2">
-                  <BankBadge type={d.account_type} label={type.label} size={26} />
-                  <span className="min-w-0">
-                    <p className="truncate" style={{ margin: 0, fontSize: 11, fontWeight: 600, color: 'var(--text)' }}>{d.account_name}</p>
-                    <p className="truncate" style={{ margin: '1px 0 0', fontSize: 9, color: 'var(--muted)' }}>{type.label}</p>
-                  </span>
+                <div className="tradeProvider">
+                  <BankBadge type={d.account_type} label={type.label} size={30} />
+                  <div className="min-w-0">
+                    <strong className="truncate" title={d.account_name}>{d.account_name}</strong>
+                    <small className="truncate" title={d.upi_id}>{d.upi_id}</small>
+                  </div>
+                </div>
+                <div className="personCell"><strong>{type.label}</strong></div>
+                <div className="personCell">
+                  <strong className="truncate">{sessionLabel}</strong>
+                </div>
+                <span className="tf-connmark">
+                  {isWeb ? <IconGlobe className="h-3 w-3" /> : <IconRobot className="h-3 w-3" />}
+                  {isWeb ? 'WEB' : 'APK'}
                 </span>
-                <span className="flex min-w-0 items-center gap-1.5" style={{ color: 'var(--muted)' }}>
-                  {isWeb ? (
-                    <span style={{ fontSize: 8, fontWeight: 800, background: 'var(--accent-soft)', color: 'var(--accent)', borderRadius: 5, padding: 4 }}>WWW</span>
-                  ) : (
-                    <Smartphone size={13} style={{ flexShrink: 0 }} />
-                  )}
-                  <span className="truncate" style={{ fontSize: 10 }}>{sessionLabel}</span>
+                <div className="personCell"><strong>{d.usage?.used_today ?? 0}{d.max_per_day ? ` / ${d.max_per_day}` : ''}</strong></div>
+                <div className="personCell"><strong>{inr(d.usage?.daily_amount_total || 0)}</strong></div>
+                <div className="personCell">
+                  <strong className={rate == null ? '' : rate >= 50 ? 'autoClose' : 'manualReview'} style={rate == null ? { color: 'var(--muted)' } : undefined}>
+                    {rate == null ? '—' : `${rate}%`}
+                  </strong>
+                </div>
+                <span style={{ display: 'flex', justifyContent: 'center' }}>
+                  {hasLimit ? <CheckCircle2 size={15} style={{ color: '#22c55e' }} /> : <span style={{ color: 'var(--subtle)' }}>—</span>}
                 </span>
-                <span className="flex items-center gap-1.5">
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>
-                    {d.usage?.used_today ?? 0}{d.max_per_day ? ` / ${d.max_per_day}` : ''}
-                  </span>
-                  {hasLimit && <CheckCircle2 size={12} style={{ color: '#22c55e', flexShrink: 0 }} />}
-                </span>
-                <ScoreCircle size={32} />
                 <button
                   className="tf-hbtn"
                   style={{ width: 28, height: 28 }}
@@ -324,15 +475,6 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
           })
         )}
       </div>
-
-      {live.length > rows.length && (
-        <button
-          onClick={() => navigate('/offers')}
-          style={{ width: '100%', border: 0, borderTop: '1px solid var(--cardborder)', background: 'transparent', color: 'var(--accent)', padding: '11px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
-        >
-          View all live pool accounts →
-        </button>
-      )}
     </div>
   );
 }

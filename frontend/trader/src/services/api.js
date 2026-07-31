@@ -117,9 +117,11 @@ export const traderApi = {
   dashboard: () => api.get('/trader/dashboard'),
   commission: (period) => api.get('/trader/commission', { params: period ? { period } : {} }),
   setOnline: (is_online) => api.put('/trader/online-status', { is_online }),
-  orders: (status) => api.get('/orders', { params: status ? { status } : {} }),
+  orders: (status, opts) => api.get('/orders', { params: { ...(status ? { status } : {}), ...(opts || {}) } }),
+  // Trader manually confirms an under_review order (bare click — no UTR input;
+  // the trader has already checked their own bank/UPI app).
+  confirmOrder: (id) => api.post(`/orders/${id}/trader-confirm`),
   notifications: () => api.get('/trader/notifications'),
-  payouts: () => api.get('/trader/payouts'),
   paymentDetails: () => api.get('/trader/payment-details'),
   addPaymentDetail: (body) => api.post('/trader/payment-details', body),
   updatePaymentDetail: (id, body) => api.put(`/trader/payment-details/${id}`, body),

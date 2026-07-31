@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layers3, TrendingUp, ShieldCheck, Plus } from 'lucide-react';
 import { Card, Badge, SearchInput, Button } from '../components/ui';
-import { CommissionSection, AttentionSection, LivePoolSection } from '../components/DashboardSections';
+import { CommissionSection, AttentionSection, LivePoolSection, TransactionActivityChart } from '../components/DashboardSections';
 import { useApi } from '../hooks/useApi';
 import { traderApi } from '../services/api';
 import { balance, stats, inr, ACCOUNT_TYPES } from '../utils/mock';
@@ -186,13 +186,19 @@ export default function Dashboard() {
         <div className="tf-enter" style={{ animationDelay: '0.3s' }}><CommissionSection /></div>
       </div>
 
-      {/* Live pool (65%, real payment-details data) + Requires attention
-          (35%, real device/payout data) — same row. */}
+      {/* Transaction activity (65%, real order/payout data) + Requires
+          attention (35%, real device/payout data) — same row. Live pool
+          (real payment-details data) spans full width in the row below via
+          its own .tf-livepool-full class, matching the design's dashboardCore
+          layout (chart + attention side-by-side, live pool full-width). */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.65fr_.72fr]" style={{ marginBottom: 18 }}>
         <div className="tf-enter" style={{ animationDelay: '0.15s' }}>
-          <LivePoolSection details={details} todayVolumeInr={dash.today_volume_inr ?? 0} onChanged={loadDetails} />
+          <TransactionActivityChart />
         </div>
         <div className="tf-enter" style={{ animationDelay: '0.25s' }}><AttentionSection /></div>
+        <div className="tf-enter" style={{ animationDelay: '0.2s' }}>
+          <LivePoolSection details={details} todayVolumeInr={dash.today_volume_inr ?? 0} onChanged={loadDetails} />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">

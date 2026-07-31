@@ -276,6 +276,32 @@
   box-shadow: var(--shadow);
 }
 
+/* Reference's .segments — underline-free pill toggle (Volume/Count, ranges). */
+.tf-segments { display: flex; border: 1px solid var(--cardborder); border-radius: 8px; padding: 2px; flex-shrink: 0; }
+.tf-segments button {
+  border: 0; background: transparent; color: var(--muted); font-size: 10px; font-weight: 700;
+  padding: 5px 8px; border-radius: 6px; cursor: pointer;
+}
+.tf-segments button.active { background: var(--surface2); color: var(--text); }
+
+/* Dashboard Transaction Activity — real grouped-bar chart (payIn vs payout). */
+.tf-chart-bars { display: flex; align-items: flex-end; gap: 6px; height: 200px; border-bottom: 1px solid var(--cardborder); }
+.tf-chart-group { flex: 1; min-width: 0; display: flex; align-items: flex-end; justify-content: center; gap: 3px; height: 100%; }
+.tf-chart-bar { flex: 1; max-width: 16px; border-radius: 3px 3px 1px 1px; min-height: 2px; transition: height .25s ease; }
+.tf-chart-axis { display: flex; gap: 6px; margin-top: 8px; }
+.tf-chart-axis span { flex: 1; min-width: 0; text-align: center; font-size: 9px; color: var(--subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tf-chart-legend { display: flex; align-items: center; gap: 16px; margin-top: 14px; font-size: 11px; color: var(--muted); }
+.tf-chart-legend b { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.tf-chart-legend i { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
+/* Dashboard full-width Live Pool row — reuses .tradeLedgerHead/.tradeLedgerRow
+   (Trades' approved column typography) at a wider, richer grid. */
+.tf-livepool-full { grid-column: 1 / -1; }
+.tf-connmark {
+  display: inline-flex; align-items: center; gap: 3px; border-radius: 5px; padding: 3px 6px;
+  font-size: 9px; font-weight: 800; white-space: nowrap; background: var(--accent-soft); color: var(--accent);
+}
+
 /* ============================================================================
    Trades ("Sell USDT") — reference's simplePageHead / tradeFilters /
    tradeLedger, ported 1:1 with this app's existing token names.

@@ -361,6 +361,23 @@ export function Modal({ open, onClose, title, subtitle, width = 460, children, f
   );
 }
 
+export function Segments({ options, value, onChange }) {
+  return (
+    <div className="tf-segments">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          className={value === o.value ? 'active' : ''}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function PageHeader({ eyebrow, title, subtitle, actions }) {
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
