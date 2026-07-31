@@ -251,19 +251,19 @@ export default function Trades() {
 
   return (
     <div>
-      <div className="simplePageHead">
-        <div>
-          <h1>Sell USDT</h1>
-          <p>Incoming donor orders and automated payment resolution</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {loading && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</span>}
-          <Button variant="ghost" onClick={exportCsv}>
-            <Download size={16} />
-            Export CSV
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Sell USDT"
+        subtitle="Incoming donor orders and automated payment resolution"
+        actions={
+          <div className="flex items-center gap-2">
+            {loading && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</span>}
+            <Button variant="ghost" onClick={exportCsv}>
+              <Download size={16} />
+              Export CSV
+            </Button>
+          </div>
+        }
+      />
 
       <Card className="tradeFilterCard">
         <div className="tradeFilters">
