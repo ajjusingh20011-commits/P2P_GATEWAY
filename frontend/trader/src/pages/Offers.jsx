@@ -218,11 +218,14 @@ function toNgoUpdateBody(body) {
 
 // Renders the shared "Setting Limits" body (min/max + 4 windows + activity).
 function LimitsForm({ form, set, caps, setCaps, usage }) {
+  // Each window's own real total from computeWindowUsage — previously all
+  // four pointed at daily_amount_total, so "For a month"/"For a week"/"For
+  // an hour" all showed the day's figure instead of their own.
   const period = {
-    month: usage?.daily_amount_total || 0,
-    week: usage?.daily_amount_total || 0,
+    month: usage?.monthly_amount_total || 0,
+    week: usage?.weekly_amount_total || 0,
     day: usage?.daily_amount_total || 0,
-    hour: usage?.daily_amount_total || 0,
+    hour: usage?.hourly_amount_total || 0,
   };
   return (
     <div className="space-y-3">
@@ -610,7 +613,10 @@ function WebLoginForm({ onClose, onSaved }) {
           upiId: form.upiId.trim(),
           displayName: form.displayName.trim(),
           status: 'live',
-        }).catch((e) => console.error('NGO account saved, but routing sync failed:', e));
+        }).catch((e) => {
+          console.error('NGO account saved, but routing sync failed:', e);
+          toast('Account saved, but it may not be visible to order routing yet. Check back or try Edit → Save again.', 'warning');
+        });
       }
 
       if (accountId) {
@@ -953,6 +959,7 @@ function EditModal({ detail, onClose, onSaved, onDeleted }) {
         bank_name: form.bank_name || '',
         organization_name: form.organization_name,
       });
+      let syncFailed = false;
       if (detail.__ngo) {
         await updateAccount(detail._id, toNgoUpdateBody(body));
         try {
@@ -977,13 +984,19 @@ function EditModal({ detail, onClose, onSaved, onDeleted }) {
           });
         } catch (syncErr) {
           // The NGO account itself saved fine — don't fail the whole edit
-          // over a routing-sync hiccup, just log it.
+          // over a routing-sync hiccup, just surface it separately (the
+          // trader still needs to know routing may not reflect this change).
           console.error('NGO account saved, but routing sync failed:', syncErr);
+          syncFailed = true;
         }
       } else {
         await traderApi.updatePaymentDetail(detail.id, body);
       }
-      toast('Payment detail updated', 'success');
+      if (syncFailed) {
+        toast('Details saved, but order routing may not reflect these changes yet. Check back or save again.', 'warning');
+      } else {
+        toast('Payment detail updated', 'success');
+      }
       await onSaved();
       onClose();
     } catch (e) {
@@ -1011,8 +1024,9 @@ function EditModal({ detail, onClose, onSaved, onDeleted }) {
       title="Edit Payment Detail"
       onClose={onClose}
       headerRight={
-        // NGO/web accounts have no delete endpoint yet — only trader-native
-        // details can be removed here.
+        // NGO/web accounts do have a real delete endpoint, but it's exposed
+        // from the trash icon on their row in DetailsColumn instead of here
+        // — this modal's delete only covers trader-native details.
         !detail.__ngo && (
           <button onClick={remove} className="tf-hbtn" style={{ color: '#ef4444' }} aria-label="Delete">
             <IconTrash className="h-4 w-4" />
