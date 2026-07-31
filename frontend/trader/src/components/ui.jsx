@@ -290,12 +290,13 @@ export function ScoreCircle({ size = 40 }) {
   );
 }
 
-export function EmptyState({ icon: Icon, title = 'Nothing here yet', message, className = '' }) {
+export function EmptyState({ icon: Icon, title = 'Nothing here yet', message, action, className = '' }) {
   return (
     <div className={`flex flex-col items-center justify-center gap-2 py-14 text-center ${className}`}>
       {Icon && <Icon className="h-7 w-7" style={{ color: 'var(--muted)' }} />}
       <p style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14, margin: 0 }}>{title}</p>
       {message && <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0, maxWidth: 320 }}>{message}</p>}
+      {action && <div className="mt-1">{action}</div>}
     </div>
   );
 }

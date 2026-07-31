@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, DataTable, Th, EmptyState, LoadingState } from '../components/ui';
-import { IconRefresh, IconBell } from '../components/icons';
+import { IconRefresh, IconBell, IconWarning } from '../components/icons';
 import { useApi } from '../hooks/useApi';
 import { getTransactions } from '../lib/ngoApi';
 import { notifications, maskUpi, ACCOUNT_TYPES } from '../utils/mock';
@@ -55,7 +55,7 @@ export default function Notifications() {
   const [refreshing, setRefreshing] = useState(false);
 
   // Real notifications overlay the mock; mock stays as instant value + fallback.
-  const { data: rows, loading } = useApi(
+  const { data: rows, loading, error, refetch } = useApi(
     () => getTransactions().then((list) => (list || []).map(apiToRow)),
     { fallback: notifications.map(mockToRow) }
   );
@@ -81,8 +81,13 @@ export default function Notifications() {
 
   const refresh = () => {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 600);
+    refetch();
   };
+
+  // Stop the spin once the real refetch settles (success or error), not on a fixed timer.
+  useEffect(() => {
+    if (!loading) setRefreshing(false);
+  }, [loading]);
 
   return (
     <div>
@@ -161,6 +166,13 @@ export default function Notifications() {
                 <td colSpan={8}>
                   {loading && rows.length === 0 ? (
                     <LoadingState label="Loading notifications…" />
+                  ) : error ? (
+                    <EmptyState
+                      icon={IconWarning}
+                      title="Couldn't load notifications"
+                      message="The notification service is unreachable right now. What's shown below (if anything) may be out of date."
+                      action={<Button variant="ghost" onClick={refresh}>Retry</Button>}
+                    />
                   ) : (
                     <EmptyState
                       icon={IconBell}

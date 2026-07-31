@@ -9,12 +9,13 @@ import { useEffect, useState } from 'react';
  *
  * @param {() => Promise<any>} fetcher - returns the resolved payload (already unwrapped).
  * @param {{ fallback?: any, deps?: any[] }} options
- * @returns {{ data: any, loading: boolean, error: Error|null }}
+ * @returns {{ data: any, loading: boolean, error: Error|null, refetch: () => void }}
  */
 export function useApi(fetcher, { fallback = null, deps = [] } = {}) {
   const [data, setData] = useState(fallback);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [reloadIndex, setReloadIndex] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -41,9 +42,11 @@ export function useApi(fetcher, { fallback = null, deps = [] } = {}) {
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, reloadIndex]);
 
-  return { data, loading, error };
+  const refetch = () => setReloadIndex((n) => n + 1);
+
+  return { data, loading, error, refetch };
 }
 
 export default useApi;
