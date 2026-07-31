@@ -1,26 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, DataTable, Th, EmptyState, LoadingState } from '../components/ui';
+import { BadgeCheck } from 'lucide-react';
+import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, EmptyState, LoadingState } from '../components/ui';
 import { IconRefresh, IconBell, IconWarning } from '../components/icons';
 import { useApi } from '../hooks/useApi';
 import { getTransactions } from '../lib/ngoApi';
-import { notifications, maskUpi, ACCOUNT_TYPES } from '../utils/mock';
+import { notifications, ACCOUNT_TYPES } from '../utils/mock';
 
 const PER_PAGE = 8;
 
 // Map an ngo-backend Transaction doc (see ngo-backend/src/models/Transaction.js)
-// onto the row shape this table renders. `bank` stays null — nothing populates
-// a receiving-account identity on these rows today (same as the old API this
-// replaced); `utr` (the bank/UPI reference, e.g. an RRN) is the most useful
-// "Transaction ID" available, so txnId (the platform's own order id) is shown
-// as the Notification ID instead.
+// onto the row shape this page renders. `bank` stays unused — nothing populates
+// a receiving-account identity on these rows today; `utr` (the bank/UPI
+// reference, e.g. an RRN) is the most useful "Transaction ID" available.
 function apiToRow(n) {
   return {
     id: n._id,
     notificationId: n.txnId || n._id,
-    time: n.scrapedAt || n.createdAt || '—',
+    time: n.scrapedAt || n.createdAt || null,
     amount: n.amount,
     currency: 'INR',
-    bank: null,
     method: n.platform,
     transactionId: n.utr || '—',
     description: n.payerName
@@ -37,11 +35,22 @@ function mockToRow(n) {
     time: n.time,
     amount: n.amount,
     currency: n.currency,
-    bank: n.bank,
     method: n.method,
     transactionId: n.transactionId,
     description: n.description,
   };
+}
+
+function fmtTime(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin} min ago`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH}h ago`;
+  return d.toLocaleString();
 }
 
 const METHOD_OPTIONS = [
@@ -50,7 +59,7 @@ const METHOD_OPTIONS = [
 ];
 
 export default function Notifications() {
-  const [filters, setFilters] = useState({ notificationId: '', amount: '', currency: '', bank: '', method: 'all', transactionId: '' });
+  const [filters, setFilters] = useState({ notificationId: '', amount: '', currency: '', method: 'all', transactionId: '' });
   const [page, setPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -65,12 +74,17 @@ export default function Notifications() {
     setPage(1);
   };
 
+  // The reference's Notifications page is a plain activity feed with no
+  // search — this trader panel's real notification volume can grow large
+  // enough that finding a specific past payment matters operationally, so
+  // filtering/pagination (already real, already fixed) stay as genuine
+  // extra capability layered on top of the reference's simpler layout,
+  // same call made for Dashboard's extra sections.
   const filtered = useMemo(() => {
     return rows.filter((n) => {
       if (filters.notificationId && !String(n.notificationId).toLowerCase().includes(filters.notificationId.toLowerCase())) return false;
       if (filters.amount && !String(n.amount).includes(filters.amount.trim())) return false;
       if (filters.currency && !String(n.currency).toLowerCase().includes(filters.currency.toLowerCase())) return false;
-      if (filters.bank && !(n.bank?.accountName || '').toLowerCase().includes(filters.bank.toLowerCase())) return false;
       if (filters.method !== 'all' && n.method !== filters.method) return false;
       if (filters.transactionId && !String(n.transactionId).toLowerCase().includes(filters.transactionId.toLowerCase())) return false;
       return true;
@@ -92,8 +106,9 @@ export default function Notifications() {
   return (
     <div>
       <PageHeader
+        eyebrow="ACTIVITY CENTER"
         title="Notifications"
-        subtitle="Logs of notifications for Automation"
+        subtitle="Payment-detection events from your connected accounts."
         actions={
           <>
             {loading && <span style={{ color: 'var(--muted)', fontSize: 12 }}>Loading…</span>}
@@ -106,85 +121,65 @@ export default function Notifications() {
       />
 
       <Card className="mb-4 p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <SearchInput value={filters.notificationId} onChange={set('notificationId')} placeholder="Notification ID" />
           <SearchInput value={filters.amount} onChange={set('amount')} placeholder="Amount" />
           <SearchInput value={filters.currency} onChange={set('currency')} placeholder="Currency" />
-          <SearchInput value={filters.bank} onChange={set('bank')} placeholder="Bank details" />
           <Select value={filters.method} onChange={set('method')} options={METHOD_OPTIONS} />
           <SearchInput value={filters.transactionId} onChange={set('transactionId')} placeholder="Transaction ID" />
         </div>
       </Card>
 
+      {/* Flush card of activity-feed rows (reference's exact "note" pattern) —
+          each row carries every real field the old table showed (amount,
+          method, currency, transaction id, notification id), just laid out
+          as icon + title + description + timestamp instead of table columns. */}
       <Card style={{ padding: 0, overflow: 'hidden' }}>
-        <DataTable minWidth={960}>
-          <thead>
-            <tr>
-              <Th>Notification ID</Th>
-              <Th>Time</Th>
-              <Th>Amount</Th>
-              <Th>Currency</Th>
-              <Th>My Bank</Th>
-              <Th>Method</Th>
-              <Th>Transaction ID</Th>
-              <Th>Description</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {pageRows.map((n) => {
-              const method = ACCOUNT_TYPES[n.method];
-              return (
-                <tr key={n.id} className="tf-row-hover" style={{ borderBottom: '1px solid var(--cardborder)', color: 'var(--text)' }}>
-                  <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>{n.notificationId}</td>
-                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>{n.time}</td>
-                  <td className="px-4 py-3 font-medium">₹{Number(n.amount).toLocaleString('en-IN')}</td>
-                  <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{n.currency}</td>
-                  <td className="px-4 py-3">
-                    {n.bank ? (
-                      <>
-                        <div className="text-xs font-medium" style={{ color: 'var(--text)' }}>{n.bank.accountName}</div>
-                        <div className="text-xs" style={{ color: 'var(--muted)' }}>{maskUpi(n.bank.upiId)}</div>
-                      </>
-                    ) : (
-                      <span className="text-xs" style={{ color: 'var(--muted)' }}>—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {method ? (
-                      <Badge color={method.color}>{method.label}</Badge>
-                    ) : (
-                      <span className="text-xs" style={{ color: 'var(--muted)' }}>{n.method || '—'}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>{n.transactionId}</td>
-                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text)' }}>{n.description}</td>
-                </tr>
-              );
-            })}
-            {pageRows.length === 0 && (
-              <tr>
-                <td colSpan={8}>
-                  {loading && rows.length === 0 ? (
-                    <LoadingState label="Loading notifications…" />
-                  ) : error ? (
-                    <EmptyState
-                      icon={IconWarning}
-                      title="Couldn't load notifications"
-                      message="The notification service is unreachable right now. What's shown below (if anything) may be out of date."
-                      action={<Button variant="ghost" onClick={refresh}>Retry</Button>}
-                    />
-                  ) : (
-                    <EmptyState
-                      icon={IconBell}
-                      title={rows.length === 0 ? 'No notifications yet' : 'No notifications match your filters'}
-                      message={rows.length === 0 ? 'Detected payments will show up here automatically.' : undefined}
-                    />
-                  )}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </DataTable>
+        {pageRows.length === 0 ? (
+          loading && rows.length === 0 ? (
+            <LoadingState label="Loading notifications…" />
+          ) : error ? (
+            <EmptyState
+              icon={IconWarning}
+              title="Couldn't load notifications"
+              message="The notification service is unreachable right now. What's shown below (if anything) may be out of date."
+              action={<Button variant="ghost" onClick={refresh}>Retry</Button>}
+            />
+          ) : (
+            <EmptyState
+              icon={IconBell}
+              title={rows.length === 0 ? "You're all caught up" : 'No notifications match your filters'}
+              message={rows.length === 0 ? 'Detected payments will show up here automatically.' : undefined}
+            />
+          )
+        ) : (
+          pageRows.map((n) => {
+            const method = ACCOUNT_TYPES[n.method];
+            return (
+              <div
+                key={n.id}
+                className="tf-row-hover flex items-start gap-3"
+                style={{ padding: '17px 19px', borderBottom: '1px solid var(--cardborder)' }}
+              >
+                <span
+                  style={{ width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, background: 'rgba(34,197,94,.14)', color: '#22c55e' }}
+                >
+                  <BadgeCheck size={18} />
+                </span>
+                <div className="min-w-0" style={{ flex: 1 }}>
+                  <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 700, margin: 0 }}>{n.description}</p>
+                  <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0' }}>
+                    ₹{Number(n.amount || 0).toLocaleString('en-IN')} {n.currency}
+                    {method && <> · <Badge color={method.color}>{method.label}</Badge></>}
+                    {n.transactionId !== '—' && <> · UTR <span className="font-mono">{n.transactionId}</span></>}
+                  </p>
+                  <small style={{ color: 'var(--subtle)', fontSize: 11 }}>{fmtTime(n.time)}</small>
+                </div>
+                <span className="font-mono" style={{ color: 'var(--subtle)', fontSize: 10, flexShrink: 0 }}>{n.notificationId}</span>
+              </div>
+            );
+          })
+        )}
         <div style={{ borderTop: '1px solid var(--cardborder)' }}>
           <Pagination page={page} perPage={PER_PAGE} total={filtered.length} onPage={setPage} />
         </div>
