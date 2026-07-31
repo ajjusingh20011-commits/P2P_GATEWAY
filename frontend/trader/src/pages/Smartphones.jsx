@@ -1,9 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
+import { Smartphone, RefreshCw } from 'lucide-react';
 import { Card, Badge, Button, SearchInput, Select, PageHeader, Modal, EmptyState, LoadingState } from '../components/ui';
-import { IconPlus, IconChevron, IconDots, IconEdit, IconTrash } from '../components/icons';
+import { IconPlus, IconChevron } from '../components/icons';
 import { getDevices, generateLicense, renameDevice, deleteDevice, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 import { traderApi } from '../services/api';
+
+function heartbeatAgo(dateStr) {
+  if (!dateStr) return 'Never';
+  const ms = Date.now() - new Date(dateStr).getTime();
+  if (ms < 15000) return 'Now';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s} sec ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 // PENDING devices (a pairing code nobody claimed) are never returned by
 // getDevices() any more — see ngo-backend/src/routes/apk.js — so "Pending"
@@ -152,16 +166,14 @@ export default function Smartphones() {
 
   const set = (k) => (v) => setFilters((f) => ({ ...f, [k]: v }));
 
-  // Per-row 3-dot menu: Rename (inline edit, PATCH) and Delete (confirm, real
-  // DELETE) — Fix 4. Only one row's menu / rename box open at a time.
-  const [rowMenuId, setRowMenuId] = useState(null);
+  // Rename (inline edit, PATCH) and Delete (confirm, real DELETE) — Fix 4.
+  // Only one row's rename box open at a time.
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [expandedDeviceId, setExpandedDeviceId] = useState(null);
 
   const startRename = (s) => {
-    setRowMenuId(null);
     setRenamingId(s.id);
     setRenameValue(s.deviceName || '');
   };
@@ -188,7 +200,6 @@ export default function Smartphones() {
   };
 
   const removeDevice = async (s) => {
-    setRowMenuId(null);
     const label = s.deviceName || 'this device';
     if (!window.confirm(`Delete ${label}? This permanently removes it and cannot be undone.`)) return;
     try {
@@ -251,6 +262,18 @@ export default function Smartphones() {
         }
       />
 
+      {/* Real health banner — matches the design's .deviceHealth, real counts. */}
+      <div className="deviceHealth">
+        <div>
+          <i />
+          <span>{devices.filter((d) => d.online).length} of {devices.length} online</span>
+        </div>
+        <Button variant="secondary" onClick={loadDevices} disabled={loadingDevices}>
+          <RefreshCw className="h-4 w-4" />
+          {loadingDevices ? 'Refreshing…' : 'Refresh'}
+        </Button>
+      </div>
+
       <Card className="mb-4 p-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Select value={filters.status} onChange={set('status')} options={STATUS_OPTIONS} />
@@ -269,48 +292,11 @@ export default function Smartphones() {
             const expanded = expandedDeviceId === s.id;
             return (
               <Card key={s.id} data-device-id={s.id} className="p-4" style={{ position: 'relative' }}>
-                <div className="flex items-center justify-between">
-                  <span
-                    className="flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold"
-                    style={{
-                      background: s.online ? 'rgba(34,197,94,.14)' : 'var(--hover)',
-                      color: s.online ? '#22c55e' : 'var(--muted)',
-                    }}
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.online ? '#22c55e' : 'var(--muted)' }} />
-                    {s.online ? 'Online' : 'Offline'}
+                <div className="deviceTop">
+                  <span className={s.online ? 'online' : 'offline'}>
+                    <Smartphone size={19} />
                   </span>
-                  <div className="relative">
-                    <button
-                      onClick={() => setRowMenuId(rowMenuId === s.id ? null : s.id)}
-                      className="tf-hbtn"
-                      style={{ width: 30, height: 30 }}
-                      aria-label="Device actions"
-                    >
-                      <IconDots className="h-4 w-4" />
-                    </button>
-                    {rowMenuId === s.id && (
-                      <div
-                        className="absolute right-0 z-10 mt-1 w-36 rounded-lg py-1"
-                        style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
-                      >
-                        <button
-                          onClick={() => startRename(s)}
-                          className="tf-row-hover flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs"
-                          style={{ color: 'var(--text)' }}
-                        >
-                          <IconEdit className="h-3.5 w-3.5" /> Rename
-                        </button>
-                        <button
-                          onClick={() => removeDevice(s)}
-                          className="tf-row-hover flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs"
-                          style={{ color: '#ef4444' }}
-                        >
-                          <IconTrash className="h-3.5 w-3.5" /> Delete
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <Badge color={s.online ? 'green' : 'gray'}>{s.online ? 'Online' : 'Offline'}</Badge>
                 </div>
 
                 <div className="mt-3">
@@ -341,32 +327,26 @@ export default function Smartphones() {
                       </button>
                     </div>
                   ) : (
-                    <h3 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 15, margin: 0 }}>{s.deviceName || 'Unnamed device'}</h3>
+                    <h3 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 15, margin: '14px 0 4px' }}>{s.deviceName || 'Unnamed device'}</h3>
                   )}
-                  <p style={{ color: 'var(--muted)', fontSize: 12, margin: '3px 0 0' }}>{s.deviceModel || '—'}</p>
+                  <p style={{ color: 'var(--muted)', fontSize: 10, margin: 0 }}>{s.deviceModel || s.licenseKey || '—'}</p>
                 </div>
 
-                <div className="mt-3">
-                  <Badge color="gray">{s.licenseKey || '—'}</Badge>
-                </div>
-
-                <div className="mt-3 grid grid-cols-2 overflow-hidden" style={{ borderRadius: 10, border: '1px solid var(--cardborder)' }}>
-                  <div className="p-2.5" style={{ borderRight: '1px solid var(--cardborder)' }}>
-                    <p style={{ color: 'var(--muted)', fontSize: 10, margin: 0 }}>Last seen</p>
-                    <p style={{ color: 'var(--text)', fontSize: 12, fontWeight: 600, margin: '3px 0 0' }}>
-                      {s.lastSeen ? new Date(s.lastSeen).toLocaleString() : 'Never'}
-                    </p>
+                <div className="deviceStats">
+                  <div>
+                    <small>Last heartbeat</small>
+                    <strong title={s.lastSeen ? new Date(s.lastSeen).toLocaleString() : undefined}>{heartbeatAgo(s.lastSeen)}</strong>
                   </div>
-                  <div className="relative p-2.5">
-                    <p style={{ color: 'var(--muted)', fontSize: 10, margin: 0 }}>Linked details</p>
+                  <div style={{ position: 'relative' }}>
+                    <small>Linked details</small>
                     {linked.length === 0 ? (
-                      <p style={{ color: 'var(--text)', fontSize: 12, fontWeight: 600, margin: '3px 0 0' }}>—</p>
+                      <strong>—</strong>
                     ) : (
                       <button
                         onClick={() => setExpandedDeviceId(expanded ? null : s.id)}
-                        style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 700, margin: '3px 0 0', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+                        style={{ color: 'var(--accent)', fontSize: 11, fontWeight: 700, marginTop: 4, background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
                       >
-                        {linked.length} account{linked.length === 1 ? '' : 's'}
+                        {linked.length}
                       </button>
                     )}
                     {expanded && (
@@ -382,6 +362,15 @@ export default function Smartphones() {
                       </div>
                     )}
                   </div>
+                  <div>
+                    <small>License</small>
+                    <strong>{s.licenseKey || '—'}</strong>
+                  </div>
+                </div>
+
+                <div className="deviceActions">
+                  <button onClick={() => startRename(s)}>Rename</button>
+                  <button className="danger" onClick={() => removeDevice(s)}>Delete</button>
                 </div>
               </Card>
             );
