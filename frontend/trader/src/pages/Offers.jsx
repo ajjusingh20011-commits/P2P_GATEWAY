@@ -2118,6 +2118,43 @@ export default function Offers() {
         }
       />
 
+      {/* Real 5-tile summary strip — every figure derived from `details`/
+          `ngoAccounts` below, nothing fabricated (matches the design's
+          paymentSummaryCards row; "Manual accounts" has no real backend
+          concept here so it's replaced with a real "Needs attention" count). */}
+      <div className="tf-summary5">
+        <div>
+          <span className="tf-summary5-icon"><Layers3 size={18} /></span>
+          <small>Total UPI accounts</small>
+          <strong>{details.length + ngoAccounts.length}</strong>
+          <em>All connected accounts</em>
+        </div>
+        <div>
+          <span className="tf-summary5-icon" style={{ background: 'rgba(34,197,94,.14)', color: '#22c55e' }}><Wifi size={18} /></span>
+          <small>Live pool</small>
+          <strong>{details.filter((d) => d.is_active && d.is_active_detail !== false).length + ngoAccounts.filter((a) => a.status === 'live').length}</strong>
+          <em>Currently receiving orders</em>
+        </div>
+        <div>
+          <span className="tf-summary5-icon" style={{ background: 'rgba(34,197,94,.14)', color: '#22c55e' }}><IconRobot className="h-[18px] w-[18px]" /></span>
+          <small>APK connected</small>
+          <strong>{details.filter((d) => connType(d) === 'apk' && d.ngo_device_id).length}</strong>
+          <em>Paired to a smartphone</em>
+        </div>
+        <div>
+          <span className="tf-summary5-icon" style={{ background: 'rgba(59,130,246,.14)', color: '#3b82f6' }}><IconGlobe className="h-[18px] w-[18px]" /></span>
+          <small>Web login accounts</small>
+          <strong>{ngoAccounts.length}</strong>
+          <em>Provider sessions</em>
+        </div>
+        <div>
+          <span className="tf-summary5-icon" style={{ background: 'rgba(245,158,11,.14)', color: '#f59e0b' }}><IconWarning className="h-[18px] w-[18px]" /></span>
+          <small>Needs attention</small>
+          <strong>{details.filter(notLinked).length + ngoAccounts.filter((a) => a.status === 'failed' || (a.status === 'paused' && a.statusReason === 'otp_required')).length}</strong>
+          <em>Unlinked, failed or waiting for OTP</em>
+        </div>
+      </div>
+
       {loading ? (
         <p className="py-16 text-center text-sm" style={{ color: 'var(--muted)' }}>Loading…</p>
       ) : (
