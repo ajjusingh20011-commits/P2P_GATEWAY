@@ -10,38 +10,40 @@
    Applied via a data-theme attribute on the panel root (AdminLayout).
    ========================================================================== */
 .tf-scope {
-  --bg: #f4f6f8;
+  --bg: #f6f7fb;
   --card: #ffffff;
   --sidebar: #ffffff;
-  --cardborder: rgba(0, 0, 0, 0.04);
-  --text: #1e293b;
-  --muted: #94a3b8;
-  --shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
-  --hover: rgba(0, 0, 0, 0.03);
+  --cardborder: #e4e7ec;
+  --text: #101828;
+  --muted: #667085;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px rgba(16, 24, 40, 0.04);
+  --hover: rgba(16, 24, 40, 0.03);
   --headbar: #ffffff;
-  --accent: #ef4444;
-  --input-bg: rgba(0, 0, 0, 0.03);
-  --input-border: rgba(0, 0, 0, 0.08);
+  --accent: #e5484d;
+  --accent-soft: rgba(229, 72, 77, 0.1);
+  --input-bg: #ffffff;
+  --input-border: #e4e7ec;
 
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
   transition: background-color 0.3s, color 0.3s;
 }
 
 .tf-scope[data-theme="dark"] {
-  --bg: #0f172a;
-  --card: #1e293b;
-  --sidebar: #0b1220;
-  --cardborder: rgba(255, 255, 255, 0.06);
-  --text: #f1f5f9;
-  --muted: #94a3b8;
-  --shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  --bg: #0c111d;
+  --card: #111827;
+  --sidebar: #111827;
+  --cardborder: #293242;
+  --text: #f9fafb;
+  --muted: #98a2b3;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
   --hover: rgba(255, 255, 255, 0.05);
-  --headbar: #0b1220;
-  --accent: #ef4444;
-  --input-bg: rgba(255, 255, 255, 0.05);
-  --input-border: rgba(255, 255, 255, 0.1);
+  --headbar: #111827;
+  --accent: #fb7185;
+  --accent-soft: rgba(251, 113, 133, 0.16);
+  --input-bg: #182230;
+  --input-border: #293242;
 }
 
 /* Card surface */
@@ -82,8 +84,8 @@
   color: var(--text);
 }
 .tf-nav.active {
-  background: rgba(239, 68, 68, 0.11);
-  color: #ef4444;
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 600;
 }
 
@@ -119,6 +121,9 @@
   .tf-badge { animation: none; }
 }
 
+/* Token-aware row hover for hand-rolled <table> bodies. */
+.tf-row-hover:hover { background: var(--hover); }
+
 /* Thin subtle scrollbar */
 .tf-scroll {
   scrollbar-width: thin;
@@ -130,6 +135,22 @@
   border-radius: 99px;
 }
 .tf-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* Mobile sidebar — below 900px the sidebar becomes an off-canvas drawer
+   instead of a permanent column; the header's collapse button toggles it
+   open instead of the desktop width-collapse. */
+@media (max-width: 900px) {
+  .tf-sidebar {
+    position: fixed; top: 0; left: 0; height: 100vh; z-index: 40;
+    transform: translateX(-100%); transition: transform .25s ease;
+    width: 216px !important;
+  }
+  .tf-sidebar.tf-sidebar-mobile-open { transform: translateX(0); }
+}
+@media (max-width: 650px) {
+  .tf-header-search, .tf-online-pill { display: none; }
+}
+.tf-mobile-backdrop { position: fixed; inset: 0; background: rgba(16,24,40,.45); z-index: 35; }
 
 /* Tooltip (parity with trader; available if needed) */
 .tf-tip { position: relative; }
