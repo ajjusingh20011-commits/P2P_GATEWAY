@@ -9,7 +9,7 @@ import { IconSearch, IconChevron, IconClose } from './icons';
 
 /* Named accent (legacy) or hex string → hex. */
 const ACCENT_HEX = {
-  red: '#ef4444',
+  red: '#e5484d',
   rose: '#f43f5e',
   emerald: '#22c55e',
   green: '#22c55e',
@@ -191,7 +191,7 @@ export function Tabs({ tabs, active, onChange }) {
             {t.count != null && (
               <span
                 className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-                style={isActive ? { background: hexA('#ef4444', 0.18), color: '#ef4444' } : { background: 'var(--hover)', color: 'var(--text)' }}
+                style={isActive ? { background: 'var(--accent-soft)', color: 'var(--accent)' } : { background: 'var(--hover)', color: 'var(--text)' }}
               >
                 {t.count}
               </span>
@@ -312,6 +312,19 @@ export function InlineLoader({ label = 'Loading…', className = '' }) {
       </svg>
       {label}
     </span>
+  );
+}
+
+/** Pill-style segmented control (metric/range toggles on Dashboard's chart). */
+export function Segments({ options, value, onChange }) {
+  return (
+    <div className="tf-segments">
+      {options.map((o) => (
+        <button key={o.value} type="button" className={value === o.value ? 'active' : ''} onClick={() => onChange(o.value)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
