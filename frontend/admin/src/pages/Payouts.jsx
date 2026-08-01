@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Card, Badge, Button, Tabs, PageHeader } from '../components/ui';
+import { Download } from 'lucide-react';
+import { Card, Badge, Button, SearchInput, Select, Tabs, PageHeader, Modal, Field, InlineLoader } from '../components/ui';
+import AdminIdPopover from '../components/AdminIdPopover';
+import ConfirmModal from '../components/ConfirmModal';
 import { adminApi } from '../services/api';
 import { inr } from '../utils/mock';
 
 /*
   Admin Payouts — manage the merchant Payout-Request ("Buy USDT") system.
-  Six tabs mirror the status flow. The admin can approve an AWAITING_SETTLEMENT
-  request (credits the trader USDT), reject, or resolve a dispute. All money +
-  transition rules are enforced by the backend; this page just calls them.
+  Real 6-status enum (payoutRequest.model.js), not the design's fictional
+  10-state list. Tabs stay the primary navigation (each tab is its own real
+  server-side fetch, matching how the backend actually scopes this list)
+  rather than a client-side "All" filter over unpaginated data.
 */
 
 const TABS = [
@@ -27,6 +31,19 @@ const fmtDate = (v) => {
   const p = (n) => String(n).padStart(2, '0');
   return `${p(d.getHours())}:${p(d.getMinutes())} · ${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`;
 };
+const fmtDateTime = (v) => (v ? new Date(v).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit' }) : '—');
+
+// Real action -> confirm-dialog copy. Reject's outcome genuinely differs by
+// current status (payoutService.reject): from awaiting_processing it
+// cancels; from awaiting_settlement it routes to Dispute for review, since
+// a payout that already reached settlement can't just be silently voided.
+const ACTION_COPY = {
+  approve: { title: 'Approve this payout?', tone: 'primary', label: 'Approve & settle', desc: (r) => `${short(r.uuid, r.id)} will be settled and ${inr(r.amount_inr)} debited from the assigned trader's balance. This cannot be undone.` },
+  rejectProcessing: { title: 'Reject this payout?', tone: 'danger', label: 'Reject', desc: (r) => `${short(r.uuid, r.id)} will be marked Canceled and the merchant notified.` },
+  rejectSettlement: { title: 'Reject this payout?', tone: 'danger', label: 'Reject', desc: (r) => `${short(r.uuid, r.id)} will move to Dispute for review — an already-processing payout can't be silently canceled.` },
+  settle: { title: 'Settle this disputed payout?', tone: 'primary', label: 'Settle', desc: (r) => `${short(r.uuid, r.id)} will be settled and ${inr(r.amount_inr)} debited from the assigned trader's balance. This cannot be undone.` },
+  void: { title: 'Void this disputed payout?', tone: 'danger', label: 'Void', desc: (r) => `${short(r.uuid, r.id)} will be marked Canceled with no funds moved.` },
+};
 
 export default function Payouts() {
   const [tab, setTab] = useState('awaiting_settlement');
@@ -35,6 +52,10 @@ export default function Payouts() {
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
+  const [q, setQ] = useState('');
+  const [merchantFilter, setMerchantFilter] = useState('All');
+  const [viewing, setViewing] = useState(null);
+  const [confirming, setConfirming] = useState(null); // { row, actionKey }
 
   const load = useCallback(async (status) => {
     setLoading(true);
@@ -53,7 +74,6 @@ export default function Payouts() {
 
   useEffect(() => { load(tab); }, [tab, load]);
 
-  // Refresh when a payout socket event is re-broadcast by the admin useSocket.
   useEffect(() => {
     const onUpdate = () => load(tab);
     window.addEventListener('order:update', onUpdate);
@@ -70,20 +90,98 @@ export default function Payouts() {
       setError(e.response?.data?.message || 'Action failed.');
     } finally {
       setBusyId(null);
+      setConfirming(null);
+      setViewing(null);
     }
+  };
+
+  const runConfirmed = () => {
+    if (!confirming) return;
+    const { row, actionKey } = confirming;
+    if (actionKey === 'approve') act(() => adminApi.approvePayoutRequest(row.id), row.id);
+    else if (actionKey === 'rejectProcessing' || actionKey === 'rejectSettlement') act(() => adminApi.rejectPayoutRequest(row.id, 'Rejected by admin'), row.id);
+    else if (actionKey === 'settle') act(() => adminApi.resolvePayoutDispute(row.id, { action: 'settle' }), row.id);
+    else if (actionKey === 'void') act(() => adminApi.resolvePayoutDispute(row.id, { action: 'void' }), row.id);
+  };
+
+  const merchantOptions = useMemo(() => {
+    const names = Array.from(new Set(rows.map((r) => r.merchant?.business_name).filter(Boolean)));
+    return ['All', ...names];
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (merchantFilter !== 'All' && r.merchant?.business_name !== merchantFilter) return false;
+      if (query) {
+        const hay = `${r.uuid || r.id} ${r.merchant?.business_name || ''} ${r.recipient_name || ''}`.toLowerCase();
+        if (!hay.includes(query)) return false;
+      }
+      return true;
+    });
+  }, [rows, merchantFilter, q]);
+
+  const exportCsv = () => {
+    const header = ['ID', 'Merchant', 'Recipient', 'Amount', 'Trader', 'Status', 'Updated'];
+    const data = filteredRows.map((r) => [short(r.uuid, r.id), r.merchant?.business_name || '', r.recipient_name || '', r.amount_inr, r.assigned_trader_id || '', r.status, r.updated_at || '']);
+    const csv = [header, ...data].map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `admin-payouts-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const tabs = TABS.map((t) => ({ key: t.key, label: t.label, count: counts[t.key] || 0 }));
   const meta = useMemo(() => TABS.find((t) => t.key === tab), [tab]);
   const showRate = ['in_processing', 'awaiting_settlement', 'settlement_completed', 'dispute'].includes(tab);
 
+  const rowActions = (r, size = 'sm') => {
+    if (tab === 'awaiting_settlement') {
+      return (
+        <>
+          <Button size={size} variant="success" disabled={busyId === r.id} onClick={() => setConfirming({ row: r, actionKey: 'approve' })}>Approve &amp; settle</Button>
+          <Button size={size} variant="ghost" disabled={busyId === r.id} onClick={() => setConfirming({ row: r, actionKey: 'rejectSettlement' })}>Reject</Button>
+        </>
+      );
+    }
+    if (tab === 'awaiting_processing') {
+      return <Button size={size} variant="ghost" disabled={busyId === r.id} onClick={() => setConfirming({ row: r, actionKey: 'rejectProcessing' })}>Reject</Button>;
+    }
+    if (tab === 'dispute') {
+      return (
+        <>
+          <Button size={size} variant="success" disabled={busyId === r.id} onClick={() => setConfirming({ row: r, actionKey: 'settle' })}>Settle</Button>
+          <Button size={size} variant="ghost" disabled={busyId === r.id} onClick={() => setConfirming({ row: r, actionKey: 'void' })}>Void</Button>
+        </>
+      );
+    }
+    return <Badge color={meta.color}>{meta.label}</Badge>;
+  };
+
   return (
     <div>
-      <PageHeader title="Payouts" subtitle="Merchant payout requests — settle, reject, and resolve disputes" />
+      <PageHeader
+        title="Payout"
+        subtitle="Approve, settle, reject, and resolve merchant payout disputes"
+        actions={
+          <>
+            {loading && <InlineLoader />}
+            <Button variant="ghost" size="sm" onClick={exportCsv}><Download size={14} className="mr-1" />Export</Button>
+          </>
+        }
+      />
 
       {error && (
         <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 12, background: 'rgba(239,68,68,.1)', color: '#ef4444', fontSize: 13 }}>{error}</div>
       )}
+
+      <Card className="mb-4 flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+        <SearchInput value={q} onChange={setQ} placeholder="Search by ID, merchant, recipient…" className="sm:max-w-xs" />
+        <Select value={merchantFilter} onChange={setMerchantFilter} options={merchantOptions.map((m) => ({ value: m, label: m }))} className="sm:w-56" />
+      </Card>
 
       <Card>
         <div className="px-4 pt-2">
@@ -93,8 +191,9 @@ export default function Payouts() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs uppercase tracking-wide" style={{ color: 'var(--muted)', borderBottom: '1px solid var(--cardborder)' }}>
-                <th className="px-4 py-3 font-medium">ID</th>
+                <th className="w-10 px-4 py-3" />
                 <th className="px-4 py-3 font-medium">Merchant</th>
+                <th className="px-4 py-3 font-medium">Recipient</th>
                 <th className="px-4 py-3 font-medium">Trader</th>
                 <th className="px-4 py-3 font-medium">Amount</th>
                 {showRate && <th className="px-4 py-3 font-medium">Rate (base → payout)</th>}
@@ -105,10 +204,18 @@ export default function Payouts() {
               </tr>
             </thead>
             <tbody style={{ color: 'var(--text)' }}>
-              {rows.map((r) => (
-                <tr key={r.id} style={{ borderBottom: '1px solid var(--cardborder)' }}>
-                  <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>{short(r.uuid, r.id)}</td>
+              {filteredRows.map((r) => (
+                <tr key={r.id} className="tf-row-hover cursor-pointer" style={{ borderTop: '1px solid var(--cardborder)' }} onClick={() => setViewing(r)}>
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <AdminIdPopover
+                      rows={[
+                        { label: 'Payout ID', value: r.id },
+                        { label: 'UUID', value: r.uuid },
+                      ]}
+                    />
+                  </td>
                   <td className="px-4 py-3">{r.merchant?.business_name || `#${r.merchant_id}`}</td>
+                  <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{r.recipient_name || '—'}</td>
                   <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{r.assigned_trader_id ? `#${r.assigned_trader_id}` : '—'}</td>
                   <td className="px-4 py-3 font-medium">{inr(r.amount_inr)}</td>
                   {showRate && (
@@ -121,40 +228,74 @@ export default function Payouts() {
                   {showRate && <td className="px-4 py-3 font-semibold" style={{ color: '#22c55e' }}>{r.trader_credit_usdt ? `${r.trader_credit_usdt} USDT` : '—'}</td>}
                   {tab === 'dispute' && <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)', maxWidth: 200 }}>{r.dispute_reason || '—'}</td>}
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--muted)' }}>{fmtDate(r.updated_at || r.created_at)}</td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex justify-end gap-2">
-                      {tab === 'awaiting_settlement' && (
-                        <>
-                          <Button size="sm" variant="success" disabled={busyId === r.id} onClick={() => act(() => adminApi.approvePayoutRequest(r.id), r.id)}>Approve &amp; settle</Button>
-                          <Button size="sm" variant="ghost" disabled={busyId === r.id} onClick={() => act(() => adminApi.rejectPayoutRequest(r.id, 'Rejected by admin'), r.id)}>Reject</Button>
-                        </>
-                      )}
-                      {tab === 'awaiting_processing' && (
-                        <Button size="sm" variant="ghost" disabled={busyId === r.id} onClick={() => act(() => adminApi.rejectPayoutRequest(r.id, 'Rejected by admin'), r.id)}>Reject</Button>
-                      )}
-                      {tab === 'dispute' && (
-                        <>
-                          <Button size="sm" variant="success" disabled={busyId === r.id} onClick={() => act(() => adminApi.resolvePayoutDispute(r.id, { action: 'settle' }), r.id)}>Settle</Button>
-                          <Button size="sm" variant="ghost" disabled={busyId === r.id} onClick={() => act(() => adminApi.resolvePayoutDispute(r.id, { action: 'void' }), r.id)}>Void</Button>
-                        </>
-                      )}
-                      {!['awaiting_settlement', 'awaiting_processing', 'dispute'].includes(tab) && (
-                        <Badge color={meta.color}>{meta.label}</Badge>
-                      )}
-                    </div>
+                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-2">{rowActions(r)}</div>
                   </td>
                 </tr>
               ))}
-              {!loading && rows.length === 0 && (
-                <tr><td colSpan={9} className="py-10 text-center text-sm" style={{ color: 'var(--muted)' }}>No requests in “{meta.label}”.</td></tr>
+              {!loading && filteredRows.length === 0 && (
+                <tr><td colSpan={9} className="py-14 text-center text-sm" style={{ color: 'var(--muted)' }}>No requests in "{meta.label}".</td></tr>
               )}
-              {loading && rows.length === 0 && (
-                <tr><td colSpan={9} className="py-10 text-center text-sm" style={{ color: 'var(--muted)' }}>Loading…</td></tr>
+              {loading && filteredRows.length === 0 && (
+                <tr><td colSpan={9} className="py-14 text-center text-sm" style={{ color: 'var(--muted)' }}>Loading…</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </Card>
+
+      {/* Detail modal — real Lifecycle from actual timestamp columns. */}
+      <Modal
+        open={!!viewing}
+        onClose={() => setViewing(null)}
+        title={viewing ? `Payout ${short(viewing.uuid, viewing.id)}` : ''}
+        subtitle={viewing ? `${viewing.merchant?.business_name || '—'} · ${viewing.recipient_name || '—'}` : ''}
+        size="lg"
+        footer={
+          viewing ? (
+            <div className="flex w-full flex-wrap justify-end gap-2">{rowActions(viewing)}</div>
+          ) : null
+        }
+      >
+        {viewing && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <Field label="Amount">{inr(viewing.amount_inr)}</Field>
+              <Field label="Method">{viewing.payment_method || '—'}</Field>
+              <Field label="Recipient" mono>{viewing.recipient_name || '—'}</Field>
+              <Field label="Account" mono>{viewing.account_number || viewing.upi_id || '—'}</Field>
+              <Field label="IFSC" mono>{viewing.ifsc_code || '—'}</Field>
+              <Field label="Trader">{viewing.assigned_trader_id ? `#${viewing.assigned_trader_id}` : 'Unassigned'}</Field>
+              <Field label="Status"><Badge color={TABS.find((t) => t.key === viewing.status)?.color || 'gray'}>{TABS.find((t) => t.key === viewing.status)?.label || viewing.status}</Badge></Field>
+              {viewing.trader_credit_usdt && <Field label="Trader credit">{viewing.trader_credit_usdt} USDT</Field>}
+              {viewing.dispute_reason && <Field label="Dispute reason">{viewing.dispute_reason}</Field>}
+            </div>
+
+            <div>
+              <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted)', margin: '0 0 10px' }}>Lifecycle</h3>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                <Field label="Requested">{fmtDateTime(viewing.created_at)}</Field>
+                <Field label="Accepted by trader">{fmtDateTime(viewing.accepted_at)}</Field>
+                <Field label="Transferred">{fmtDateTime(viewing.transferred_at)}</Field>
+                <Field label="Settled">{fmtDateTime(viewing.settled_at)}</Field>
+                <Field label="Disputed">{fmtDateTime(viewing.disputed_at)}</Field>
+                <Field label="Canceled">{fmtDateTime(viewing.canceled_at)}</Field>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <ConfirmModal
+        open={!!confirming}
+        title={confirming ? ACTION_COPY[confirming.actionKey].title : ''}
+        description={confirming ? ACTION_COPY[confirming.actionKey].desc(confirming.row) : ''}
+        tone={confirming ? ACTION_COPY[confirming.actionKey].tone : 'primary'}
+        confirmLabel={confirming ? ACTION_COPY[confirming.actionKey].label : 'Confirm'}
+        busy={busyId != null}
+        onConfirm={runConfirmed}
+        onClose={() => setConfirming(null)}
+      />
     </div>
   );
 }
