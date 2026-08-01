@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { Button } from '../components/ui.jsx';
 
 export default function Admin() {
   const navigate = useNavigate();
   const { login } = useAuth();
+  const [theme] = useState(() => localStorage.getItem('panel-theme') || 'light');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -26,28 +28,41 @@ export default function Admin() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-950 px-4">
+    <div
+      className="tf-scope flex min-h-screen items-center justify-center px-4"
+      data-theme={theme}
+      style={{ background: 'var(--bg)' }}
+    >
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-red-600 text-lg font-bold text-white">
-            P2P
+          <div
+            className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold text-white"
+            style={{ background: 'linear-gradient(145deg,#f4626a,#c62f35)', boxShadow: '0 7px 20px rgba(229,72,77,.24)' }}
+          >
+            M
           </div>
-          <h1 className="text-2xl font-semibold text-white">Admin Console</h1>
-          <p className="mt-1 text-sm text-gray-400">Restricted access — administrators only</p>
+          <h1 className="text-2xl font-semibold" style={{ color: 'var(--text)' }}>
+            MaxPay Admin
+          </h1>
+          <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
+            Restricted access — administrators only
+          </p>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-5 rounded-2xl border border-gray-800 bg-gray-900 p-8 shadow-xl"
-        >
+        <form onSubmit={handleSubmit} className="tf-card space-y-5 p-8">
           {error && (
-            <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2.5 text-sm text-red-400">
+            <div
+              className="rounded-lg border px-4 py-2.5 text-sm"
+              style={{ borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+            >
               {error}
             </div>
           )}
 
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-300">Email</label>
+            <label className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--text)' }}>
+              Email
+            </label>
             <input
               type="email"
               autoComplete="email"
@@ -55,12 +70,15 @@ export default function Admin() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3.5 py-2.5 text-gray-100 placeholder-gray-500 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+              style={{ background: 'var(--input-bg)', borderColor: 'var(--input-border)', color: 'var(--text)' }}
+              className="w-full rounded-lg border px-3.5 py-2.5 outline-none focus:ring-1"
             />
           </div>
 
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-300">Password</label>
+            <label className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--text)' }}>
+              Password
+            </label>
             <div className="relative">
               <input
                 type={showPassword ? 'text' : 'password'}
@@ -69,23 +87,21 @@ export default function Admin() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter your password"
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3.5 py-2.5 pr-16 text-gray-100 placeholder-gray-500 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                style={{ background: 'var(--input-bg)', borderColor: 'var(--input-border)', color: 'var(--text)' }}
+                className="w-full rounded-lg border px-3.5 py-2.5 pr-16 outline-none focus:ring-1"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
-                className="absolute inset-y-0 right-0 px-3 text-xs font-medium text-gray-400 hover:text-gray-200"
+                className="absolute inset-y-0 right-0 px-3 text-xs font-medium hover:opacity-80"
+                style={{ color: 'var(--muted)' }}
               >
                 {showPassword ? 'Hide' : 'Show'}
               </button>
             </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex w-full items-center justify-center rounded-lg bg-red-600 px-4 py-2.5 font-medium text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60"
-          >
+          <Button type="submit" disabled={loading} className="w-full">
             {loading ? (
               <>
                 <svg className="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -97,15 +113,18 @@ export default function Admin() {
             ) : (
               'Sign in'
             )}
-          </button>
+          </Button>
         </form>
 
-        <div className="mt-4 rounded-lg border border-gray-800 bg-gray-900/60 px-4 py-3 text-center text-xs text-gray-500">
+        <div
+          className="mt-4 rounded-lg border px-4 py-3 text-center text-xs"
+          style={{ borderColor: 'var(--cardborder)', background: 'var(--hover)', color: 'var(--muted)' }}
+        >
           Demo mode · any email &amp; password signs you in as admin
         </div>
 
-        <p className="mt-6 text-center text-xs text-gray-600">
-          P2P UPI Payment Gateway · Admin Console
+        <p className="mt-6 text-center text-xs" style={{ color: 'var(--subtle, var(--muted))' }}>
+          P2P UPI Payment Gateway · MaxPay Admin
         </p>
       </div>
     </div>
