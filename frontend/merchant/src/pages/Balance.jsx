@@ -12,17 +12,22 @@ export default function Balance() {
 
   const { data: bal, loading } = useApi(
     () => merchantApi.balance().then((res) => res.data.data),
-    { fallback: { balance: stats.balanceUsdt, pending_inr: 84200 } }
+    { fallback: { balance_usdt: stats.balanceUsdt, pending_inr: 0 } }
   );
+  // Same real field the sidebar (MerchantLayout.jsx) and Dashboard already
+  // read — `balance` is a separate, unused legacy column on the Merchant
+  // model. Reading it here instead of balance_usdt was a real bug: this
+  // page's headline balance could silently disagree with the sidebar's.
+  const availableUsdt = bal.balance_usdt ?? bal.balance ?? stats.balanceUsdt;
 
+  // No merchant withdrawal-request endpoint exists in the backend yet
+  // (confirmed: not present in merchantRoutes.js). This used to fake a
+  // setTimeout "success" with no backend call at all — replaced with an
+  // honest, clearly-labeled preview state instead, per the rule against
+  // showing fake server success for balance adjustments.
   const submit = () => {
     if (!Number(amount)) return;
     setRequested(true);
-    setTimeout(() => {
-      setShowWithdraw(false);
-      setRequested(false);
-      setAmount('');
-    }, 1200);
   };
 
   return (
@@ -34,37 +39,37 @@ export default function Balance() {
       />
 
       <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="bg-gradient-to-br from-indigo-600/20 to-gray-900 p-6 lg:col-span-1">
-          <div className="flex items-center gap-2 text-indigo-300">
+        <Card className="p-6" style={{ background: 'linear-gradient(145deg, #22c55e, var(--accent))', border: 'none' }}>
+          <div className="flex items-center gap-2 text-sm" style={{ color: 'rgba(255,255,255,0.85)' }}>
             <IconBalance className="h-5 w-5" />
-            <span className="text-sm">Available Balance</span>
+            <span>Available Settlement Balance</span>
           </div>
-          <p className="mt-3 text-3xl font-semibold text-white">{usdt(bal.balance ?? stats.balanceUsdt)}</p>
-          <p className="mt-1 text-sm text-gray-400">≈ {inr((bal.balance ?? stats.balanceUsdt) * 89)}</p>
-          <Button className="mt-4 w-full" onClick={() => setShowWithdraw(true)}>Withdraw funds</Button>
+          <p className="mt-3 text-3xl font-semibold text-white">{usdt(availableUsdt)}</p>
+          <Button className="mt-4 w-full" variant="ghost" onClick={() => setShowWithdraw(true)} style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)' }}>Withdraw funds</Button>
         </Card>
 
         <Card className="p-6">
-          <p className="text-sm text-gray-400">This month settled</p>
-          <p className="mt-2 text-2xl font-semibold text-white">{inr(stats.monthlyVolumeInr)}</p>
-          <p className="mt-1 text-xs text-emerald-400">▲ 9.2% vs last month</p>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>Pending settlement</p>
+          <p className="mt-2 text-2xl font-semibold" style={{ color: 'var(--text)' }}>{inr(bal.pending_inr ?? 0)}</p>
+          <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>From orders under review or claimed paid</p>
         </Card>
 
         <Card className="p-6">
-          <p className="text-sm text-gray-400">Pending settlement</p>
-          <p className="mt-2 text-2xl font-semibold text-white">{inr(bal.pending_inr ?? 84200)}</p>
-          <p className="mt-1 text-xs text-gray-500">Next settlement in ~6h</p>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>This month settled <span style={{ fontSize: 10, textTransform: 'uppercase', opacity: 0.7 }}>(preview)</span></p>
+          <p className="mt-2 text-2xl font-semibold" style={{ color: 'var(--text)' }}>{inr(stats.monthlyVolumeInr)}</p>
+          <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>No real settlement-history endpoint yet</p>
         </Card>
       </div>
 
       <Card>
-        <div className="border-b border-gray-800 p-4">
-          <h2 className="font-semibold text-white">Settlement History</h2>
+        <div className="flex items-center justify-between p-4" style={{ borderBottom: '1px solid var(--cardborder)' }}>
+          <h2 className="font-semibold" style={{ color: 'var(--text)' }}>Settlement History</h2>
+          <Badge color="gray">Preview data</Badge>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-800 text-left text-xs uppercase tracking-wide text-gray-500">
+              <tr className="text-left text-xs uppercase tracking-wide" style={{ borderBottom: '1px solid var(--cardborder)', color: 'var(--muted)' }}>
                 <th className="px-4 py-3 font-medium">Settlement ID</th>
                 <th className="px-4 py-3 font-medium">Date</th>
                 <th className="px-4 py-3 font-medium">Gross</th>
@@ -73,19 +78,19 @@ export default function Balance() {
                 <th className="px-4 py-3 font-medium">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-800">
+            <tbody>
               {settlements.map((s) => (
-                <tr key={s.id} className="text-gray-200 hover:bg-gray-800/40">
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400">{s.id}</td>
+                <tr key={s.id} className="tf-row-hover" style={{ color: 'var(--text)', borderTop: '1px solid var(--cardborder)' }}>
+                  <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>{s.id}</td>
                   <td className="px-4 py-3">{s.date}</td>
                   <td className="px-4 py-3">{inr(s.grossInr)}</td>
-                  <td className="px-4 py-3 text-gray-400">{inr(s.feeInr)}</td>
-                  <td className="px-4 py-3 font-medium text-emerald-400">{usdt(s.netUsdt)}</td>
+                  <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{inr(s.feeInr)}</td>
+                  <td className="px-4 py-3 font-medium" style={{ color: '#22c55e' }}>{usdt(s.netUsdt)}</td>
                   <td className="px-4 py-3"><Badge color={s.status === 'completed' ? 'green' : 'amber'}>{s.status}</Badge></td>
                 </tr>
               ))}
               {settlements.length === 0 && (
-                <tr><td colSpan={6} className="py-10 text-center text-sm text-gray-500">No data yet</td></tr>
+                <tr><td colSpan={6} className="py-10 text-center text-sm" style={{ color: 'var(--muted)' }}>No data yet</td></tr>
               )}
             </tbody>
           </table>
@@ -97,25 +102,30 @@ export default function Balance() {
         onClose={() => setShowWithdraw(false)}
         size="md"
         title="Request Withdrawal"
-        subtitle={`Available: ${usdt(bal.balance ?? stats.balanceUsdt)}`}
+        subtitle={`Available: ${usdt(availableUsdt)} · Preview — not yet connected to a live payout system`}
         footer={
-          requested ? null : (
+          requested ? (
+            <Button variant="ghost" onClick={() => setShowWithdraw(false)}>Close</Button>
+          ) : (
             <>
               <Button variant="ghost" onClick={() => setShowWithdraw(false)}>Cancel</Button>
-              <Button onClick={submit}>Submit request</Button>
+              <Button onClick={submit}>Preview request</Button>
             </>
           )
         }
       >
         {requested ? (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
-            ✓ Withdrawal request submitted. It will be processed at the next settlement window.
+          <div
+            className="rounded-lg border px-4 py-3 text-sm"
+            style={{ borderColor: 'var(--cardborder)', background: 'var(--hover)', color: 'var(--text)' }}
+          >
+            <strong>Preview only.</strong> Withdrawal requests aren't connected to a live payout system yet — nothing was submitted. Contact support for a manual withdrawal.
           </div>
         ) : (
           <div>
-            <label className="mb-1.5 block text-sm text-gray-400">Amount (USDT)</label>
-            <Input type="number" min="1" max={bal.balance ?? stats.balanceUsdt} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 1000" />
-            <p className="mt-2 text-xs text-gray-500">Funds are sent to your registered USDT (TRC20) wallet.</p>
+            <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Amount (USDT)</label>
+            <Input type="number" min="1" max={availableUsdt} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 1000" />
+            <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>Funds are sent to your registered USDT (TRC20) wallet.</p>
           </div>
         )}
       </Modal>
