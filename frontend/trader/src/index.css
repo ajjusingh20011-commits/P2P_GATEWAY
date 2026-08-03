@@ -319,10 +319,10 @@
 .deviceActions svg { margin-left: auto; color: var(--subtle); }
 
 /* Reference's .paymentSummaryCards — icon-left stat tile row (Payment Details page). */
-.tf-summary5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 18px; }
+.tf-summary5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 14px; }
 .tf-summary5 > div {
   background: var(--card); border: 1px solid var(--cardborder); border-radius: 13px; box-shadow: var(--shadow);
-  padding: 14px; display: grid; grid-template-columns: 38px 1fr; column-gap: 10px; align-items: center;
+  padding: 14px; display: grid; grid-template-columns: 40px 1fr; column-gap: 10px; align-items: center;
 }
 .tf-summary5 span.tf-summary5-icon {
   grid-row: 1 / 4; width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center;
