@@ -3,9 +3,9 @@ import { Layers3, Wifi } from 'lucide-react';
 import { Card, Badge, Button, Toggle, SearchInput, Select, PageHeader, Modal, BankBadge, LivenessBadge } from '../components/ui';
 import { LivePoolSection } from '../components/DashboardSections';
 import {
-  IconPlus, IconEdit, IconTrash, IconChevron, IconRobot, IconWarning, IconDots, IconDetails, IconLock, IconGlobe,
+  IconPlus, IconEdit, IconTrash, IconChevron, IconRobot, IconWarning, IconDots, IconLock, IconGlobe,
 } from '../components/icons';
-import { maskUpi, ACCOUNT_TYPES } from '../utils/mock';
+import { ACCOUNT_TYPES } from '../utils/mock';
 import { traderApi } from '../services/api';
 import { toast } from '../components/Toaster';
 import { useNavigate } from 'react-router-dom';
@@ -1027,7 +1027,7 @@ function EditModal({ detail, onClose, onSaved, onDeleted }) {
       onClose={onClose}
       headerRight={
         // NGO/web accounts do have a real delete endpoint, but it's exposed
-        // from the trash icon on their row in DetailsColumn instead of here
+        // from the trash icon on their row in AccountsColumn instead of here
         // — this modal's delete only covers trader-native details.
         !detail.__ngo && (
           <button onClick={remove} className="tf-hbtn" style={{ color: '#ef4444' }} aria-label="Delete">
@@ -1199,197 +1199,30 @@ const ngoStatusMeta = (status, statusReason) => {
 };
 
 // ---------------------------------------------------------------------------
-// LEFT column — Offers grouped by payment method
+// Accounts — provider-grouped, collapsible (matches MaxPayDesign's
+// "All payment accounts" inventory panel structurally: one list, grouped by
+// provider, bulk controls in the group header, individual controls inside
+// the expand). Folds what used to be two side-by-side columns (a coarse
+// "Offers" bulk-toggle view and a separate flat "Details" row list) into one
+// — the two were rendering the same `details` array twice. Every handler
+// below is unchanged from those two components, only relocated.
 // ---------------------------------------------------------------------------
-function OffersColumn({ details, onBulkToggle, onAdd, ngoAccounts = [], onToggleNGO, ngoToggleBusyId }) {
-  const [query, setQuery] = useState('');
-  const [menu, setMenu] = useState(null);
-
-  const groups = useMemo(() => {
-    const map = {};
-    for (const d of details) {
-      const t = d.account_type || 'other';
-      (map[t] = map[t] || []).push(d);
-    }
-    return Object.entries(map).map(([type, items]) => ({ type, items, meta: methodMeta(type) }));
-  }, [details]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return groups;
-    return groups.filter((g) => g.meta.label.toLowerCase().includes(q));
-  }, [groups, query]);
-
-  return (
-    <Card className="flex flex-col">
-      <div className="flex items-center justify-between p-4" style={{ borderBottom: '1px solid var(--cardborder)' }}>
-        <div className="flex items-center gap-2">
-          <h2 className="font-semibold" style={{ color: 'var(--text)' }}>Offers</h2>
-          <span style={{ color: 'var(--muted)' }} title="Payment methods you accept, grouped by provider.">
-            <IconDetails className="h-4 w-4" />
-          </span>
-        </div>
-        <button
-          onClick={() => onAdd(null)}
-          className="tf-hbtn"
-          style={{ width: 30, height: 30, border: '1px solid var(--cardborder)' }}
-          aria-label="Add offer"
-        >
-          <IconPlus className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="p-4">
-        <SearchInput value={query} onChange={setQuery} placeholder="Search offers…" />
-
-        <div className="mt-4 space-y-3">
-          {filtered.map((g) => {
-            const anyActive = g.items.some((d) => d.is_active_detail);
-            return (
-              <div key={g.type} className="rounded-lg p-3" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <BankBadge type={g.type} label={g.meta.label} size={36} />
-                    <div>
-                      <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{g.meta.label}</p>
-                      <p className="text-xs" style={{ color: 'var(--muted)' }}>INR · market rate</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Toggle checked={anyActive} onChange={(v) => onBulkToggle(g.items, v)} />
-                    <div className="relative">
-                      <button
-                        onClick={() => setMenu(menu === g.type ? null : g.type)}
-                        className="tf-hbtn"
-                        style={{ width: 28, height: 28 }}
-                        aria-label="Offer menu"
-                      >
-                        <IconDots className="h-4 w-4" />
-                      </button>
-                      {menu === g.type && (
-                        <div
-                          className="absolute right-0 z-10 mt-1 w-40 rounded-lg py-1"
-                          style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
-                        >
-                          <button
-                            onClick={() => { onBulkToggle(g.items, true); setMenu(null); }}
-                            className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"
-                            style={{ color: 'var(--text)' }}
-                          >
-                            Enable all details
-                          </button>
-                          <button
-                            onClick={() => { onBulkToggle(g.items, false); setMenu(null); }}
-                            className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"
-                            style={{ color: 'var(--text)' }}
-                          >
-                            Disable all details
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* connected payment details as tags + connection-type icon (bottom-right) */}
-                <div className="mt-3 flex items-end justify-between gap-2">
-                  <div className="flex flex-wrap gap-1.5">
-                    {g.items.map((d) => (
-                      <span
-                        key={d.id}
-                        className="rounded-md px-2 py-0.5 text-xs"
-                        style={
-                          d.is_active_detail
-                            ? { border: '1px solid rgba(34,197,94,.3)', background: 'rgba(34,197,94,.1)', color: '#22c55e' }
-                            : { border: '1px solid var(--cardborder)', background: 'var(--card)', color: 'var(--muted)' }
-                        }
-                      >
-                        {d.account_name || maskUpi(d.upi_id)}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <LimitBadge d={g.items.find((i) => configuredCaps(i).length > 0) || g.items[0] || {}} />
-                    <ConnTypeIcon
-                      type={g.items.some((i) => i.connectionType === 'web') ? 'web' : 'apk'}
-                      size={28}
-                    />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          {/* NGO accounts (from the NGO backend) rendered as offer cards */}
-          {ngoAccounts
-            .filter((a) => {
-              const q = query.trim().toLowerCase();
-              if (!q) return true;
-              return platformLabel(a.platform).toLowerCase().includes(q) || (a.displayName || '').toLowerCase().includes(q);
-            })
-            .map((a) => {
-              const live = a.status === 'live';
-              const meta = ngoStatusMeta(a.status, a.statusReason);
-              return (
-                <div key={`ngo-${a._id}`} className="rounded-lg p-3" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <BankBadge type={a.platform} label={platformLabel(a.platform)} size={36} />
-                      <div>
-                        <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{platformLabel(a.platform)}</p>
-                        <p className="text-xs" style={{ color: 'var(--muted)' }}>INR · NGO account</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span title={live ? undefined : 'Turning this on attempts to reconnect'}>
-                        <Toggle checked={live} disabled={ngoToggleBusyId === a._id} onChange={() => onToggleNGO(a)} />
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-end justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="rounded-md px-2 py-0.5 text-xs" style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', color: 'var(--text)' }}>
-                        {a.displayName}
-                      </span>
-                      <Badge color={meta.color}>{meta.label}</Badge>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <LimitBadge d={a} />
-                      <ConnTypeIcon type={a.connectionType === 'web' ? 'web' : 'apk'} size={28} />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-
-          {filtered.length === 0 && ngoAccounts.length === 0 && (
-            <p className="py-10 text-center text-sm" style={{ color: 'var(--muted)' }}>
-              {groups.length === 0 ? 'No offers yet — add a payment detail to create one.' : 'No offers match your search.'}
-            </p>
-          )}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// RIGHT column — Details grouped by bank
-// ---------------------------------------------------------------------------
-function DetailsColumn({
-  details, onToggle, onLink, onEdit, onAdd, ngoAccounts = [], onToggleNGO, onDeleteNGO,
-  onRetryNGO, otpValues, onOtpChange, onSubmitOtp, otpBusyId,
+function AccountsColumn({
+  details, onToggle, onBulkToggle, onLink, onEdit, onAdd,
+  ngoAccounts = [], onToggleNGO, onDeleteNGO, onRetryNGO,
+  otpValues, onOtpChange, onSubmitOtp, otpBusyId,
   linkBlocked = {}, linkChecking = null, onReconnect, ngoToggleBusyId,
   deviceLiveMap = {}, ngoAliveMap = {},
 }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all'); // all | active | inactive
   const [onlyUnlinked, setOnlyUnlinked] = useState(false);
+  const [expanded, setExpanded] = useState({});
+  const [menu, setMenu] = useState(null);
 
   const unlinkedCount = useMemo(() => details.filter(notLinked).length, [details]);
 
-  const filtered = useMemo(() => {
+  const filteredDetails = useMemo(() => {
     const q = query.trim().toLowerCase();
     return details.filter((d) => {
       if (filter === 'active' && !d.is_active_detail) return false;
@@ -1400,17 +1233,21 @@ function DetailsColumn({
     });
   }, [details, query, filter, onlyUnlinked]);
 
+  // Grouped by account_type — the same granularity as MaxPayDesign's
+  // provider groups (GPay/Paytm/Airtel...), not the finer bank_name the old
+  // Details column used.
   const groups = useMemo(() => {
     const map = {};
-    for (const d of filtered) {
-      const key = d.bank_name || d.organization_name || methodMeta(d.account_type).label;
-      (map[key] = map[key] || []).push(d);
+    for (const d of filteredDetails) {
+      const t = d.account_type || 'other';
+      (map[t] = map[t] || []).push(d);
     }
-    return Object.entries(map).map(([bank, items]) => ({ bank, items }));
-  }, [filtered]);
+    return Object.entries(map).map(([type, items]) => ({ key: `type-${type}`, type, items, meta: methodMeta(type) }));
+  }, [filteredDetails]);
 
-  // NGO accounts: apply the same search + active/inactive filter, then group by
-  // platform. The "unlinked-only" view is a trader concept, so it hides them.
+  // NGO accounts: same search + active/inactive filter, then group by
+  // platform. The "unlinked-only" view is a trader-detail concept, so it
+  // hides them entirely rather than showing a filter that can't apply.
   const ngoGroups = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = ngoAccounts.filter((a) => {
@@ -1420,15 +1257,241 @@ function DetailsColumn({
       if (!q) return true;
       return (a.displayName || '').toLowerCase().includes(q) || (a.upiId || '').toLowerCase().includes(q);
     });
-    return Object.entries(groupByPlatform(list));
+    return Object.entries(groupByPlatform(list)).map(([platform, items]) => ({ key: `ngo-${platform}`, platform, items }));
   }, [ngoAccounts, query, filter, onlyUnlinked]);
+
+  // Groups are OPEN by default (real traders have a handful of accounts, not
+  // MaxPayDesign's 230) — `expanded[key] === false` is the only closed state.
+  const isOpen = (key) => expanded[key] !== false;
+  const toggleOpen = (key) => setExpanded((x) => ({ ...x, [key]: !isOpen(key) }));
+
+  // A search/filter is active whenever it could hide a group's contents by
+  // leaving it collapsed. Force-open any group with a real match so a live
+  // search never silently hides results inside a closed card.
+  const filterActive = query.trim() !== '' || filter !== 'all' || onlyUnlinked;
+  useEffect(() => {
+    if (!filterActive) return;
+    setExpanded((cur) => {
+      let changed = false;
+      const next = { ...cur };
+      for (const g of groups) {
+        if (g.items.length > 0 && next[g.key] === false) { next[g.key] = true; changed = true; }
+      }
+      for (const g of ngoGroups) {
+        if (g.items.length > 0 && next[g.key] === false) { next[g.key] = true; changed = true; }
+      }
+      return changed ? next : cur;
+    });
+  }, [filterActive, groups, ngoGroups]);
+
+  const renderDetailRow = (d) => {
+    const dot = limitDot(d);
+    const exhausted = isExhausted(d);
+    const unlinked = notLinked(d);
+    const highlight = exhausted || unlinked;
+    const liveState = d.ngo_device_id ? (deviceLiveMap[d.ngo_device_id] ? 'active' : 'dead') : null;
+    return (
+      <div
+        key={d.id}
+        className="rounded-lg px-3 py-2.5"
+        style={highlight
+          ? { border: '1px solid rgba(245,158,11,.4)', background: 'rgba(245,158,11,.05)' }
+          : { border: '1px solid var(--cardborder)', background: 'var(--hover)' }}
+      >
+        <div className="flex items-center gap-3">
+          {/* ON/OFF toggle (red off / green on) */}
+          <Toggle checked={!!d.is_active_detail} onChange={() => onToggle(d)} />
+
+          {/* real heartbeat liveness (deviceLiveMap, polled every
+              15s) — a 2-state active/dead badge; no device
+              assigned at all shows a neutral placeholder, not a
+              fabricated 3rd state. */}
+          {liveState ? (
+            <LivenessBadge state={liveState} />
+          ) : (
+            <span title="No device connected" style={{ color: 'var(--subtle)' }}>
+              <IconRobot className="h-5 w-5" />
+            </span>
+          )}
+
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{d.account_name || 'Untitled'}</p>
+            <p className="truncate text-xs" style={{ color: 'var(--muted)' }}>{d.upi_id}</p>
+          </div>
+
+          {/* connection-type icon (apk=android/teal · web=globe/coral) */}
+          <ConnTypeIcon type={connType(d)} size={24} />
+
+          {/* limit badge (any amount cap configured) */}
+          <LimitBadge d={d} />
+
+          {/* limit dot + Day label */}
+          <div className="flex flex-col items-center" title={dot.title}>
+            <span className={`h-2.5 w-2.5 rounded-full ${dot.cls}`} />
+            <span className="mt-0.5 text-[10px]" style={{ color: 'var(--muted)' }}>Day</span>
+          </div>
+
+          <button onClick={() => onEdit(d)} className="tf-hbtn" style={{ width: 30, height: 30 }} aria-label="Edit detail">
+            <IconEdit className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* inline warning + action */}
+        {highlight && (
+          <div className="mt-2 space-y-1.5 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span style={{ color: '#fcd34d' }}>
+                {exhausted ? 'Limit exhausted' : 'Not receiving orders'}
+              </span>
+              {exhausted ? (
+                <button onClick={() => onEdit(d)} className="rounded-md px-2 py-0.5 font-medium" style={{ border: '1px solid rgba(245,158,11,.4)', color: '#fcd34d' }}>
+                  Update limit
+                </button>
+              ) : (
+                <button
+                  onClick={() => onLink(d)}
+                  disabled={linkChecking === d.id}
+                  className="whitespace-nowrap rounded-md px-2 py-0.5 font-medium disabled:opacity-50"
+                  style={{ border: '1px solid rgba(245,158,11,.4)', color: '#fcd34d' }}
+                >
+                  {linkChecking === d.id ? 'Checking…' : 'Link'}
+                </button>
+              )}
+            </div>
+            {/* Readiness gate: the last Link attempt found no live
+                data source (device heartbeat / web session), so
+                the link was blocked instead of silently proceeding. */}
+            {!exhausted && linkBlocked[d.id] && (
+              <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1" style={{ border: '1px solid rgba(239,68,68,.3)', background: 'rgba(239,68,68,.1)' }}>
+                <span style={{ color: '#fca5a5' }}>{linkBlocked[d.id].message}</span>
+                <button
+                  onClick={() => onReconnect(linkBlocked[d.id])}
+                  className="whitespace-nowrap rounded-md px-2 py-0.5 font-medium"
+                  style={{ border: '1px solid rgba(239,68,68,.4)', color: '#fca5a5' }}
+                >
+                  {linkBlocked[d.id].actionLabel}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderNgoRow = (a) => {
+    const live = a.status === 'live';
+    const meta = ngoStatusMeta(a.status, a.statusReason);
+    // 'paused' alone is ambiguous — manual pause, a genuine OTP
+    // request, and a dead session all set the same status value
+    // (see statusReason, added specifically to disambiguate).
+    // Only show the OTP box when it's actually an OTP request.
+    const showingOtp = a.status === 'paused' && a.statusReason === 'otp_required';
+    const otpVal = otpValues[a._id] || '';
+    const otpBusy = otpBusyId === a._id;
+    return (
+      <div key={a._id} className="rounded-lg px-3 py-2.5" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
+        <div className="flex items-center gap-3">
+          <span title={live ? undefined : 'Turning this on attempts to reconnect'}>
+            <Toggle checked={live} disabled={ngoToggleBusyId === a._id} onChange={() => onToggleNGO(a)} />
+          </span>
+
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{a.displayName || 'Untitled'}</p>
+            <p className="truncate text-xs" style={{ color: 'var(--muted)' }}>{a.upiId}</p>
+          </div>
+
+          {/* connection-type icon (apk=android/teal · web=globe/coral) */}
+          <ConnTypeIcon type={a.connectionType === 'web' ? 'web' : 'apk'} size={24} />
+
+          {/* limit badge (any amount cap configured) */}
+          <LimitBadge d={a} />
+
+          {/* connection-status badge: pending/paused/failed/live */}
+          <Badge color={meta.color}>{meta.label}</Badge>
+
+          {/* real SessionStore.isSessionAlive check (polled every
+              15s) disagreeing with the DB's cached 'live' status —
+              the 60s monitor loop hasn't caught up yet */}
+          {live && ngoAliveMap[a._id] === false && (
+            <span
+              className="h-2 w-2 rounded-full"
+              style={{ background: '#ef4444' }}
+              title="Marked live, but the session isn't responding right now"
+            />
+          )}
+
+          <span title={live ? undefined : 'Available once connected'}>
+            <button
+              onClick={() => onEdit(ngoAccountToEditable(a))}
+              disabled={!live}
+              className="tf-hbtn disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ width: 30, height: 30 }}
+              aria-label="Edit detail"
+            >
+              <IconEdit className="h-4 w-4" />
+            </button>
+          </span>
+
+          {a.status === 'failed' && (
+            <button
+              onClick={() => onRetryNGO(a)}
+              disabled={otpBusy}
+              className="whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium disabled:opacity-50"
+              style={{ border: '1px solid rgba(239,68,68,.4)', color: '#fca5a5' }}
+            >
+              Retry
+            </button>
+          )}
+
+          <button
+            onClick={() => onDeleteNGO(a)}
+            className="tf-hbtn"
+            style={{ width: 30, height: 30, color: '#ef4444' }}
+            aria-label="Delete account"
+          >
+            <IconTrash className="h-4 w-4" />
+          </button>
+        </div>
+
+        {showingOtp && (
+          <div className="mt-2 flex items-center gap-2 pt-2" style={{ borderTop: '1px solid var(--cardborder)' }}>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              value={otpVal}
+              onChange={(e) => onOtpChange(a._id, e.target.value.replace(/\D/g, ''))}
+              placeholder="6-digit OTP"
+              disabled={otpBusy}
+              className="w-28 rounded-md px-2 py-1 text-center text-sm tracking-widest outline-none"
+              style={{ border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)' }}
+            />
+            <button
+              onClick={() => onSubmitOtp(a._id)}
+              disabled={otpBusy || otpVal.length !== 6}
+              className="rounded-md px-2 py-1 text-xs font-medium disabled:opacity-50"
+              style={{ border: '1px solid rgba(34,197,94,.4)', color: '#6ee7b7' }}
+            >
+              Verify
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const noResults = groups.length === 0 && ngoGroups.length === 0;
 
   return (
     <Card className="flex flex-col">
       <div className="flex items-center justify-between p-4" style={{ borderBottom: '1px solid var(--cardborder)' }}>
-        <div className="flex items-center gap-2">
-          <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>Details</h2>
-          <Badge color="gray">{details.length + ngoAccounts.length}</Badge>
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>All Payment Accounts</h2>
+            <Badge color="gray">{details.length + ngoAccounts.length}</Badge>
+          </div>
+          <p className="mt-0.5 text-xs" style={{ color: 'var(--muted)' }}>Grouped by provider for fast management</p>
         </div>
         <div className="flex items-center gap-2">
           <Select
@@ -1450,7 +1513,6 @@ function DetailsColumn({
       <div className="p-4">
         <SearchInput value={query} onChange={setQuery} placeholder="Search account or UPI…" />
 
-        {/* warning banner (Fix 4) */}
         {unlinkedCount > 0 && (
           <div className="mt-3 flex items-center justify-between gap-3 rounded-lg p-3" style={{ border: '1px solid rgba(245,158,11,.3)', background: 'rgba(245,158,11,.1)' }}>
             <div className="flex items-center gap-2 text-sm" style={{ color: '#fcd34d' }}>
@@ -1467,250 +1529,110 @@ function DetailsColumn({
           </div>
         )}
 
-        <div className="mt-4 space-y-4">
-          {groups.map((g) => (
-            <div key={g.bank}>
-              <div className="mb-2 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <BankBadge type={g.items[0].account_type} label={g.bank} size={28} />
-                  <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>{g.bank}</span>
-                  <span className="text-xs" style={{ color: 'var(--muted)' }}>INR</span>
-                </div>
-                <button
-                  onClick={() => onAdd(BANKS.find((b) => b.name === g.bank) || null)}
-                  style={{ color: '#22c55e' }}
-                  aria-label="Add detail to bank"
+        <div className="mt-4 space-y-3">
+          {groups.map((g) => {
+            const open = isOpen(g.key);
+            const anyActive = g.items.some((d) => d.is_active_detail);
+            const activeCount = g.items.filter((d) => d.is_active_detail).length;
+            return (
+              <div key={g.key} className="rounded-lg" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => toggleOpen(g.key)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleOpen(g.key); } }}
+                  className="flex w-full cursor-pointer items-center gap-3 p-3 text-left"
                 >
-                  <IconPlus className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {g.items.map((d) => {
-                  const dot = limitDot(d);
-                  const exhausted = isExhausted(d);
-                  const unlinked = notLinked(d);
-                  const highlight = exhausted || unlinked;
-                  const liveState = d.ngo_device_id ? (deviceLiveMap[d.ngo_device_id] ? 'active' : 'dead') : null;
-                  return (
-                    <div
-                      key={d.id}
-                      className="rounded-lg px-3 py-2.5"
-                      style={highlight
-                        ? { border: '1px solid rgba(245,158,11,.4)', background: 'rgba(245,158,11,.05)' }
-                        : { border: '1px solid var(--cardborder)', background: 'var(--hover)' }}
+                  <BankBadge type={g.type} label={g.meta.label} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{g.meta.label}</p>
+                    <p className="text-xs" style={{ color: 'var(--muted)' }}>{g.items.length} account{g.items.length === 1 ? '' : 's'} · {activeCount} active</p>
+                  </div>
+                  <span onClick={(e) => e.stopPropagation()} aria-label="Toggle all in group">
+                    <Toggle checked={anyActive} onChange={(v) => onBulkToggle(g.items, v)} />
+                  </span>
+                  <div className="relative" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => setMenu(menu === g.key ? null : g.key)}
+                      className="tf-hbtn"
+                      style={{ width: 28, height: 28, display: 'flex' }}
+                      aria-label="Group menu"
                     >
-                      <div className="flex items-center gap-3">
-                        {/* ON/OFF toggle (red off / green on) */}
-                        <Toggle checked={!!d.is_active_detail} onChange={() => onToggle(d)} />
-
-                        {/* real heartbeat liveness (deviceLiveMap, polled every
-                            15s) — a 2-state active/dead badge; no device
-                            assigned at all shows a neutral placeholder, not a
-                            fabricated 3rd state. */}
-                        {liveState ? (
-                          <LivenessBadge state={liveState} />
-                        ) : (
-                          <span title="No device connected" style={{ color: 'var(--subtle)' }}>
-                            <IconRobot className="h-5 w-5" />
-                          </span>
-                        )}
-
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{d.account_name || 'Untitled'}</p>
-                          <p className="truncate text-xs" style={{ color: 'var(--muted)' }}>{d.upi_id}</p>
-                        </div>
-
-                        {/* connection-type icon (apk=android/teal · web=globe/coral) */}
-                        <ConnTypeIcon type={connType(d)} size={24} />
-
-                        {/* limit badge (any amount cap configured) */}
-                        <LimitBadge d={d} />
-
-                        {/* limit dot + Day label */}
-                        <div className="flex flex-col items-center" title={dot.title}>
-                          <span className={`h-2.5 w-2.5 rounded-full ${dot.cls}`} />
-                          <span className="mt-0.5 text-[10px]" style={{ color: 'var(--muted)' }}>Day</span>
-                        </div>
-
-                        <button onClick={() => onEdit(d)} className="tf-hbtn" style={{ width: 30, height: 30 }} aria-label="Edit detail">
-                          <IconEdit className="h-4 w-4" />
-                        </button>
-                      </div>
-
-                      {/* inline warning + action */}
-                      {highlight && (
-                        <div className="mt-2 space-y-1.5 text-xs">
-                          <div className="flex items-center justify-between gap-2">
-                            <span style={{ color: '#fcd34d' }}>
-                              {exhausted ? 'Limit exhausted' : 'Not linked to Offer'}
-                            </span>
-                            {exhausted ? (
-                              <button onClick={() => onEdit(d)} className="rounded-md px-2 py-0.5 font-medium" style={{ border: '1px solid rgba(245,158,11,.4)', color: '#fcd34d' }}>
-                                Update limit
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => onLink(d)}
-                                disabled={linkChecking === d.id}
-                                className="whitespace-nowrap rounded-md px-2 py-0.5 font-medium disabled:opacity-50"
-                                style={{ border: '1px solid rgba(245,158,11,.4)', color: '#fcd34d' }}
-                              >
-                                {linkChecking === d.id ? 'Checking…' : 'Link'}
-                              </button>
-                            )}
-                          </div>
-                          {/* Readiness gate: the last Link attempt found no live
-                              data source (device heartbeat / web session), so
-                              the link was blocked instead of silently proceeding. */}
-                          {!exhausted && linkBlocked[d.id] && (
-                            <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1" style={{ border: '1px solid rgba(239,68,68,.3)', background: 'rgba(239,68,68,.1)' }}>
-                              <span style={{ color: '#fca5a5' }}>{linkBlocked[d.id].message}</span>
-                              <button
-                                onClick={() => onReconnect(linkBlocked[d.id])}
-                                className="whitespace-nowrap rounded-md px-2 py-0.5 font-medium"
-                                style={{ border: '1px solid rgba(239,68,68,.4)', color: '#fca5a5' }}
-                              >
-                                {linkBlocked[d.id].actionLabel}
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-
-          {/* NGO accounts (from the NGO backend) grouped by platform */}
-          {ngoGroups.map(([platform, accounts]) => (
-            <div key={`ngo-${platform}`}>
-              <div className="mb-2 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <BankBadge type={platform} label={platformLabel(platform)} size={28} />
-                  <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>{platformLabel(platform)}</span>
-                  <span className="text-xs" style={{ color: 'var(--muted)' }}>INR</span>
-                </div>
-                <button
-                  onClick={() => onAdd(null)}
-                  style={{ color: '#22c55e' }}
-                  aria-label="Add NGO account"
-                >
-                  <IconPlus className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {accounts.map((a) => {
-                  const live = a.status === 'live';
-                  const meta = ngoStatusMeta(a.status, a.statusReason);
-                  // 'paused' alone is ambiguous — manual pause, a genuine OTP
-                  // request, and a dead session all set the same status value
-                  // (see statusReason, added specifically to disambiguate).
-                  // Only show the OTP box when it's actually an OTP request.
-                  const showingOtp = a.status === 'paused' && a.statusReason === 'otp_required';
-                  const otpVal = otpValues[a._id] || '';
-                  const otpBusy = otpBusyId === a._id;
-                  return (
-                    <div key={a._id} className="rounded-lg px-3 py-2.5" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
-                      <div className="flex items-center gap-3">
-                        <span title={live ? undefined : 'Turning this on attempts to reconnect'}>
-                          <Toggle checked={live} disabled={ngoToggleBusyId === a._id} onChange={() => onToggleNGO(a)} />
-                        </span>
-
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{a.displayName || 'Untitled'}</p>
-                          <p className="truncate text-xs" style={{ color: 'var(--muted)' }}>{a.upiId}</p>
-                        </div>
-
-                        {/* connection-type icon (apk=android/teal · web=globe/coral) */}
-                        <ConnTypeIcon type={a.connectionType === 'web' ? 'web' : 'apk'} size={24} />
-
-                        {/* limit badge (any amount cap configured) */}
-                        <LimitBadge d={a} />
-
-                        {/* connection-status badge: pending/paused/failed/live */}
-                        <Badge color={meta.color}>{meta.label}</Badge>
-
-                        {/* real SessionStore.isSessionAlive check (polled every
-                            15s) disagreeing with the DB's cached 'live' status —
-                            the 60s monitor loop hasn't caught up yet */}
-                        {live && ngoAliveMap[a._id] === false && (
-                          <span
-                            className="h-2 w-2 rounded-full"
-                            style={{ background: '#ef4444' }}
-                            title="Marked live, but the session isn't responding right now"
-                          />
-                        )}
-
-                        <span title={live ? undefined : 'Available once connected'}>
-                          <button
-                            onClick={() => onEdit(ngoAccountToEditable(a))}
-                            disabled={!live}
-                            className="tf-hbtn disabled:cursor-not-allowed disabled:opacity-40"
-                            style={{ width: 30, height: 30 }}
-                            aria-label="Edit detail"
-                          >
-                            <IconEdit className="h-4 w-4" />
-                          </button>
-                        </span>
-
-                        {a.status === 'failed' && (
-                          <button
-                            onClick={() => onRetryNGO(a)}
-                            disabled={otpBusy}
-                            className="whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium disabled:opacity-50"
-                            style={{ border: '1px solid rgba(239,68,68,.4)', color: '#fca5a5' }}
-                          >
-                            Retry
-                          </button>
-                        )}
-
+                      <IconDots className="h-4 w-4" />
+                    </button>
+                    {menu === g.key && (
+                      <div
+                        className="absolute right-0 z-10 mt-1 w-40 rounded-lg py-1"
+                        style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
+                      >
                         <button
-                          onClick={() => onDeleteNGO(a)}
-                          className="tf-hbtn"
-                          style={{ width: 30, height: 30, color: '#ef4444' }}
-                          aria-label="Delete account"
+                          onClick={() => { onBulkToggle(g.items, true); setMenu(null); }}
+                          className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"
+                          style={{ color: 'var(--text)' }}
                         >
-                          <IconTrash className="h-4 w-4" />
+                          Enable all
+                        </button>
+                        <button
+                          onClick={() => { onBulkToggle(g.items, false); setMenu(null); }}
+                          className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"
+                          style={{ color: 'var(--text)' }}
+                        >
+                          Disable all
                         </button>
                       </div>
+                    )}
+                  </div>
+                  <IconChevron className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--muted)', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
+                </div>
 
-                      {showingOtp && (
-                        <div className="mt-2 flex items-center gap-2 pt-2" style={{ borderTop: '1px solid var(--cardborder)' }}>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={6}
-                            value={otpVal}
-                            onChange={(e) => onOtpChange(a._id, e.target.value.replace(/\D/g, ''))}
-                            placeholder="6-digit OTP"
-                            disabled={otpBusy}
-                            className="w-28 rounded-md px-2 py-1 text-center text-sm tracking-widest outline-none"
-                            style={{ border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)' }}
-                          />
-                          <button
-                            onClick={() => onSubmitOtp(a._id)}
-                            disabled={otpBusy || otpVal.length !== 6}
-                            className="rounded-md px-2 py-1 text-xs font-medium disabled:opacity-50"
-                            style={{ border: '1px solid rgba(34,197,94,.4)', color: '#6ee7b7' }}
-                          >
-                            Verify
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {open && (
+                  <div className="space-y-2 px-3 pb-3">
+                    {g.items.map(renderDetailRow)}
+                    <button
+                      onClick={() => onAdd(BANKS.find((b) => b.type === g.type) || null)}
+                      className="flex w-full items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium"
+                      style={{ border: '1px dashed var(--cardborder)', color: 'var(--muted)' }}
+                    >
+                      <IconPlus className="h-3.5 w-3.5" /> Add to {g.meta.label}
+                    </button>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
 
-          {groups.length === 0 && ngoGroups.length === 0 && (
+          {ngoGroups.map((g) => {
+            const open = isOpen(g.key);
+            const liveCount = g.items.filter((a) => a.status === 'live').length;
+            const label = platformLabel(g.platform);
+            return (
+              <div key={g.key} className="rounded-lg" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
+                <button
+                  type="button"
+                  onClick={() => toggleOpen(g.key)}
+                  className="flex w-full items-center gap-3 p-3 text-left"
+                >
+                  <BankBadge type={g.platform} label={label} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{label}</p>
+                    <p className="text-xs" style={{ color: 'var(--muted)' }}>{g.items.length} account{g.items.length === 1 ? '' : 's'} · {liveCount} live</p>
+                  </div>
+                  <IconChevron className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--muted)', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
+                </button>
+
+                {open && (
+                  <div className="space-y-2 px-3 pb-3">
+                    {g.items.map(renderNgoRow)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {noResults && (
             <p className="py-10 text-center text-sm" style={{ color: 'var(--muted)' }}>
-              {details.length === 0 ? 'No payment details yet — add one to start receiving payments.' : 'No details match your filter.'}
+              {details.length === 0 && ngoAccounts.length === 0 ? 'No payment accounts yet — add one to start receiving payments.' : 'No accounts match your filter.'}
             </p>
           )}
         </div>
@@ -2121,7 +2043,7 @@ export default function Offers() {
   return (
     <div>
       <PageHeader
-        title="Offers & Details"
+        title="Payment details"
         info="Manage all UPI accounts, connections, limits and routing eligibility."
         actions={
           <Button onClick={() => openAdd(null)}>
@@ -2179,11 +2101,10 @@ export default function Offers() {
             <LivePoolSection details={details} todayVolumeInr={todayVolumeInr} onChanged={load} />
           </div>
 
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          <OffersColumn details={details} onBulkToggle={bulkToggle} onAdd={openAdd} ngoAccounts={ngoAccounts} onToggleNGO={toggleNGO} ngoToggleBusyId={ngoToggleBusyId} />
-          <DetailsColumn
+          <AccountsColumn
             details={details}
             onToggle={toggleDetail}
+            onBulkToggle={bulkToggle}
             onLink={attemptLink}
             linkBlocked={linkBlocked}
             linkChecking={linkChecking}
@@ -2202,7 +2123,6 @@ export default function Offers() {
             deviceLiveMap={deviceLiveMap}
             ngoAliveMap={ngoAliveMap}
           />
-          </div>
         </>
       )}
 
