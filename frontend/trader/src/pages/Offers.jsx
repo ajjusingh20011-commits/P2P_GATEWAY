@@ -333,6 +333,11 @@ async function syncNgoAccountToPaymentDetail(account) {
     max_per_week: account.maxPerWeek,
     max_per_day: account.maxPerDay,
     max_per_hour: account.maxPerHour,
+    // Not a real payment_details column — the backend strips this before
+    // validation/DB write. It only tells the UPI cross-check "this NGO
+    // account is the one being mirrored, don't reject it as its own
+    // duplicate" (see traderController.js's assertUpiAvailable).
+    ngo_account_id: account._id,
   };
   Object.keys(mirrorBody).forEach((k) => mirrorBody[k] === undefined && delete mirrorBody[k]);
 

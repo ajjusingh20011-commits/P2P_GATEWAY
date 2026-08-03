@@ -7,6 +7,7 @@
 
 const Joi = require('joi');
 const { Op } = require('sequelize');
+const axios = require('axios');
 
 const db = require('../models');
 const { ok, created, fail, asyncHandler, pagination } = require('../utils/http');
@@ -64,7 +65,6 @@ const dashboard = asyncHandler(async (req, res) => {
     base_rate: baseRate,
     trader_margin: traderMargin,
     trader_rate: traderRate,
-    admin_margin: Number(trader.admin_margin),
     // "My Rate" — the trader's margin %, labelled per rate_label.
     my_rate: traderMargin,
     rate_label: trader.rate_label,
@@ -303,18 +303,75 @@ const paymentDetailSchema = Joi.object({
   is_active: Joi.boolean().default(true),
 });
 
+const UPI_TAKEN_MESSAGE = 'This UPI ID is already registered on the platform';
+
+/**
+ * Throws a friendly error if `upiId` is already in use — locally in
+ * `payment_details` (optionally excluding one row, for updates) and, best
+ * effort, in ngo-backend's `Account` collection. A down/unreachable
+ * ngo-backend must not block a trader from saving a payment detail, so the
+ * cross-service check fails open (logs and continues) on any network error.
+ */
+// `excludeNgoAccountId` exists for the NGO-account → payment_details mirror
+// bridge (syncNgoAccountToPaymentDetail in the trader frontend): when it
+// creates/updates a payment_details row FOR an NGO account, that account
+// already exists in ngo-backend's own DB with the same UPI, so the
+// cross-service check would otherwise always find "itself" and reject the
+// mirror as a false-positive duplicate. Excluding it here only weakens the
+// specific check "does this UPI belong to a DIFFERENT NGO account" — the
+// local `payment_details` uniqueness check just above is untouched, so a
+// genuine duplicate on this side is still rejected regardless.
+async function assertUpiAvailable(upiId, { excludeId, excludeNgoAccountId } = {}) {
+  const where = { upi_id: upiId };
+  if (excludeId) where.id = { [Op.ne]: excludeId };
+  const existing = await db.PaymentDetail.findOne({ where });
+  if (existing) {
+    throw Object.assign(new Error(UPI_TAKEN_MESSAGE), { status: 422 });
+  }
+
+  try {
+    const base = process.env.NGO_BACKEND_URL || 'http://localhost:3000';
+    const params = { upi_id: upiId };
+    if (excludeNgoAccountId) params.exclude_account_id = excludeNgoAccountId;
+    const res = await axios.get(`${base}/api/internal/upi-check`, {
+      params,
+      timeout: 3000,
+    });
+    if (res.data?.exists) {
+      throw Object.assign(new Error(UPI_TAKEN_MESSAGE), { status: 422 });
+    }
+  } catch (err) {
+    if (err.status === 422) throw err;
+    logger.warn(`assertUpiAvailable: ngo-backend cross-check unreachable, proceeding — ${err.message}`);
+  }
+}
+
 /* -------------------------- POST /payment-details ------------------------- */
 const addPaymentDetail = asyncHandler(async (req, res) => {
   const trader = await currentTrader(req, res);
   if (!trader) return undefined;
 
-  const { error, value } = paymentDetailSchema.validate(req.body);
+  // Not a real payment_details column — pulled out before Joi validation so
+  // it never reaches the schema/DB, only used to steer the UPI cross-check
+  // below (see assertUpiAvailable's comment).
+  const { ngo_account_id: excludeNgoAccountId, ...body } = req.body;
+  const { error, value } = paymentDetailSchema.validate(body);
   if (error) return fail(res, 422, error.details[0].message);
+
+  try {
+    await assertUpiAvailable(value.upi_id, { excludeNgoAccountId });
+  } catch (err) {
+    if (err.status === 422) return fail(res, 422, err.message);
+    throw err;
+  }
 
   try {
     const detail = await db.PaymentDetail.create({ ...value, trader_id: trader.id });
     return created(res, { payment_detail: detail });
   } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      return fail(res, 422, UPI_TAKEN_MESSAGE);
+    }
     // Surface the exact failure (e.g. an "Unknown column" DB error) instead of
     // the generic 500 the global handler would emit.
     logger.error(`addPaymentDetail failed for trader ${trader.id}`, err);
@@ -348,7 +405,25 @@ const updatePaymentDetail = asyncHandler(async (req, res) => {
   ];
   bools.forEach((k) => { if (typeof req.body[k] === 'boolean') patch[k] = req.body[k]; });
   passthrough.forEach((k) => { if (req.body[k] !== undefined) patch[k] = req.body[k]; });
-  await detail.update(patch);
+
+  if (patch.upi_id && patch.upi_id !== detail.upi_id) {
+    try {
+      // Not a real column — `passthrough` above never copies it into `patch`.
+      await assertUpiAvailable(patch.upi_id, { excludeId: detail.id, excludeNgoAccountId: req.body.ngo_account_id });
+    } catch (err) {
+      if (err.status === 422) return fail(res, 422, err.message);
+      throw err;
+    }
+  }
+
+  try {
+    await detail.update(patch);
+  } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      return fail(res, 422, UPI_TAKEN_MESSAGE);
+    }
+    throw err;
+  }
 
   return ok(res, { payment_detail: detail });
 });
