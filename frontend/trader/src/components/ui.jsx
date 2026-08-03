@@ -5,6 +5,9 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { IconSearch, IconChevron, IconX, IconInfo } from './icons';
+import gpayLogo from '../assets/logos/gpay-business-bank.svg';
+import phonePeLogo from '../assets/logos/phone-pe-mqr.svg';
+import paytmLogo from '../assets/logos/paytm.svg';
 
 /* Map a named accent (legacy usage) or a hex string to a hex color. */
 const ACCENT_HEX = {
@@ -206,17 +209,21 @@ export function Pagination({ page, perPage, total, onPage }) {
 }
 
 /*
- * Per-provider visual identity for BankBadge. Logo files aren't available
- * yet — every entry renders as a colored initials fallback. To switch one
- * provider over to a real logo later, add a `logo` (image src / data URI) to
- * that entry; nothing else changes.
+ * Per-provider visual identity for BankBadge. Providers with a real logo
+ * asset (from MaxPayDesign's shared/assets/logos) render it; the rest fall
+ * back to a colored-initials glyph — never a bare, untinted letter. Airtel
+ * and BharatPe have no design asset, so they stay initials-only.
  */
 const BANK_VISUALS = {
-  gpay: { initials: 'G', hex: '#4285f4' },
-  paytm: { initials: 'P', hex: '#00a7e1' },
-  phonepe: { initials: 'Ph', hex: '#5f259f' },
+  gpay: { initials: 'G', hex: '#4285f4', logo: gpayLogo },
+  paytm: { initials: 'P', hex: '#00a7e1', logo: paytmLogo },
+  phonepe: { initials: 'Ph', hex: '#5f259f', logo: phonePeLogo },
   airtel: { initials: 'A', hex: '#ed1c24' },
   bharat_pe: { initials: 'B', hex: '#8b5cf6' },
+  // NGO-backend accounts use a differently-spelled platform enum
+  // ('bharatpe', no underscore) for the same provider as trader-native
+  // `bharat_pe` — alias it so BankBadge tints both consistently.
+  bharatpe: { initials: 'B', hex: '#8b5cf6' },
 };
 
 export function BankBadge({ type, label, size = 28 }) {

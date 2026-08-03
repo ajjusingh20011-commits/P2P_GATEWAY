@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" id="paytm">
+<rect width="128" height="128" rx="24" fill="#022e7a"/>
+<text x="64" y="76" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="800" font-size="27" fill="#ffffff">pay<tspan fill="#00baf2">tm</tspan></text>
+</svg>
