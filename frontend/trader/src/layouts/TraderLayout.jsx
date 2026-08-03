@@ -153,6 +153,8 @@ export default function TraderLayout() {
       <Sidebar
         balance={displayBalance}
         baseRate={baseRate}
+        online={online}
+        onToggleOnline={toggleOnline}
         collapsed={collapsed}
         mobileOpen={mobileNavOpen}
         onNavigate={() => setMobileNavOpen(false)}

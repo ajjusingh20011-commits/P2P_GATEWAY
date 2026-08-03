@@ -51,7 +51,7 @@ function CountBadge({ value }) {
  * header (single collapse control), so this is a presentational component that
  * only reads `collapsed`. Balance is real (from the trader's dashboard).
  */
-export default function Sidebar({ balance, baseRate, badges = {}, collapsed = false, mobileOpen = false, onNavigate }) {
+export default function Sidebar({ balance, baseRate, online, onToggleOnline, badges = {}, collapsed = false, mobileOpen = false, onNavigate }) {
   const { logout } = useAuth();
 
   const linkClass = ({ isActive }) => `tf-nav${isActive ? ' active' : ''}${collapsed ? ' tf-tip' : ''}`;
@@ -99,6 +99,38 @@ export default function Sidebar({ balance, baseRate, badges = {}, collapsed = fa
               <span style={{ opacity: 0.85 }}>{compactInr(balance * baseRate)}</span>
             </div>
           )}
+
+          {/* Same real online/receiving state as the header pill (TraderLayout's
+              `online` + `toggleOnline`, backed by PUT /trader/online-status) —
+              not a second, independently-tracked toggle that could drift out
+              of sync with it. */}
+          <div
+            className="flex items-center justify-between"
+            style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,.16)' }}
+          >
+            <span className="flex items-center gap-1.5" style={{ fontSize: 11, opacity: 0.85 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: online ? '#4ade80' : 'rgba(255,255,255,.45)', flexShrink: 0 }} />
+              {online ? 'Online & receiving' : 'Offline'}
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!online}
+              aria-label={online ? 'Go offline' : 'Go online'}
+              onClick={() => onToggleOnline?.(!online)}
+              style={{
+                position: 'relative', width: 34, height: 19, borderRadius: 999, border: 'none', cursor: 'pointer', flexShrink: 0,
+                background: online ? '#22c55e' : 'rgba(255,255,255,.25)', transition: 'background-color .2s',
+              }}
+            >
+              <span
+                style={{
+                  position: 'absolute', top: 2, left: online ? 17 : 2, width: 15, height: 15, borderRadius: '50%',
+                  background: '#fff', transition: 'left .2s',
+                }}
+              />
+            </button>
+          </div>
         </div>
       )}
 
