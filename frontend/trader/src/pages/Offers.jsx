@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Layers3, Wifi, BadgeCheck } from 'lucide-react';
+import { Layers3, Wifi, BadgeCheck, Check, CheckCircle2, KeyRound, ExternalLink } from 'lucide-react';
 import { Card, Badge, Button, Toggle, SearchInput, Select, PageHeader, Modal, BankBadge, LivenessBadge } from '../components/ui';
 import { LivePoolSection } from '../components/DashboardSections';
 import {
-  IconPlus, IconEdit, IconTrash, IconChevron, IconRobot, IconWarning, IconDots, IconLock, IconGlobe,
+  IconPlus, IconEdit, IconTrash, IconChevron, IconRobot, IconWarning, IconDots, IconLock, IconGlobe, IconPhone,
 } from '../components/icons';
 import { ACCOUNT_TYPES } from '../utils/mock';
 import { traderApi } from '../services/api';
@@ -356,6 +356,7 @@ async function syncNgoAccountToPaymentDetail(account) {
 // step logic, validation and the trader-backend save are byte-for-byte the same.
 // ---------------------------------------------------------------------------
 function ApkWizardBody({ presetBank, onClose, onSaved }) {
+  const navigate = useNavigate();
   const [step, setStep] = useState(presetBank ? 2 : 1);
   const [bank, setBank] = useState(presetBank || null);
   const [bankQuery, setBankQuery] = useState('');
@@ -428,106 +429,159 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
     }
   };
 
-  const titles = { 1: 'Select Bank', 2: 'Fill in the data', 3: 'Setting Limits' };
+  const STEP_LABELS = { 1: 'Bank', 2: 'Account & device', 3: 'Limits' };
 
   return (
     <>
-      {/* step name — was the modal header title before tabs were added */}
-      <p className="mb-3 text-sm font-medium" style={{ color: 'var(--text)' }}>{titles[step]}</p>
-
-      {/* step indicator */}
-      <div className="mb-4 flex items-center gap-2">
+      {/* step indicator — numbered circles connected by a line, matching
+          MaxPayDesign's wizardProgress; 3 steps (not the design's 4) since
+          the real flow deliberately keeps device-selection and account-info
+          on one step rather than splitting them further. */}
+      <div className="relative mb-5 grid grid-cols-3">
+        <div className="absolute left-[16%] right-[16%] top-[14px] h-px" style={{ background: 'var(--cardborder)' }} />
         {[1, 2, 3].map((s) => (
-          <div key={s} className="h-1.5 flex-1 rounded-full" style={{ background: s <= step ? '#22c55e' : 'var(--cardborder)' }} />
+          <div key={s} className="relative z-[1] text-center">
+            <span
+              className="mx-auto flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold"
+              style={s <= step
+                ? { background: 'var(--accent)', color: '#fff' }
+                : { background: 'var(--hover)', border: '1px solid var(--cardborder)', color: 'var(--muted)' }}
+            >
+              {s < step ? <Check className="h-3.5 w-3.5" /> : s}
+            </span>
+            <span className="mt-1.5 block text-[11px]" style={{ color: s === step ? 'var(--text)' : 'var(--muted)' }}>{STEP_LABELS[s]}</span>
+          </div>
         ))}
       </div>
 
       {step === 1 && (
         <div>
+          <p className="mb-3 text-sm font-medium" style={{ color: 'var(--text)' }}>Select bank or UPI type</p>
           <SearchInput value={bankQuery} onChange={setBankQuery} placeholder="Search bank…" />
-          <div className="tf-scroll mt-3 max-h-72 space-y-1 overflow-y-auto pr-1">
+          <div className="tf-scroll mt-3 grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
             {filteredBanks.map((b) => (
               <button
                 key={b.name}
                 onClick={() => pickBank(b)}
-                className="tf-row-hover flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition"
-                style={{ border: bank?.name === b.name ? '1px solid rgba(34,197,94,.5)' : '1px solid var(--cardborder)' }}
+                className="tf-row-hover flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition"
+                style={{ border: bank?.name === b.name ? '1px solid rgba(34,197,94,.5)' : '1px solid var(--cardborder)', background: bank?.name === b.name ? 'rgba(34,197,94,.06)' : 'transparent' }}
               >
-                <BankBadge type={b.type} label={b.name} size={36} />
-                <span className="text-sm" style={{ color: 'var(--text)' }}>{b.name}</span>
+                <BankBadge type={b.type} label={b.name} size={32} />
+                <span className="min-w-0 flex-1 truncate text-sm" style={{ color: 'var(--text)' }}>{b.name}</span>
+                {bank?.name === b.name && <CheckCircle2 className="h-4 w-4 flex-shrink-0" style={{ color: '#22c55e' }} />}
               </button>
             ))}
             {filteredBanks.length === 0 && (
-              <p className="py-4 text-center text-sm" style={{ color: 'var(--muted)' }}>No banks match “{bankQuery}”.</p>
+              <p className="col-span-2 py-4 text-center text-sm" style={{ color: 'var(--muted)' }}>No banks match “{bankQuery}”.</p>
             )}
           </div>
         </div>
       )}
 
       {step === 2 && (
-        <div className="space-y-3">
-          <Field label="Smartphone">
-            <select value={form.ngo_device_id} onChange={(e) => set('ngo_device_id', e.target.value)} style={inputStyle}>
-              <option value="">
-                {devicesLoading ? 'Loading devices…' : ngoDevices.length === 0 ? 'No devices' : 'Not linked to a device yet'}
-              </option>
-              {ngoDevices.map((dev) => (
-                <option key={dev.id} value={dev.id}>
-                  {dev.deviceName || dev.deviceModel || 'Unnamed device'}
-                  {dev.online ? ' (online)' : ''}
-                </option>
-              ))}
-            </select>
-            {!devicesLoading && ngoDevices.length === 0 && (
-              <span className="mt-1 block text-xs" style={{ color: 'var(--muted)' }}>
-                No paired devices yet — pair one from the Smartphones page first.
-              </span>
-            )}
-          </Field>
-
-          <Field label="Title / Name">
-            <input
-              style={form.account_name.length > 0 && !nameValid ? inputStyleInvalid : inputStyle}
-              value={form.account_name}
-              onChange={(e) => set('account_name', e.target.value)}
-              placeholder="e.g. Rahul Sharma"
-            />
-            {form.account_name.length > 0 && !nameValid && (
-              <span className="mt-1 block text-xs" style={{ color: '#ef4444' }}>Name must be at least 2 characters</span>
-            )}
-          </Field>
-
-          <Field label="UPI ID">
-            <div className="relative">
-              <input
-                style={{ ...(upiInvalid ? inputStyleInvalid : upiValid ? inputStyleValid : inputStyle), paddingRight: 36 }}
-                value={form.upi_id}
-                onChange={(e) => set('upi_id', e.target.value)}
-                placeholder="name@bank"
-              />
-              {upiValid && (
-                <span className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: '#22c55e' }} aria-hidden>✓</span>
+        <div className="space-y-4">
+          <div>
+            <p className="mb-1 text-sm font-medium" style={{ color: 'var(--text)' }}>Select a paired smartphone</p>
+            <p className="mb-3 text-xs" style={{ color: 'var(--muted)' }}>The APK on this device will detect payment notifications.</p>
+            <div className="space-y-1.5">
+              {devicesLoading && (
+                <p className="text-xs" style={{ color: 'var(--muted)' }}>Loading devices…</p>
+              )}
+              {!devicesLoading && ngoDevices.map((dev) => {
+                const selected = form.ngo_device_id === String(dev.id);
+                return (
+                  <button
+                    key={dev.id}
+                    type="button"
+                    onClick={() => set('ngo_device_id', String(dev.id))}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition"
+                    style={{ border: selected ? '1px solid rgba(34,197,94,.5)' : '1px solid var(--cardborder)', background: selected ? 'rgba(34,197,94,.06)' : 'transparent' }}
+                  >
+                    <span
+                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg"
+                      style={dev.online ? { background: 'rgba(34,197,94,.14)', color: '#22c55e' } : { background: 'rgba(239,68,68,.14)', color: '#ef4444' }}
+                    >
+                      <IconPhone className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{dev.deviceName || dev.deviceModel || 'Unnamed device'}</p>
+                      <p className="text-xs" style={{ color: dev.online ? '#22c55e' : 'var(--muted)' }}>{dev.online ? 'Online · heartbeat healthy' : 'Offline'}</p>
+                    </div>
+                    {selected && <Check className="h-4 w-4 flex-shrink-0" style={{ color: '#22c55e' }} />}
+                  </button>
+                );
+              })}
+              {!devicesLoading && ngoDevices.length === 0 && (
+                <p className="rounded-lg px-3 py-2.5 text-xs" style={{ border: '1px dashed var(--cardborder)', color: 'var(--muted)' }}>
+                  No paired devices yet — you can still save this detail and link a device later.
+                </p>
               )}
             </div>
-            <span className="mt-1 block text-xs" style={{ color: upiInvalid ? '#ef4444' : 'var(--muted)' }}>
-              Enter valid UPI ID (example: name@bank)
-            </span>
-          </Field>
+            <button
+              type="button"
+              onClick={() => navigate('/smartphones')}
+              className="mt-2 flex items-center gap-1.5 text-xs font-semibold"
+              style={{ color: 'var(--accent)' }}
+            >
+              <IconPlus className="h-3.5 w-3.5" /> Pair a smartphone first <ExternalLink className="h-3 w-3" />
+            </button>
+          </div>
 
-          <Field label="Organization name">
-            <input
-              style={inputStyle}
-              value={form.organization_name}
-              onChange={(e) => set('organization_name', e.target.value)}
-              placeholder="e.g. Sharma Enterprises"
-            />
-          </Field>
+          <div className="grid grid-cols-2 gap-3" style={{ borderTop: '1px solid var(--cardborder)', paddingTop: 14 }}>
+            <div className="col-span-2">
+              <Field label="Title / Name">
+                <input
+                  style={form.account_name.length > 0 && !nameValid ? inputStyleInvalid : inputStyle}
+                  value={form.account_name}
+                  onChange={(e) => set('account_name', e.target.value)}
+                  placeholder="e.g. Rahul Sharma"
+                />
+                {form.account_name.length > 0 && !nameValid && (
+                  <span className="mt-1 block text-xs" style={{ color: '#ef4444' }}>Name must be at least 2 characters</span>
+                )}
+              </Field>
+            </div>
+
+            <div className="col-span-2">
+              <Field label="UPI ID">
+                <div className="relative">
+                  <input
+                    style={{ ...(upiInvalid ? inputStyleInvalid : upiValid ? inputStyleValid : inputStyle), paddingRight: 36 }}
+                    value={form.upi_id}
+                    onChange={(e) => set('upi_id', e.target.value)}
+                    placeholder="name@bank"
+                  />
+                  {upiValid && (
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: '#22c55e' }} aria-hidden>✓</span>
+                  )}
+                </div>
+                <span className="mt-1 block text-xs" style={{ color: upiInvalid ? '#ef4444' : 'var(--muted)' }}>
+                  Enter valid UPI ID (example: name@bank)
+                </span>
+              </Field>
+            </div>
+
+            <div className="col-span-2">
+              <Field label="Organization name">
+                <input
+                  style={inputStyle}
+                  value={form.organization_name}
+                  onChange={(e) => set('organization_name', e.target.value)}
+                  placeholder="e.g. Sharma Enterprises"
+                />
+              </Field>
+            </div>
+          </div>
         </div>
       )}
 
       {step === 3 && (
         <>
-          <p className="mb-3 text-xs" style={{ color: 'var(--muted)' }}>All limits are optional — leave a section off to skip it.</p>
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>Set routing limits</p>
+            <span className="rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: 'var(--hover)', color: 'var(--muted)' }}>Optional</span>
+          </div>
+          <p className="mb-3 text-xs" style={{ color: 'var(--muted)' }}>All limits are optional — leave a section off to skip it. These can be changed from Edit later.</p>
           <LimitsForm form={form} set={set} caps={caps} setCaps={setCaps} usage={null} />
         </>
       )}
@@ -576,6 +630,19 @@ function WebLoginForm({ onClose, onSaved }) {
   const [connectingId, setConnectingId] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  // The success screen auto-advances after a short window (unchanged real
+  // behavior); "Finish" lets the trader skip the wait. Both paths funnel
+  // through here so onClose/onSaved never fire twice.
+  const closeTimerRef = useRef(null);
+  const finishedRef = useRef(false);
+  const finishNow = () => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    onClose();
+    onSaved();
+  };
 
   async function handleWebLoginSave() {
     setError('');
@@ -628,10 +695,7 @@ function WebLoginForm({ onClose, onSaved }) {
         setSuccess('Account connected successfully!');
         toast('Payment detail added', 'success');
         window.dispatchEvent(new Event('ngo-account-added'));
-        setTimeout(() => {
-          onClose();
-          onSaved();
-        }, 1500);
+        closeTimerRef.current = setTimeout(finishNow, 1500);
       }
     } catch (err) {
       setError(err.message);
@@ -652,10 +716,7 @@ function WebLoginForm({ onClose, onSaved }) {
         setSuccess('Connected Successfully!');
         toast('Account connected successfully', 'success');
         window.dispatchEvent(new Event('ngo-account-added'));
-        setTimeout(() => {
-          onClose();
-          onSaved();
-        }, 2000);
+        closeTimerRef.current = setTimeout(finishNow, 2000);
       }
     } catch (err) {
       setError(err.message || 'Failed to connect account');
@@ -678,10 +739,7 @@ function WebLoginForm({ onClose, onSaved }) {
       setSuccess('Connected Successfully!');
       toast('Account verified successfully', 'success');
       window.dispatchEvent(new Event('ngo-account-added'));
-      setTimeout(() => {
-        onClose();
-        onSaved();
-      }, 2000);
+      closeTimerRef.current = setTimeout(finishNow, 2000);
     } catch (err) {
       setError(err.message || 'Invalid OTP. Please try again.');
       setOtpValue('');
@@ -706,49 +764,69 @@ function WebLoginForm({ onClose, onSaved }) {
 
   // Freeze inputs while saving and during the brief success window.
   const busy = loading || !!success || connecting;
+  const platformLabelFor = (v) => WEB_PLATFORMS.find((p) => p.value === v)?.label || 'the provider';
+
+  // Real connecting screen — covers the two genuine async phases (saving the
+  // account, then starting the provider session) rather than a fabricated
+  // multi-step checklist; we only have two real signals, not a granular
+  // "account created / session starting / waiting for provider" sequence.
+  if (!otpStep && !success && (loading || connecting)) {
+    return (
+      <div className="px-2 py-8 text-center">
+        <span
+          className="mx-auto block h-14 w-14 animate-spin rounded-full"
+          style={{ border: '4px solid var(--hover)', borderTopColor: 'var(--accent)' }}
+        />
+        <h3 className="mt-4 text-base font-semibold" style={{ color: 'var(--text)' }}>
+          {loading ? 'Creating the account…' : `Starting a secure session with ${platformLabelFor(form.platform)}…`}
+        </h3>
+        <p className="mx-auto mt-1 max-w-xs text-xs" style={{ color: 'var(--muted)' }}>
+          {loading ? 'Saving the account before starting the provider session.' : 'Checking whether a verification code is required.'}
+        </p>
+      </div>
+    );
+  }
 
   // OTP Input Step
   if (otpStep) {
     return (
       <div>
-        <div className="space-y-5">
-          <div className="text-center py-4">
-            <p className="text-sm mb-1" style={{ color: 'var(--text)' }}>
-              {connecting ? 'Verifying...' : 'Enter the OTP sent to your registered mobile number'}
+        <div className="space-y-4 py-2 text-center">
+          <span
+            className="mx-auto flex h-14 w-14 items-center justify-center rounded-full"
+            style={{ background: 'rgba(245,158,11,.14)', color: '#f59e0b' }}
+          >
+            <KeyRound className="h-6 w-6" />
+          </span>
+          <div>
+            <h3 className="text-base font-semibold" style={{ color: 'var(--text)' }}>Enter the OTP</h3>
+            <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+              {connecting ? 'Verifying…' : 'We sent a verification code to the phone registered with this account.'}
             </p>
           </div>
 
-          <div>
-            <label className="mb-2 block text-xs font-medium" style={{ color: 'var(--muted)' }}>6-Digit OTP</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={6}
-              value={otpValue}
-              onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, ''))}
-              placeholder="Enter 6-digit OTP"
-              disabled={connecting}
-              className="w-full rounded-lg px-4 py-3 text-center text-2xl font-semibold tracking-[8px] outline-none"
-              style={{ border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)' }}
-            />
-          </div>
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={6}
+            value={otpValue}
+            onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, ''))}
+            placeholder="000000"
+            disabled={connecting}
+            className="mx-auto block w-[220px] rounded-lg text-center text-xl font-semibold tracking-[.35em] outline-none"
+            style={{ height: 52, border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)' }}
+          />
 
           {error && (
-            <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+            <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-left text-sm text-red-200">
               {error}
-            </div>
-          )}
-
-          {success && (
-            <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
-              {success}
             </div>
           )}
         </div>
 
         <div className="mt-5 flex flex-col gap-3">
           <Button onClick={handleVerifyOTP} disabled={busy || otpValue.length !== 6}>
-            {connecting ? 'Verifying...' : 'Verify OTP'}
+            {connecting ? 'Verifying...' : 'Verify and continue'}
           </Button>
 
           <button
@@ -769,18 +847,49 @@ function WebLoginForm({ onClose, onSaved }) {
     );
   }
 
+  // Success screen
+  if (success) {
+    return (
+      <div className="py-2 text-center">
+        <span
+          className="mx-auto flex h-14 w-14 items-center justify-center rounded-full"
+          style={{ background: 'rgba(34,197,94,.14)', color: '#22c55e' }}
+        >
+          <Check className="h-7 w-7" />
+        </span>
+        <h3 className="mt-4 text-base font-semibold" style={{ color: 'var(--text)' }}>Account is live</h3>
+        <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>{success}</p>
+
+        <div className="mt-4 grid grid-cols-2 gap-3 rounded-lg p-3 text-left" style={{ border: '1px solid var(--cardborder)' }}>
+          <div>
+            <p className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--muted)' }}>UPI ID</p>
+            <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{form.upiId || '—'}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Connection</p>
+            <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>Web Login</p>
+          </div>
+        </div>
+
+        <Button className="mt-4 w-full" onClick={finishNow}>Finish</Button>
+      </div>
+    );
+  }
+
   // Original form step
   return (
     <div>
-      <div className="space-y-3">
-        <Field label="Platform">
-          <select style={inputStyle} value={form.platform} disabled={busy} onChange={(e) => set('platform', e.target.value)}>
-            <option value="">Select platform…</option>
-            {WEB_PLATFORMS.map((p) => (
-              <option key={p.label} value={p.value}>{p.label}</option>
-            ))}
-          </select>
-        </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2">
+          <Field label="Platform">
+            <select style={inputStyle} value={form.platform} disabled={busy} onChange={(e) => set('platform', e.target.value)}>
+              <option value="">Select platform…</option>
+              {WEB_PLATFORMS.map((p) => (
+                <option key={p.label} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
 
         <Field label="UPI ID">
           <input
@@ -813,17 +922,6 @@ function WebLoginForm({ onClose, onSaved }) {
           />
         </Field>
 
-        <Field label="Login Password">
-          <input
-            type="password"
-            style={inputStyle}
-            value={form.loginPassword}
-            disabled={busy}
-            onChange={(e) => set('loginPassword', e.target.value)}
-            placeholder="••••••••"
-          />
-        </Field>
-
         <Field label="Phone Number">
           <input
             style={inputStyle}
@@ -834,22 +932,37 @@ function WebLoginForm({ onClose, onSaved }) {
           />
         </Field>
 
-        {error && (
-          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-            {error}
-          </div>
-        )}
+        <div className="col-span-2">
+          <Field label="Login Password">
+            <input
+              type="password"
+              style={inputStyle}
+              value={form.loginPassword}
+              disabled={busy}
+              onChange={(e) => set('loginPassword', e.target.value)}
+              placeholder="••••••••"
+            />
+          </Field>
+        </div>
 
-        {success && (
-          <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
-            {success}
+        {error && (
+          <div className="col-span-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+            {error}
           </div>
         )}
       </div>
 
+      <div className="mt-4 flex items-start gap-2.5 rounded-lg p-3" style={{ background: 'rgba(59,130,246,.08)', border: '1px solid rgba(59,130,246,.25)' }}>
+        <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" style={{ color: '#3b82f6' }} />
+        <div>
+          <p className="text-xs font-semibold" style={{ color: 'var(--text)' }}>Credentials start a real provider session</p>
+          <p className="mt-0.5 text-xs" style={{ color: 'var(--muted)' }}>They're used once to log into {platformLabelFor(form.platform)} on your behalf and aren't shown again in this UI.</p>
+        </div>
+      </div>
+
       <div className="mt-5 flex items-center justify-between">
         <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-        <Button onClick={handleWebLoginSave} disabled={busy}>{loading ? 'Connecting...' : 'Save'}</Button>
+        <Button onClick={handleWebLoginSave} disabled={busy}>Save &amp; connect</Button>
       </div>
 
       <div className="mt-3 flex items-center justify-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}>
@@ -868,13 +981,14 @@ function AddAccountModal({ presetBank, onClose, onSaved }) {
   const [tab, setTab] = useState('apk'); // 'apk' | 'web'
 
   return (
-    <Modal open title="Add Payment Detail" onClose={onClose}>
-      {/* Icon tabs: android (APK, teal) / globe (Web, coral). Icon on top,
-          text below, teal underline on the active tab. */}
-      <div className="flex" style={{ borderBottom: '1px solid var(--cardborder)' }}>
+    <Modal open title="Add Payment Detail" subtitle="Choose how MaxPay will verify incoming payment data." onClose={onClose} width={680}>
+      {/* Card-style connection tabs: icon tile + name + subtitle, tinted
+          border/background on the active tab (matches MaxPayDesign's
+          connectTabs) — was a plain icon-on-top underline strip before. */}
+      <div className="mb-4 grid grid-cols-2 gap-2.5">
         {[
-          { key: 'apk', label: 'APK Connection', Icon: IconRobot, iconColor: 'text-emerald-400' },
-          { key: 'web', label: 'Web Login', Icon: IconGlobe, iconColor: 'text-rose-400' },
+          { key: 'apk', label: 'APK Connection', sub: 'Use a paired Android phone', Icon: IconRobot, tint: '#22c55e' },
+          { key: 'web', label: 'Web Login', sub: 'Secure provider session', Icon: IconGlobe, tint: '#f43f5e' },
         ].map((t) => {
           const active = tab === t.key;
           return (
@@ -882,31 +996,26 @@ function AddAccountModal({ presetBank, onClose, onSaved }) {
               key={t.key}
               type="button"
               onClick={() => setTab(t.key)}
-              className="-mb-px flex flex-1 flex-col items-center gap-1.5 transition"
-              style={{
-                padding: '12px 24px',
-                borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
-              }}
+              className="flex items-center gap-2.5 rounded-xl p-3 text-left transition"
+              style={active
+                ? { border: `1px solid ${t.tint}80`, background: `${t.tint}14`, boxShadow: `0 0 0 3px ${t.tint}1f` }
+                : { border: '1px solid var(--cardborder)', background: 'transparent' }}
             >
-              <t.Icon className={t.iconColor} style={{ width: 40, height: 40 }} />
-              <span
-                className="text-sm font-medium"
-                style={{ color: active ? 'var(--accent)' : 'var(--muted)' }}
-              >
-                {t.label}
-              </span>
+              <t.Icon style={{ width: 28, height: 28, color: t.tint, flexShrink: 0 }} />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold" style={{ color: active ? t.tint : 'var(--text)' }}>{t.label}</p>
+                <p className="truncate text-xs" style={{ color: 'var(--muted)' }}>{t.sub}</p>
+              </div>
             </button>
           );
         })}
       </div>
 
-      <div className="pt-4">
-        {tab === 'apk' ? (
-          <ApkWizardBody presetBank={presetBank} onClose={onClose} onSaved={onSaved} />
-        ) : (
-          <WebLoginForm onClose={onClose} onSaved={onSaved} />
-        )}
-      </div>
+      {tab === 'apk' ? (
+        <ApkWizardBody presetBank={presetBank} onClose={onClose} onSaved={onSaved} />
+      ) : (
+        <WebLoginForm onClose={onClose} onSaved={onSaved} />
+      )}
     </Modal>
   );
 }
