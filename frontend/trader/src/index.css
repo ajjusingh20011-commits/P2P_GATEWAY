@@ -209,7 +209,10 @@
 }
 .tf-scroll::-webkit-scrollbar-track { background: transparent; }
 
-/* Scroll area with a visually hidden scrollbar (sidebar nav). */
+/* Scroll area with a visually hidden scrollbar. Currently unused — the
+   sidebar nav (its one former consumer) switched to .tf-scroll, since the
+   design shows a thin visible scrollbar there, not a hidden one, and the
+   nav genuinely overflows at common laptop viewport heights. */
 .tf-hidescroll { scrollbar-width: none; -ms-overflow-style: none; }
 .tf-hidescroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
 

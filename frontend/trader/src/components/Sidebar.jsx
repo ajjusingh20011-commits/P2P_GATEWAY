@@ -135,7 +135,7 @@ export default function Sidebar({ balance, baseRate, online, onToggleOnline, bad
       )}
 
       {/* Workspace nav */}
-      <nav className="tf-hidescroll mt-1 flex-1 space-y-1 overflow-y-auto overflow-x-hidden">
+      <nav className="tf-scroll mt-1 flex-1 space-y-1 overflow-y-auto overflow-x-hidden">
         <small style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--subtle)', padding: '9px 11px', letterSpacing: '.12em' }}>
           {collapsed ? '•••' : 'WORKSPACE'}
         </small>
