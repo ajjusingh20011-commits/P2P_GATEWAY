@@ -122,6 +122,10 @@ export const traderApi = {
   // Trader manually confirms an under_review order (bare click — no UTR input;
   // the trader has already checked their own bank/UPI app).
   confirmOrder: (id) => api.post(`/orders/${id}/trader-confirm`),
+  // Trader reopens their own cancelled/failed order back to under_review —
+  // unlike confirmOrder above, this order has no existing claim/matching
+  // trail, so a real UTR the trader found is required.
+  reopenForReview: (id, utr) => api.post(`/orders/${id}/reopen-for-review`, { utr }),
   notifications: () => api.get('/trader/notifications'),
   paymentDetails: () => api.get('/trader/payment-details'),
   addPaymentDetail: (body) => api.post('/trader/payment-details', body),

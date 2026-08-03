@@ -7,6 +7,8 @@
  *   POST /:id/confirm    public (customer confirms → paid)
  *   POST /:id/paid       public (customer confirms → paid)
  *   POST /:id/expire     trader/admin/internal
+ *   POST /:id/trader-confirm  trader (own order, under_review only)
+ *   POST /:id/reopen-for-review  trader (own order, cancelled/failed only, requires UTR)
  *   POST /:id/dispute    any authenticated user
  *   GET  /              authenticated (role-scoped list)
  */
@@ -40,6 +42,8 @@ router.post('/:id/cancel-checkout', orderController.cancelCheckout);
 router.post('/verify-payment', orderController.verifyPayment);
 router.post('/:id/cancel', verifyToken, checkRole('trader', 'admin'), orderController.cancel);
 router.post('/:id/expire', verifyToken, checkRole('trader', 'admin'), orderController.expire);
+router.post('/:id/trader-confirm', verifyToken, checkRole('trader'), orderController.traderConfirm);
+router.post('/:id/reopen-for-review', verifyToken, checkRole('trader'), orderController.reopenForReview);
 router.post('/:id/dispute', verifyToken, orderController.dispute);
 
 module.exports = router;

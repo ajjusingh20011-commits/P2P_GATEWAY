@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Clock3, Hand, CheckCircle2, X, AlertTriangle, Copy, Check, HelpCircle, Bot, Download, RotateCcw } from 'lucide-react';
-import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, BankBadge, EmptyState, LoadingState } from '../components/ui';
+import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, BankBadge, EmptyState, LoadingState, Modal } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { useSocket } from '../hooks/useSocket';
 import { traderApi } from '../services/api';
@@ -128,7 +128,7 @@ function mockToRow(t) {
 // orders reach 9 distinct statuses, so pending/checkout_open/claimed_paid and
 // disputed get their own honest badge instead of being forced into one of
 // the reference's 3 slots.
-function Resolution({ t, busy, onConfirm }) {
+function Resolution({ t, busy, onConfirm, onReopen }) {
   if (t.status === 'under_review') {
     return (
       <div className="resolutionCell">
@@ -151,7 +151,21 @@ function Resolution({ t, busy, onConfirm }) {
       </div>
     );
   }
-  if (t.status === 'cancelled' || t.status === 'failed' || t.status === 'rejected') {
+  // Cancelled/failed orders get a real recovery path — the trader may have
+  // spotted a genuine payment (e.g. a late/misrouted UTR) after the order
+  // already closed out. Rejected orders don't: that's an explicit admin
+  // decision, not a routing timeout, so it stays a plain terminal badge.
+  if (t.status === 'cancelled' || t.status === 'failed') {
+    return (
+      <div className="resolutionCell">
+        <span className="canceledState"><X size={17} />{STATUS[t.status].label}</span>
+        <button className="confirmTrade" style={{ background: 'var(--hover)', color: 'var(--text)' }} onClick={onReopen}>
+          Reopen for review
+        </button>
+      </div>
+    );
+  }
+  if (t.status === 'rejected') {
     return <div className="resolutionCell"><span className="canceledState"><X size={17} />{STATUS[t.status].label}</span></div>;
   }
   const s = STATUS[t.status] || { color: 'gray', label: t.status || '—', icon: null };
@@ -164,6 +178,9 @@ export default function Trades() {
   const [page, setPage] = useState(1);
   const [refreshKey, setRefreshKey] = useState(0);
   const [confirmingId, setConfirmingId] = useState(null);
+  const [reopening, setReopening] = useState(null); // the trade row currently in the reopen modal, or null
+  const [reopenUtr, setReopenUtr] = useState('');
+  const [reopenBusy, setReopenBusy] = useState(false);
 
   // Real orders overlay the mock; mock stays as instant value + fallback on error.
   const { data: rows, loading } = useApi(
@@ -194,6 +211,26 @@ export default function Trades() {
       toast(err.response?.data?.message || 'Failed to confirm order', 'error');
     } finally {
       setConfirmingId(null);
+    }
+  };
+
+  const openReopen = (t) => { setReopening(t); setReopenUtr(''); };
+  const closeReopen = () => { if (!reopenBusy) { setReopening(null); setReopenUtr(''); } };
+
+  const handleReopenSubmit = async () => {
+    const utr = reopenUtr.trim();
+    if (!utr) { toast('Enter the UTR you found for this payment', 'error'); return; }
+    setReopenBusy(true);
+    try {
+      await traderApi.reopenForReview(reopening.id, utr);
+      toast('Order reopened for review', 'success');
+      setReopening(null);
+      setReopenUtr('');
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      toast(err.response?.data?.message || 'Failed to reopen this order', 'error');
+    } finally {
+      setReopenBusy(false);
     }
   };
 
@@ -350,7 +387,7 @@ export default function Trades() {
                 <DateCell value={t.createdAt} />
                 <DateCell value={t.closedAt} />
 
-                <Resolution t={t} busy={confirmingId === t.id} onConfirm={() => handleConfirm(t.id)} />
+                <Resolution t={t} busy={confirmingId === t.id} onConfirm={() => handleConfirm(t.id)} onReopen={() => openReopen(t)} />
               </div>
             );
           })
@@ -360,6 +397,42 @@ export default function Trades() {
           <Pagination page={page} perPage={PER_PAGE} total={filtered.length} onPage={setPage} />
         </div>
       </Card>
+
+      {reopening && (
+        <Modal
+          open
+          onClose={closeReopen}
+          title="Reopen for review"
+          subtitle={`Trade ${reopening.id} · ${inr(reopening.amountInr)}`}
+        >
+          <div className="space-y-3">
+            <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
+              This order has no existing payment trail, so it needs real evidence before it can go
+              back under review. Enter the UTR / reference number you found for this payment.
+            </p>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium" style={{ color: 'var(--muted)' }}>UTR / reference number</span>
+              <input
+                autoFocus
+                value={reopenUtr}
+                onChange={(e) => setReopenUtr(e.target.value)}
+                disabled={reopenBusy}
+                placeholder="e.g. 412589637421"
+                style={{
+                  width: '100%', borderRadius: 8, border: '1px solid var(--input-border)', background: 'var(--input-bg)',
+                  padding: '8px 12px', fontSize: 14, color: 'var(--text)', outline: 'none',
+                }}
+              />
+            </label>
+          </div>
+          <div className="mt-5 flex items-center justify-between">
+            <Button variant="ghost" onClick={closeReopen} disabled={reopenBusy}>Cancel</Button>
+            <Button onClick={handleReopenSubmit} disabled={reopenBusy || !reopenUtr.trim()}>
+              {reopenBusy ? 'Reopening…' : 'Reopen for review'}
+            </Button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

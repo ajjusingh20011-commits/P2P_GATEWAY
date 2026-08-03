@@ -339,6 +339,58 @@ const traderConfirm = asyncHandler(async (req, res) => {
   return ok(res, { success: true, status: order.status, order: orderView(order) });
 });
 
+/* --------------------- POST /:id/reopen-for-review ------------------------- */
+// Trader-supplied recovery path for their OWN cancelled/failed order. Unlike
+// trader-confirm above (bare click — the order is already sitting in
+// under_review with an existing claim/matching trail), a cancelled/failed
+// order has no such trail, so this requires the trader to supply real
+// evidence: a UTR they actually found. Stored in donor_submitted_utr (added
+// earlier for the donor-checkout flow, never wired to any UI until now) —
+// deliberately not utr_number, which is reserved for the UTR a real
+// settlement (smartMerge.confirmOrder) confirms against.
+//
+// The status transition itself goes through the ordinary Sequelize .update()
+// path, so it's subject to the same active_amount_lock_key unique index
+// (backend/src/migrations/20260722000001-add-active-amount-lock-index.js)
+// that guards every other pending/checkout_open/claimed_paid/under_review
+// order — a MySQL VIRTUAL generated column keyed on
+// CONCAT(payment_detail_id, ':', amount_inr), recomputed automatically the
+// instant `status` changes back into that active set. No code here computes
+// or sets it; catching the resulting SequelizeUniqueConstraintError is the
+// only thing needed to turn a real DB-level collision into a clean 409.
+//
+// Once reopened, no new settlement logic is needed — the order sits in
+// under_review exactly like any other, and the existing, already-verified
+// trader-confirm flow above takes over unchanged.
+const REOPENABLE_STATUSES = ['cancelled', 'failed'];
+
+const reopenForReview = asyncHandler(async (req, res) => {
+  const trader = await db.Trader.findOne({ where: { user_id: req.user.id } });
+  if (!trader) return fail(res, 404, 'Trader profile not found');
+
+  const order = await findOrder(req.params.id);
+  if (!order) return fail(res, 404, 'Order not found');
+  if (order.trader_id !== trader.id) return fail(res, 403, 'This order does not belong to you');
+  if (!REOPENABLE_STATUSES.includes(order.status)) {
+    return fail(res, 409, `Order must be cancelled or failed to reopen (current status: ${order.status})`);
+  }
+
+  const utr = String(req.body.utr || '').trim();
+  if (!utr) return fail(res, 422, 'Enter the UTR you found for this payment before reopening it');
+
+  try {
+    await order.update({ status: 'under_review', donor_submitted_utr: utr });
+  } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      return fail(res, 409, 'This amount is currently assigned to another order and cannot be reopened');
+    }
+    throw err;
+  }
+
+  await order.reload();
+  return ok(res, { success: true, status: order.status, order: orderView(order) });
+});
+
 /* --------------------------- POST /:id/dispute ---------------------------- */
 const dispute = asyncHandler(async (req, res) => {
   const order = await findOrder(req.params.id);
@@ -482,4 +534,4 @@ const list = asyncHandler(async (req, res) => {
   return ok(res, { orders: rows.map(orderView), pagination: { page, limit, total: count } });
 });
 
-module.exports = { create, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, markPaid, cancel, cancelCheckout, verifyPayment, traderConfirm };
+module.exports = { create, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, markPaid, cancel, cancelCheckout, verifyPayment, traderConfirm, reopenForReview };
