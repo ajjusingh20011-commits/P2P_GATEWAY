@@ -249,7 +249,7 @@ export function TransactionActivityChart() {
   const hasAny = values.some((v) => v > 0);
 
   return (
-    <div className="tf-card" style={{ padding: '20px 22px', height: '100%' }}>
+    <div className="tf-card" style={{ padding: '20px 22px' }}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0 }}>Transaction activity</h3>

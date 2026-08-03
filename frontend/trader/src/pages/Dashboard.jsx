@@ -216,7 +216,12 @@ export default function Dashboard() {
           its own .tf-livepool-full class, matching the design's dashboardCore
           layout (chart + attention side-by-side, live pool full-width). */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.65fr_.72fr]" style={{ marginBottom: 18 }}>
-        <div className="tf-enter" style={{ animationDelay: '0.15s' }}>
+        {/* alignSelf: 'start' opts this cell out of the grid row's default
+            stretch — without it, this card was forced to match whatever
+            height AttentionSection's real content happened to need,
+            leaving a large empty gap below the chart's own fixed-height
+            bars instead of a compact, design-matching card. */}
+        <div className="tf-enter" style={{ animationDelay: '0.15s', alignSelf: 'start' }}>
           <TransactionActivityChart />
         </div>
         <div className="tf-enter" style={{ animationDelay: '0.25s' }}><AttentionSection /></div>
