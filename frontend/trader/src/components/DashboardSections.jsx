@@ -220,6 +220,7 @@ export function TransactionActivityChart() {
   const [orders, setOrders] = useState([]);
   const [payoutReqs, setPayoutReqs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [hovered, setHovered] = useState(null);
 
   const load = () => {
     Promise.allSettled([
@@ -269,25 +270,60 @@ export function TransactionActivityChart() {
           <p style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', padding: '40px 0' }}>No transactions in this range yet.</p>
         ) : (
           <>
-            <div className="tf-chart-bars">
-              {data.map((p, i) => {
+            <div style={{ position: 'relative' }}>
+              {hovered != null && (() => {
+                const p = data[hovered];
                 const inVal = isVolume ? p.payInVolume : p.payInCount;
                 const outVal = isVolume ? p.payoutVolume : p.payoutCount;
+                const fmt = (v) => (isVolume ? inr(v) : v.toLocaleString());
+                // Center over the hovered bar group; anchor to an edge at
+                // the first/last group instead of centering, so the fixed-
+                // width tooltip never spills past the chart's own edges.
+                const pct = ((hovered + 0.5) / data.length) * 100;
+                const posStyle = hovered === 0
+                  ? { left: 0 }
+                  : hovered === data.length - 1
+                    ? { right: 0 }
+                    : { left: `${pct}%`, transform: 'translateX(-50%)' };
                 return (
-                  <div className="tf-chart-group" key={i}>
-                    <div
-                      className="tf-chart-bar"
-                      style={{ height: `${Math.max(2, (inVal / max) * 100)}%`, background: 'linear-gradient(180deg,#818cf8,#4f46e5)' }}
-                      title={`${p.label} · Pay-in ${isVolume ? inr(inVal) : inVal}`}
-                    />
-                    <div
-                      className="tf-chart-bar"
-                      style={{ height: `${Math.max(2, (outVal / max) * 100)}%`, background: 'linear-gradient(180deg,#94a3b8,#475569)' }}
-                      title={`${p.label} · Payout ${isVolume ? inr(outVal) : outVal}`}
-                    />
+                  <div className="tf-chart-tooltip" style={posStyle}>
+                    <p className="tf-chart-tooltip-label">{p.label}</p>
+                    <div className="tf-chart-tooltip-row">
+                      <span className="tf-chart-tooltip-dot" style={{ background: '#818cf8' }} />
+                      <span className="tf-chart-tooltip-name">Pay-in</span>
+                      <span className="tf-chart-tooltip-value">{fmt(inVal)}</span>
+                    </div>
+                    <div className="tf-chart-tooltip-row">
+                      <span className="tf-chart-tooltip-dot" style={{ background: '#94a3b8' }} />
+                      <span className="tf-chart-tooltip-name">Payout</span>
+                      <span className="tf-chart-tooltip-value">{fmt(outVal)}</span>
+                    </div>
                   </div>
                 );
-              })}
+              })()}
+              <div className="tf-chart-bars">
+                {data.map((p, i) => {
+                  const inVal = isVolume ? p.payInVolume : p.payInCount;
+                  const outVal = isVolume ? p.payoutVolume : p.payoutCount;
+                  return (
+                    <div
+                      className="tf-chart-group"
+                      key={i}
+                      onMouseEnter={() => setHovered(i)}
+                      onMouseLeave={() => setHovered((h) => (h === i ? null : h))}
+                    >
+                      <div
+                        className="tf-chart-bar"
+                        style={{ height: `${Math.max(2, (inVal / max) * 100)}%`, background: 'linear-gradient(180deg,#818cf8,#4f46e5)' }}
+                      />
+                      <div
+                        className="tf-chart-bar"
+                        style={{ height: `${Math.max(2, (outVal / max) * 100)}%`, background: 'linear-gradient(180deg,#94a3b8,#475569)' }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
             </div>
             <div className="tf-chart-axis">
               {data.map((p, i) => <span key={i}>{p.label}</span>)}
