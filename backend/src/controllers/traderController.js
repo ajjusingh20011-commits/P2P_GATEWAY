@@ -80,6 +80,52 @@ const dashboard = asyncHandler(async (req, res) => {
   });
 });
 
+/* ------------------------------ GET /stats --------------------------------- */
+// Real period support for the dashboard's Volume + Success Rate cards
+// (previously today-only, hardcoded inside dashboard() above). A separate
+// endpoint rather than a `period` param on /dashboard: /dashboard's other
+// fields (balance, ftd/std counts, is_online, daily_limit...) are genuinely
+// today/point-in-time concepts and shouldn't become ambiguous based on a
+// volume-card period selector. period ∈ today | week | month | overall
+// ('overall' = no lower bound, all-time). Mirrors commission()'s window
+// logic/semantics above, just for orders instead of the rate-spread calc.
+const stats = asyncHandler(async (req, res) => {
+  const trader = await currentTrader(req, res);
+  if (!trader) return undefined;
+
+  const period = ['today', 'week', 'month', 'overall'].includes(req.query.period) ? req.query.period : 'today';
+  let start = null;
+  if (period === 'today') {
+    start = startOfToday();
+  } else if (period === 'week') {
+    start = new Date();
+    start.setDate(start.getDate() - 7);
+  } else if (period === 'month') {
+    start = new Date();
+    start.setDate(start.getDate() - 30);
+  } // 'overall' -> start stays null, no lower bound
+
+  const where = (extra) => {
+    const w = { trader_id: trader.id, ...extra };
+    if (start) w.created_at = { [Op.gte]: start };
+    return w;
+  };
+
+  const [totalOrders, confirmedOrders, closedOrders, volume] = await Promise.all([
+    db.Order.count({ where: where({}) }),
+    db.Order.count({ where: where({ status: 'success' }) }),
+    db.Order.count({ where: where({ status: { [Op.in]: ['success', 'failed', 'rejected', 'disputed'] } }) }),
+    db.Order.sum('amount_inr', { where: where({ status: 'success' }) }),
+  ]);
+
+  return ok(res, {
+    period,
+    volume_inr: volume || 0,
+    trades: totalOrders,
+    success_rate: closedOrders ? +((confirmedOrders / closedOrders) * 100).toFixed(1) : 100,
+  });
+});
+
 /* ---------------------------- GET /commission ----------------------------- */
 // Commission a trader earns over a period = the rate spread they keep vs the
 // base rate on each CONFIRMED order: (amount_inr / base_rate) − trader_deduction.
@@ -493,6 +539,7 @@ const requestPayout = asyncHandler(async (req, res) => {
 
 module.exports = {
   dashboard,
+  stats,
   commission,
   balanceLogs,
   orders,

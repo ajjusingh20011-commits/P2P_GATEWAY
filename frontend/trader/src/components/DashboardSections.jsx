@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Coins, Smartphone, Clock3, ChevronRight, CheckCircle2, ArrowRight, MoreHorizontal } from 'lucide-react';
+import { Coins, Smartphone, Clock3, ChevronRight, CheckCircle2, ArrowRight, MoreHorizontal, TrendingUp, ShieldCheck } from 'lucide-react';
 import { traderApi } from '../services/api';
 import { getDevices } from '../lib/ngoApi';
 import { BankBadge, Segments } from './ui';
@@ -13,6 +13,11 @@ import { ACCOUNT_TYPES, inr } from '../utils/mock';
 
   - CommissionSection: REAL data from GET /trader/commission?period=. The big
     number toggles between ₹ (INR) and USDT on click; it counts up on change.
+  - VolumeStatCard / SuccessRateStatCard: REAL data from GET /trader/stats?
+    period=, a dedicated endpoint (not a param on /dashboard, whose other
+    fields are genuinely today/point-in-time and shouldn't become ambiguous
+    based on a volume-card period selector). Each card owns its own period
+    state, matching the design's independent-per-card selectors.
   - TransactionActivityChart: REAL data — confirmed orders (pay-in) and
     completed payout requests (payout), fetched once and bucketed client-side
     into the selected range (1H/1D/7D/30D). No random/synthetic points; an
@@ -165,6 +170,109 @@ export function CommissionSection() {
           <option key={k} value={k}>{TAB_LABEL[k]}</option>
         ))}
       </select>
+    </div>
+  );
+}
+
+// ---- Volume / Success rate period cards (REAL data, GET /trader/stats) ----
+// Own period set from Commission's — includes "Overall" (all-time, no lower
+// bound), which /trader/commission genuinely does not support, so it must
+// stay off that dropdown to avoid a selector that silently no-ops.
+const STATS_PERIODS = ['today', 'week', 'month', 'overall'];
+const STATS_TAB_LABEL = { today: 'Today', week: 'Weekly', month: 'Monthly', overall: 'Overall' };
+const STATS_NOTE = { today: 'Today', week: 'Last 7 days', month: 'Last 30 days', overall: 'All time' };
+const STATS_VOLUME_LABEL = { today: "Today's volume", week: "This week's volume", month: "This month's volume", overall: 'All-time volume' };
+const compactInr = (n) => (n >= 100000 ? `₹${(n / 100000).toFixed(2)}L` : inr(n));
+
+function useTraderStats(period) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  const fetchFor = (p) => {
+    let alive = true;
+    setLoading(true);
+    setError(false);
+    traderApi
+      .stats(p)
+      .then((res) => { if (alive) setData(res.data.data); })
+      .catch(() => { if (alive) setError(true); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  };
+
+  useEffect(() => fetchFor(period), [period]);
+
+  // Refresh the active period when a real-time order event arrives — same
+  // trigger CommissionSection already reacts to.
+  useEffect(() => {
+    const onUpdate = () => fetchFor(period);
+    window.addEventListener('order:update', onUpdate);
+    window.addEventListener('order:new', onUpdate);
+    return () => {
+      window.removeEventListener('order:update', onUpdate);
+      window.removeEventListener('order:new', onUpdate);
+    };
+  }, [period]);
+
+  return { data, loading, error };
+}
+
+const statsSelectStyle = {
+  position: 'absolute', right: 12, top: 12, fontSize: 10, fontWeight: 600, color: 'var(--muted)', background: 'var(--surface2)',
+  border: '1px solid var(--cardborder)', borderRadius: 7, padding: '5px 7px', outline: 'none',
+};
+
+function PeriodSelect({ period, onChange }) {
+  return (
+    <select value={period} onChange={(e) => onChange(e.target.value)} style={statsSelectStyle}>
+      {STATS_PERIODS.map((k) => (
+        <option key={k} value={k}>{STATS_TAB_LABEL[k]}</option>
+      ))}
+    </select>
+  );
+}
+
+export function VolumeStatCard() {
+  const [period, setPeriod] = useState('today');
+  const { data, loading, error } = useTraderStats(period);
+  const valueText = loading && !data ? '…' : error ? '—' : compactInr(data?.volume_inr ?? 0);
+
+  return (
+    <div className="tf-card" style={{ position: 'relative', minHeight: 148, padding: 18, display: 'grid', gridTemplateColumns: '46px 1fr', gap: 12, alignItems: 'start' }}>
+      <span style={{ width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: hexA('#3b82f6', 0.14), color: '#3b82f6' }}>
+        <TrendingUp size={20} />
+      </span>
+      <div>
+        <small style={{ display: 'block', color: 'var(--muted)', fontSize: 12 }}>{STATS_VOLUME_LABEL[period]}</small>
+        <strong style={{ display: 'block', fontSize: 23, letterSpacing: '-.4px', margin: '8px 0', color: error ? 'var(--muted)' : 'var(--text)' }}>{valueText}</strong>
+        <em style={{ display: 'block', fontStyle: 'normal', color: 'var(--muted)', fontSize: 11 }}>
+          {error ? '—' : `${data?.trades ?? 0} processed orders`}
+        </em>
+      </div>
+      <PeriodSelect period={period} onChange={setPeriod} />
+    </div>
+  );
+}
+
+export function SuccessRateStatCard() {
+  const [period, setPeriod] = useState('today');
+  const { data, loading, error } = useTraderStats(period);
+  const valueText = loading && !data ? '…' : error ? '—' : `${data?.success_rate ?? 0}%`;
+
+  return (
+    <div className="tf-card" style={{ position: 'relative', minHeight: 148, padding: 18, display: 'grid', gridTemplateColumns: '46px 1fr', gap: 12, alignItems: 'start' }}>
+      <span style={{ width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: hexA('#22c55e', 0.14), color: '#22c55e' }}>
+        <ShieldCheck size={20} />
+      </span>
+      <div>
+        <small style={{ display: 'block', color: 'var(--muted)', fontSize: 12 }}>Success rate</small>
+        <strong style={{ display: 'block', fontSize: 23, letterSpacing: '-.4px', margin: '8px 0', color: error ? 'var(--muted)' : 'var(--text)' }}>{valueText}</strong>
+        <em style={{ display: 'block', fontStyle: 'normal', color: 'var(--muted)', fontSize: 11 }}>
+          {error ? '—' : STATS_NOTE[period]}
+        </em>
+      </div>
+      <PeriodSelect period={period} onChange={setPeriod} />
     </div>
   );
 }

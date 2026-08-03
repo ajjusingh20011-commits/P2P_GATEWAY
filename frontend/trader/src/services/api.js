@@ -115,6 +115,7 @@ export const authApi = {
 // { success, data }, so callers read `res.data.data`.
 export const traderApi = {
   dashboard: () => api.get('/trader/dashboard'),
+  stats: (period) => api.get('/trader/stats', { params: period ? { period } : {} }),
   commission: (period) => api.get('/trader/commission', { params: period ? { period } : {} }),
   setOnline: (is_online) => api.put('/trader/online-status', { is_online }),
   orders: (status, opts) => api.get('/orders', { params: { ...(status ? { status } : {}), ...(opts || {}) } }),

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layers3, TrendingUp, ShieldCheck, Plus, ArrowRight } from 'lucide-react';
+import { Layers3, Plus, ArrowRight } from 'lucide-react';
 import { Card, Badge, SearchInput, Button } from '../components/ui';
-import { CommissionSection, AttentionSection, LivePoolSection, TransactionActivityChart } from '../components/DashboardSections';
+import { CommissionSection, AttentionSection, LivePoolSection, TransactionActivityChart, VolumeStatCard, SuccessRateStatCard } from '../components/DashboardSections';
 import { useApi } from '../hooks/useApi';
 import { traderApi } from '../services/api';
-import { balance, stats, inr, ACCOUNT_TYPES } from '../utils/mock';
+import { balance, stats, ACCOUNT_TYPES } from '../utils/mock';
 
 // Success-rate → red / yellow / green thresholds (shared with the currency widget).
 function rateColor(rate) {
@@ -23,9 +23,6 @@ function deriveMetrics(d) {
   const rate = hasUsage ? Math.round((successful / total) * 100) : 0;
   return { successful, total, hasUsage, rate };
 }
-
-// ₹ lakh-compact formatter, matching the reference's `compact()` helper.
-const compact = (n) => (n >= 100000 ? `₹${(n / 100000).toFixed(2)}L` : inr(n));
 
 // Reference's .overviewMetric shell: icon in a left column, label/value/sub
 // stacked on the right. No `delta`/`period` slot is rendered unless a real
@@ -160,13 +157,10 @@ export default function Dashboard() {
   // Rate / FTD / STD cards (FTD/STD is an admin-only concept, not shown on
   // the trader panel at all) and no score/health metric (none is computed
   // anywhere in the backend, so none is shown — correction 1). Today's
-  // Volume and Success Rate have no real weekly/monthly source (verified
-  // against traderController.js's dashboard() handler — every figure it
-  // returns is scoped to `today`, no period query param at all), so they
-  // stay single-period with no selector; Commission Earned (below, its own
-  // component) is the only card with a real period selector, since
-  // /trader/commission genuinely computes today/week/month + a real
-  // delta_pct vs the prior equal-length window.
+  // Volume and Success Rate now have real period support of their own
+  // (GET /trader/stats?period=, added alongside this fix — see
+  // VolumeStatCard/SuccessRateStatCard in DashboardSections.jsx), matching
+  // Commission Earned's existing real period selector.
   const statCards = [
     {
       label: 'Total UPI accounts', value: details.length, icon: Layers3, tone: METRIC_TONE.purple,
@@ -181,8 +175,6 @@ export default function Dashboard() {
         </button>
       ),
     },
-    { label: "Today's volume", value: compact(dash.today_volume_inr ?? 0), sub: `${dash.today_trades ?? 0} processed orders`, icon: TrendingUp, tone: METRIC_TONE.blue },
-    { label: 'Success rate', value: `${dash.success_rate}%`, sub: 'Today', icon: ShieldCheck, tone: METRIC_TONE.green },
   ];
 
   return (
@@ -195,11 +187,10 @@ export default function Dashboard() {
         </Button>
       </div>
 
-      {/* 4 equal top-row cards: 3 real single-period metrics (no delta% or
-          period dropdown — the backend has no weekly/monthly or trend source
-          for volume/success-rate, so nothing fake is shown in their place)
-          + Commission Earned (its own component, with a real today/week/month
-          period selector since /trader/commission genuinely backs all three).
+      {/* 4 equal top-row cards: Total UPI accounts (real, static) + Volume,
+          Success Rate and Commission Earned — all three now with a real
+          today/week/month/overall (Commission: today/week/month) period
+          selector, each independently fetching from its own real endpoint.
           Balance lives in the sidebar, so it is not duplicated here. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" style={{ marginBottom: 18 }}>
         {statCards.map((s, i) => (
@@ -207,6 +198,8 @@ export default function Dashboard() {
             <OverviewMetric label={s.label} value={s.value} sub={s.sub} icon={s.icon} tone={s.tone} link={s.link} />
           </div>
         ))}
+        <div className="tf-enter" style={{ animationDelay: '0.1s' }}><VolumeStatCard /></div>
+        <div className="tf-enter" style={{ animationDelay: '0.2s' }}><SuccessRateStatCard /></div>
         <div className="tf-enter" style={{ animationDelay: '0.3s' }}><CommissionSection /></div>
       </div>
 

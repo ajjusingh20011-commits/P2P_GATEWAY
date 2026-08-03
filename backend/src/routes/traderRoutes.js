@@ -14,6 +14,7 @@ const router = Router();
 router.use(verifyToken, checkRole('trader'));
 
 router.get('/dashboard', traderController.dashboard);
+router.get('/stats', traderController.stats);
 router.get('/commission', traderController.commission);
 router.get('/balance-logs', traderController.balanceLogs);
 router.get('/orders', traderController.orders);
