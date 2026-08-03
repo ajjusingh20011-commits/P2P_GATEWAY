@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Layers3, Wifi } from 'lucide-react';
 import { Card, Badge, Button, Toggle, SearchInput, Select, PageHeader, Modal, BankBadge, LivenessBadge } from '../components/ui';
+import { LivePoolSection } from '../components/DashboardSections';
 import {
   IconPlus, IconEdit, IconTrash, IconChevron, IconRobot, IconWarning, IconDots, IconDetails, IconLock, IconGlobe,
 } from '../components/icons';
@@ -1750,6 +1751,17 @@ export default function Offers() {
 
   useEffect(() => { load(); }, []);
 
+  // Real today's-volume figure for the Live Pool card's summary strip — same
+  // /trader/dashboard field (today_volume_inr) Dashboard.jsx's own
+  // LivePoolSection instance already reads. Nothing else from that endpoint
+  // is needed here, so only this one field is kept.
+  const [todayVolumeInr, setTodayVolumeInr] = useState(0);
+  useEffect(() => {
+    traderApi.dashboard()
+      .then((res) => setTodayVolumeInr(res?.data?.data?.today_volume_inr ?? 0))
+      .catch(() => {});
+  }, []);
+
   // NGO accounts come from the NGO backend (port 3000) via ngoApi. If that
   // server is unreachable, we degrade gracefully to an empty list.
   const loadNGOAccounts = async () => {
@@ -2159,7 +2171,15 @@ export default function Offers() {
       {loading ? (
         <p className="py-16 text-center text-sm" style={{ color: 'var(--muted)' }}>Loading…</p>
       ) : (
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <>
+          {/* Live Pool — reused as-is from Dashboard.jsx's own instance (same
+              real details/deactivate mutation), matching the design's Live
+              Pool table section on this page too. */}
+          <div className="mb-6">
+            <LivePoolSection details={details} todayVolumeInr={todayVolumeInr} onChanged={load} />
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <OffersColumn details={details} onBulkToggle={bulkToggle} onAdd={openAdd} ngoAccounts={ngoAccounts} onToggleNGO={toggleNGO} ngoToggleBusyId={ngoToggleBusyId} />
           <DetailsColumn
             details={details}
@@ -2182,7 +2202,8 @@ export default function Offers() {
             deviceLiveMap={deviceLiveMap}
             ngoAliveMap={ngoAliveMap}
           />
-        </div>
+          </div>
+        </>
       )}
 
       {adding && (
