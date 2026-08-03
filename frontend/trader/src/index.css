@@ -425,6 +425,7 @@
    Buy USDT — reference's summary3 / flush+tabs / payout row.
    ========================================================================== */
 .summary3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px; }
+.summary3 .tf-card { padding: 19px; }
 .summary3 small, .summary3 strong, .summary3 span { display: block; }
 .summary3 small { color: var(--muted); font-size: 12px; }
 .summary3 strong { font-size: 21px; margin: 8px 0; color: var(--text); }
