@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Layers3, Wifi } from 'lucide-react';
+import { Layers3, Wifi, BadgeCheck } from 'lucide-react';
 import { Card, Badge, Button, Toggle, SearchInput, Select, PageHeader, Modal, BankBadge, LivenessBadge } from '../components/ui';
 import { LivePoolSection } from '../components/DashboardSections';
 import {
@@ -914,7 +914,7 @@ function AddAccountModal({ presetBank, onClose, onSaved }) {
 // ---------------------------------------------------------------------------
 // EDIT modal
 // ---------------------------------------------------------------------------
-function EditModal({ detail, onClose, onSaved, onDeleted }) {
+function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) {
   const [form, setForm] = useState(() => ({
     ...emptyLimits(),
     account_name: detail.account_name ?? '',
@@ -947,6 +947,10 @@ function EditModal({ detail, onClose, onSaved, onDeleted }) {
 
   const nameValid = form.account_name.trim().length >= 2;
   const upiValid = upiHasAt(form.upi_id);
+  // Same real heartbeat liveness the row list shows (deviceLiveMap, polled
+  // every 15s) — NGO accounts skip this because the edit action itself is
+  // only reachable while the account is live (gated at the row level).
+  const liveState = !detail.__ngo && detail.ngo_device_id ? (deviceLiveMap[detail.ngo_device_id] ? 'active' : 'dead') : null;
 
   const save = async () => {
     if (!nameValid || !upiValid) {
@@ -1021,42 +1025,81 @@ function EditModal({ detail, onClose, onSaved, onDeleted }) {
   };
 
   return (
-    <Modal
-      open
-      title="Edit Payment Detail"
-      onClose={onClose}
-      headerRight={
-        // NGO/web accounts do have a real delete endpoint, but it's exposed
-        // from the trash icon on their row in AccountsColumn instead of here
-        // — this modal's delete only covers trader-native details.
-        !detail.__ngo && (
-          <button onClick={remove} className="tf-hbtn" style={{ color: '#ef4444' }} aria-label="Delete">
-            <IconTrash className="h-4 w-4" />
-          </button>
-        )
-      }
-    >
-      <div className="space-y-3">
-        <Field label="Title / Name">
+    <Modal open title="Edit Payment Detail" onClose={onClose} width={560}>
+      {/* identity + real connection state — same data the row list shows,
+          just surfaced here too so an edit never opens "blind" to whether
+          the account is actually live right now. */}
+      <div className="mb-4 flex items-center justify-between gap-3 rounded-lg p-3" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
+        <div className="flex min-w-0 items-center gap-3">
+          <BankBadge type={detail.__ngo ? detail.__platform : detail.account_type} label={form.account_name || 'Untitled'} size={40} />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{form.account_name || 'Untitled'}</p>
+            <p className="truncate text-xs" style={{ color: 'var(--muted)' }}>
+              {detail.__ngo ? platformLabel(detail.__platform) : methodMeta(detail.account_type).label}
+              {' · '}{(detail.__ngo || connType(detail) === 'web') ? 'Web Login' : 'APK'} connection
+            </p>
+          </div>
+        </div>
+        {detail.__ngo ? (
+          <Badge color="green">Live</Badge>
+        ) : liveState ? (
+          <LivenessBadge state={liveState} />
+        ) : (
+          <span title="No device connected" style={{ color: 'var(--subtle)', flexShrink: 0 }}>
+            <IconRobot className="h-5 w-5" />
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Display name">
           <input style={inputStyle} value={form.account_name} onChange={(e) => set('account_name', e.target.value)} />
-        </Field>
-        <Field label="UPI ID">
-          <input
-            style={form.upi_id.length > 0 && !upiValid ? inputStyleInvalid : upiValid ? inputStyleValid : inputStyle}
-            value={form.upi_id}
-            onChange={(e) => set('upi_id', e.target.value)}
-          />
-          <span className="mt-1 block text-xs" style={{ color: 'var(--muted)' }}>Must contain “@” (example: name@bank)</span>
         </Field>
         <Field label="Organization name">
           <input style={inputStyle} value={form.organization_name} onChange={(e) => set('organization_name', e.target.value)} />
         </Field>
-
-        <div className="pt-1">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Limits</p>
-          <LimitsForm form={form} set={set} caps={caps} setCaps={setCaps} usage={detail.usage} />
+        <div className="col-span-2">
+          <Field label="UPI ID">
+            <input
+              style={form.upi_id.length > 0 && !upiValid ? inputStyleInvalid : upiValid ? inputStyleValid : inputStyle}
+              value={form.upi_id}
+              onChange={(e) => set('upi_id', e.target.value)}
+            />
+            <span className="mt-1 block text-xs" style={{ color: 'var(--muted)' }}>Must contain “@” (example: name@bank)</span>
+          </Field>
         </div>
       </div>
+
+      <div className="mb-2 mt-4 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>Routing limits</p>
+          <p className="text-xs" style={{ color: 'var(--muted)' }}>Independent hourly, daily, weekly and monthly caps — configure only what you need.</p>
+        </div>
+        <BadgeCheck className="h-[18px] w-[18px] flex-shrink-0" style={{ color: 'var(--muted)' }} />
+      </div>
+      <LimitsForm form={form} set={set} caps={caps} setCaps={setCaps} usage={detail.usage} />
+
+      {/* NGO/web accounts do have a real delete endpoint, but it's exposed
+          from the trash icon on their row in AccountsColumn instead of here
+          — this modal's delete only covers trader-native details. */}
+      {!detail.__ngo && (
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-lg p-3" style={{ border: '1px solid rgba(239,68,68,.3)', background: 'rgba(239,68,68,.05)' }}>
+          <div className="flex items-center gap-2.5">
+            <IconTrash className="h-4 w-4 flex-shrink-0" style={{ color: '#ef4444' }} />
+            <div>
+              <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>Delete payment detail</p>
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>Removes it from routing and your inventory.</p>
+            </div>
+          </div>
+          <button
+            onClick={remove}
+            className="whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium"
+            style={{ border: '1px solid rgba(239,68,68,.4)', color: '#ef4444' }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
 
       <div className="mt-5 flex items-center justify-between">
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -2141,6 +2184,7 @@ export default function Offers() {
           // both lists so whichever one changed shows the update.
           onSaved={() => Promise.all([load(), loadNGOAccounts()])}
           onDeleted={load}
+          deviceLiveMap={deviceLiveMap}
         />
       )}
     </div>
