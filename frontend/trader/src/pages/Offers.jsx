@@ -2110,7 +2110,7 @@ export default function Offers() {
     <div>
       <PageHeader
         title="Offers & Details"
-        subtitle="Manage the accounts you receive payments on"
+        info="Manage all UPI accounts, connections, limits and routing eligibility."
         actions={
           <Button onClick={() => openAdd(null)}>
             <IconPlus className="h-4 w-4" />

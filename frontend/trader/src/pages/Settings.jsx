@@ -314,7 +314,7 @@ export default function Settings() {
 
   return (
     <div>
-      <PageHeader eyebrow="ACCOUNT" title="Settings" subtitle="Security, preferences and payout settlement configuration." />
+      <PageHeader eyebrow="ACCOUNT" title="Settings" info="Security, preferences and payout settlement configuration." />
 
       {/* 4-card grid: Profile, Security, Settlement wallet, Appearance. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

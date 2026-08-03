@@ -228,7 +228,7 @@ export default function Smartphones() {
     <div>
       <PageHeader
         title="Smartphones"
-        subtitle="Devices connected to your account"
+        info="Pair and monitor phones that detect incoming bank and UPI notifications."
         actions={
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={loadDevices} disabled={loadingDevices}>

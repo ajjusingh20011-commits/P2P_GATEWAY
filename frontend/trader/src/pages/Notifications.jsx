@@ -108,7 +108,7 @@ export default function Notifications() {
       <PageHeader
         eyebrow="ACTIVITY CENTER"
         title="Notifications"
-        subtitle="Payment-detection events from your connected accounts."
+        info="Payment detection, payout and account-health events."
         actions={
           <>
             {loading && <span style={{ color: 'var(--muted)', fontSize: 12 }}>Loading…</span>}

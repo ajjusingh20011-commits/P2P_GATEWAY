@@ -253,7 +253,7 @@ export default function Trades() {
     <div>
       <PageHeader
         title="Sell USDT"
-        subtitle="Incoming donor orders and automated payment resolution"
+        info="Incoming donor orders and automated payment resolution."
         actions={
           <div className="flex items-center gap-2">
             {loading && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</span>}

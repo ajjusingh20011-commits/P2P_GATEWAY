@@ -3,8 +3,8 @@
  * Theme-aware: colors are driven by the CSS variables defined on `.tf-scope`
  * in index.css, so every primitive follows the light/dark toggle automatically.
  */
-import { useEffect } from 'react';
-import { IconSearch, IconChevron, IconX } from './icons';
+import { useEffect, useRef, useState } from 'react';
+import { IconSearch, IconChevron, IconX, IconInfo } from './icons';
 
 /* Map a named accent (legacy usage) or a hex string to a hex color. */
 const ACCENT_HEX = {
@@ -378,7 +378,47 @@ export function Segments({ options, value, onChange }) {
   );
 }
 
-export function PageHeader({ eyebrow, title, subtitle, actions }) {
+/**
+ * Info icon + popover next to a page's <h1>, replacing the old long
+ * subtitle line — matches MaxPayDesign's shared PageTitle component
+ * (pageInfoBtn/pageInfoPopover in trader.css), which puts page context in
+ * a popover instead of a permanent subtitle under the title.
+ */
+function PageInfo({ info }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="Page details"
+        aria-expanded={open}
+        className="flex items-center justify-center"
+        style={{ width: 22, height: 22, borderRadius: 6, border: 0, background: 'transparent', color: 'var(--muted)', cursor: 'pointer', flexShrink: 0 }}
+      >
+        <IconInfo className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div
+          className="absolute top-full z-30 mt-1.5"
+          style={{ left: '50%', transform: 'translateX(-50%)', width: 280, maxWidth: 'calc(100vw - 32px)', padding: '12px 14px', borderRadius: 12, background: 'var(--card)', border: '1px solid var(--cardborder)', boxShadow: '0 18px 50px rgba(16,24,40,.16)' }}
+        >
+          <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: 'var(--muted)' }}>{info}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function PageHeader({ eyebrow, title, info, actions }) {
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
       <div>
@@ -387,8 +427,10 @@ export function PageHeader({ eyebrow, title, subtitle, actions }) {
             {eyebrow}
           </small>
         )}
-        <h1 style={{ color: 'var(--text)', fontWeight: 800, fontSize: 28, margin: eyebrow ? '6px 0 0' : 0, letterSpacing: '-.8px' }}>{title}</h1>
-        {subtitle && <p style={{ color: 'var(--muted)', fontSize: 14, margin: '6px 0 0' }}>{subtitle}</p>}
+        <div className="flex items-center gap-1.5" style={{ marginTop: eyebrow ? 6 : 0 }}>
+          <h1 style={{ color: 'var(--text)', fontWeight: 800, fontSize: 28, margin: 0, letterSpacing: '-.8px' }}>{title}</h1>
+          {info && <PageInfo info={info} />}
+        </div>
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>
