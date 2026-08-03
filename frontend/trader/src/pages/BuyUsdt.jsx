@@ -178,7 +178,7 @@ export default function BuyUsdt() {
 
   return (
     <div>
-      <PageHeader eyebrow="BUY USDT" title="Payout processing" info="Pay merchant recipients in INR and receive settlement in USDT." />
+      <PageHeader eyebrow="BUY USDT" title="Payout" info="Pay merchant recipients in INR and receive settlement in USDT." />
 
       {/* Reference's 3-card summary row — built entirely from the counts
           object every load() already returns for every tab, not just the
