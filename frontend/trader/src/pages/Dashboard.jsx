@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layers3, TrendingUp, ShieldCheck, Plus } from 'lucide-react';
+import { Layers3, TrendingUp, ShieldCheck, Plus, ArrowRight } from 'lucide-react';
 import { Card, Badge, SearchInput, Button } from '../components/ui';
 import { CommissionSection, AttentionSection, LivePoolSection, TransactionActivityChart } from '../components/DashboardSections';
 import { useApi } from '../hooks/useApi';
@@ -33,7 +33,7 @@ const compact = (n) => (n >= 100000 ? `₹${(n / 100000).toFixed(2)}L` : inr(n))
 // every card, but today's volume and success rate have no real weekly/
 // monthly or trend source on this backend, so those stay single-period with
 // no fabricated comparison number.
-function OverviewMetric({ label, value, sub, icon: Icon, tone, period }) {
+function OverviewMetric({ label, value, sub, icon: Icon, tone, period, link }) {
   return (
     <Card style={{ position: 'relative', minHeight: 148, padding: 18, display: 'grid', gridTemplateColumns: '46px 1fr', gap: 12, alignItems: 'start' }}>
       <span
@@ -45,6 +45,7 @@ function OverviewMetric({ label, value, sub, icon: Icon, tone, period }) {
         <small style={{ display: 'block', color: 'var(--muted)', fontSize: 12 }}>{label}</small>
         <strong style={{ display: 'block', fontSize: 23, letterSpacing: '-.4px', margin: '8px 0', color: 'var(--text)' }}>{value}</strong>
         {sub && <em style={{ display: 'block', fontStyle: 'normal', color: 'var(--muted)', fontSize: 11 }}>{sub}</em>}
+        {link}
       </div>
       {period}
     </Card>
@@ -147,16 +148,39 @@ export default function Dashboard() {
   }, [details]);
   const hasRateData = rateBands.some((b) => b.count > 0);
 
+  // Real live-account count — same routing-eligibility definition
+  // LivePoolSection uses (is_active is the admin/linkage gate,
+  // is_active_detail is the trader's own on/off intent; both must hold).
+  const liveCount = useMemo(
+    () => details.filter((d) => d.is_active && d.is_active_detail !== false).length,
+    [details]
+  );
+
   // Top stat row — exactly the set the approved design calls for. No My
   // Rate / FTD / STD cards (FTD/STD is an admin-only concept, not shown on
   // the trader panel at all) and no score/health metric (none is computed
   // anywhere in the backend, so none is shown — correction 1). Today's
-  // Volume and Success Rate have no real weekly/monthly source, so they stay
-  // single-period; Commission Earned (below, its own component) is the only
-  // card with a real period selector since /trader/commission genuinely
-  // backs today/week/month.
+  // Volume and Success Rate have no real weekly/monthly source (verified
+  // against traderController.js's dashboard() handler — every figure it
+  // returns is scoped to `today`, no period query param at all), so they
+  // stay single-period with no selector; Commission Earned (below, its own
+  // component) is the only card with a real period selector, since
+  // /trader/commission genuinely computes today/week/month + a real
+  // delta_pct vs the prior equal-length window.
   const statCards = [
-    { label: 'Total UPI accounts', value: details.length, sub: 'All connected accounts', icon: Layers3, tone: METRIC_TONE.purple },
+    {
+      label: 'Total UPI accounts', value: details.length, icon: Layers3, tone: METRIC_TONE.purple,
+      link: (
+        <button
+          type="button"
+          onClick={() => navigate('/offers')}
+          className="flex items-center gap-1"
+          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent)', fontSize: 11, fontWeight: 700 }}
+        >
+          {liveCount} live of {details.length} <ArrowRight size={12} />
+        </button>
+      ),
+    },
     { label: "Today's volume", value: compact(dash.today_volume_inr ?? 0), sub: `${dash.today_trades ?? 0} processed orders`, icon: TrendingUp, tone: METRIC_TONE.blue },
     { label: 'Success rate', value: `${dash.success_rate}%`, sub: 'Today', icon: ShieldCheck, tone: METRIC_TONE.green },
   ];
@@ -180,7 +204,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" style={{ marginBottom: 18 }}>
         {statCards.map((s, i) => (
           <div key={s.label} className="tf-enter" style={{ animationDelay: `${i * 0.1}s` }}>
-            <OverviewMetric label={s.label} value={s.value} sub={s.sub} icon={s.icon} tone={s.tone} />
+            <OverviewMetric label={s.label} value={s.value} sub={s.sub} icon={s.icon} tone={s.tone} link={s.link} />
           </div>
         ))}
         <div className="tf-enter" style={{ animationDelay: '0.3s' }}><CommissionSection /></div>
