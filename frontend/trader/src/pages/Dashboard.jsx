@@ -194,13 +194,13 @@ export default function Dashboard() {
           Balance lives in the sidebar, so it is not duplicated here. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" style={{ marginBottom: 18 }}>
         {statCards.map((s, i) => (
-          <div key={s.label} className="tf-enter" style={{ animationDelay: `${i * 0.1}s` }}>
+          <div key={s.label} className="tf-enter" style={{ animationDelay: `${i * 0.1}s`, minWidth: 0 }}>
             <OverviewMetric label={s.label} value={s.value} sub={s.sub} icon={s.icon} tone={s.tone} link={s.link} />
           </div>
         ))}
-        <div className="tf-enter" style={{ animationDelay: '0.1s' }}><VolumeStatCard /></div>
-        <div className="tf-enter" style={{ animationDelay: '0.2s' }}><SuccessRateStatCard /></div>
-        <div className="tf-enter" style={{ animationDelay: '0.3s' }}><CommissionSection /></div>
+        <div className="tf-enter" style={{ animationDelay: '0.1s', minWidth: 0 }}><VolumeStatCard /></div>
+        <div className="tf-enter" style={{ animationDelay: '0.2s', minWidth: 0 }}><SuccessRateStatCard /></div>
+        <div className="tf-enter" style={{ animationDelay: '0.3s', minWidth: 0 }}><CommissionSection /></div>
       </div>
 
       {/* Transaction activity (65%, real order/payout data) + Requires
@@ -214,18 +214,18 @@ export default function Dashboard() {
             height AttentionSection's real content happened to need,
             leaving a large empty gap below the chart's own fixed-height
             bars instead of a compact, design-matching card. */}
-        <div className="tf-enter" style={{ animationDelay: '0.15s', alignSelf: 'start' }}>
+        <div className="tf-enter" style={{ animationDelay: '0.15s', alignSelf: 'start', minWidth: 0 }}>
           <TransactionActivityChart />
         </div>
-        <div className="tf-enter" style={{ animationDelay: '0.25s' }}><AttentionSection /></div>
-        <div className="tf-enter" style={{ animationDelay: '0.2s' }}>
+        <div className="tf-enter" style={{ animationDelay: '0.25s', minWidth: 0 }}><AttentionSection /></div>
+        <div className="tf-enter" style={{ animationDelay: '0.2s', minWidth: 0 }}>
           <LivePoolSection details={details} todayVolumeInr={dash.today_volume_inr ?? 0} onChanged={loadDetails} />
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         {/* Payment Details Conversion — spans 2 cols */}
-        <Card className="flex flex-col xl:col-span-2">
+        <Card className="flex flex-col xl:col-span-2" style={{ minWidth: 0 }}>
           <div className="flex items-center justify-between p-4" style={{ borderBottom: '1px solid var(--cardborder)' }}>
             <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>Payment Details Conversion</h2>
             <Badge color="green">{details.length} total</Badge>
@@ -298,7 +298,7 @@ export default function Dashboard() {
             trader's own accounts, grouped into the same rate bands used
             above (formerly a "Values by Currency" widget whose bars were
             hardcoded to 100% width regardless of any real data). */}
-        <Card className="flex flex-col">
+        <Card className="flex flex-col" style={{ minWidth: 0 }}>
           <div className="p-4" style={{ borderBottom: '1px solid var(--cardborder)' }}>
             <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>Success Rate Distribution</h2>
             <p style={{ color: 'var(--muted)', fontSize: 12, margin: '3px 0 0' }}>Accounts with order history, by conversion rate</p>
