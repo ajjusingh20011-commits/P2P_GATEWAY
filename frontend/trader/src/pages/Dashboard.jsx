@@ -218,7 +218,13 @@ export default function Dashboard() {
           <TransactionActivityChart />
         </div>
         <div className="tf-enter" style={{ animationDelay: '0.25s', minWidth: 0 }}><AttentionSection /></div>
-        <div className="tf-enter" style={{ animationDelay: '0.2s', minWidth: 0 }}>
+        {/* gridColumn spans this cell across both columns — .tf-livepool-full's
+            own grid-column:1/-1 (index.css) has no effect here since it's set
+            on LivePoolSection's own inner div, one level below the actual
+            grid item (this wrapper), so it was never really spanning; it just
+            wasn't visually obvious while the second column was still being
+            squeezed to a min-content width by the overflow bug fixed above. */}
+        <div className="tf-enter" style={{ animationDelay: '0.2s', minWidth: 0, gridColumn: '1 / -1' }}>
           <LivePoolSection details={details} todayVolumeInr={dash.today_volume_inr ?? 0} onChanged={loadDetails} />
         </div>
       </div>
