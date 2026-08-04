@@ -12,7 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import {
   saveWebAccount, getAccounts, toggleAccount, updateAccount, connectAccount, verifyOTP, deleteAccount,
-  getDevices, getAccountStatus, NGO_SOCKET_ORIGIN,
+  getDevices, getAccountStatus, getNgoSocketToken, NGO_SOCKET_ORIGIN,
 } from '../lib/ngoApi';
 
 // A device counts as "live" for the readiness gate only within this window —
@@ -1960,24 +1960,33 @@ export default function Offers() {
   // Item 4 (web half): auto-unlink on a REAL session-death push — the
   // existing account-status socket event webScraper.js already emits when
   // its monitor gives up (after item 3's auto-reconnect attempt fails), not
-  // a new detection mechanism.
+  // a new detection mechanism. Joins via a verified service token (see
+  // ngoApi.js's getNgoSocketToken) — ngo-backend places this socket in this
+  // real trader's own room server-side, not a client-supplied ngoId.
   useEffect(() => {
-    const ngoId = localStorage.getItem('ngo_id');
-    if (!ngoId) return undefined;
-    const socket = io(NGO_SOCKET_ORIGIN);
-    socket.emit('join', ngoId);
-    socket.on('account-status', ({ accountId, status }) => {
-      if (status !== 'session_expired') return;
-      const account = ngoAccountsRef.current.find((a) => a._id === accountId);
-      loadNGOAccounts();
-      if (account?.gatewayPaymentDetailId) {
-        traderApi
-          .updatePaymentDetail(account.gatewayPaymentDetailId, { is_active: false })
-          .catch((e) => console.error('Auto-unlink sync failed:', e));
-        toast(`${account.displayName || account.upiId || 'Account'} session expired — unlinked from its Offer`, 'error');
-      }
-    });
-    return () => socket.disconnect();
+    let socket;
+    let cancelled = false;
+
+    getNgoSocketToken().then((serviceToken) => {
+      if (cancelled) return;
+      socket = io(NGO_SOCKET_ORIGIN, { auth: { serviceToken } });
+      socket.on('account-status', ({ accountId, status }) => {
+        if (status !== 'session_expired') return;
+        const account = ngoAccountsRef.current.find((a) => a._id === accountId);
+        loadNGOAccounts();
+        if (account?.gatewayPaymentDetailId) {
+          traderApi
+            .updatePaymentDetail(account.gatewayPaymentDetailId, { is_active: false })
+            .catch((e) => console.error('Auto-unlink sync failed:', e));
+          toast(`${account.displayName || account.upiId || 'Account'} session expired — unlinked from its Offer`, 'error');
+        }
+      });
+    }).catch((e) => console.error('Could not start account-status socket:', e.message));
+
+    return () => {
+      cancelled = true;
+      socket?.disconnect();
+    };
   }, []);
 
   // Busy-disables an NGO account's toggle while a request is in flight — the

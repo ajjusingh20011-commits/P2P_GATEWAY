@@ -3,10 +3,23 @@ const { PLATFORMS, ACCOUNT_STATUS, ACCOUNT_STATUS_REASON, CONNECTION_TYPE } = re
 
 const accountSchema = new mongoose.Schema(
   {
+    // No longer required — the per-trader model below (traderId) is the
+    // real authorization boundary now. Kept nullable so a trader-service
+    // account create doesn't need a bogus org id; still populated on
+    // legacy/pre-existing rows.
     ngoId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'NGO',
-      required: true,
+      default: null,
+      index: true,
+    },
+    // The real trader (MySQL trader.id, backend/'s DB) who owns this
+    // account — the actual authorization boundary going forward; ngoId
+    // above is kept only for the legacy shared-org bookkeeping it always
+    // had, no longer used to decide who can see/edit this row.
+    traderId: {
+      type: Number,
+      default: null,
       index: true,
     },
     platform: {

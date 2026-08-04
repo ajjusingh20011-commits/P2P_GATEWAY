@@ -7,6 +7,7 @@ require('dotenv').config({
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 
 const connectDB = require('./src/config/database');
@@ -28,12 +29,23 @@ const app = express();
 // ---------------------------------------------------------------------------
 // Core middleware
 // ---------------------------------------------------------------------------
+// Real allow-list, read from CORS_ORIGINS (comma-separated) — same pattern
+// backend/src/config/index.js already uses (pass the array straight through
+// as `origin`, not a callback that throws — the `cors` package just omits
+// the Access-Control-Allow-Origin header for a non-matching origin, no 500).
+// Falls back to the known local trader-panel dev origin when unset so local
+// dev keeps working with no env changes. Requests with no Origin header (the
+// APK's HttpURLConnection, curl, server-to-server calls) are never subject
+// to CORS at all — the `cors` package only checks browser-sent Origin
+// headers — so tightening this has no effect on the APK.
+const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5174')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: function(origin, callback) {
-      // Allow all origins for now
-      callback(null, true);
-    },
+    origin: corsOrigins,
     credentials: true,
   })
 );
@@ -45,12 +57,34 @@ app.use(express.urlencoded({ extended: true }));
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: { origin: corsOrigins, methods: ['GET', 'POST'] },
 });
 app.locals.io = io;
 
 io.on('connection', (socket) => {
   console.log(`Socket connected: ${socket.id}`);
+
+  // Real trader auth — a short-lived token minted by backend/ (see
+  // GET /api/trader/ngo-socket-token). Verified here at handshake time so
+  // the room a client lands in is never a value the client itself supplies
+  // (unlike the legacy 'join' event below, which trusts whatever room name
+  // it's given — kept only for other, non-trader frontends already relying
+  // on it; not used by the trader panel's Offers/Smartphones/Notifications
+  // pages once they present a serviceToken instead).
+  const serviceToken = socket.handshake.auth?.serviceToken;
+  if (serviceToken) {
+    try {
+      const decoded = jwt.verify(serviceToken, process.env.SERVICE_AUTH_SECRET, {
+        issuer: 'p2p-backend',
+        audience: 'ngo-backend',
+      });
+      if (decoded.type === 'service' && Number.isFinite(decoded.trader_id)) {
+        socket.join(`trader:${decoded.trader_id}`);
+      }
+    } catch (err) {
+      console.warn(`Socket ${socket.id} presented an invalid service token: ${err.message}`);
+    }
+  }
 
   socket.on('join', (room) => {
     if (room) {

@@ -7,11 +7,19 @@
 const { Router } = require('express');
 const traderController = require('../controllers/traderController');
 const payoutController = require('../controllers/payoutController');
+const ngoProxyController = require('../controllers/ngoProxyController');
 const { verifyToken, checkRole } = require('../middleware/auth');
 
 const router = Router();
 
 router.use(verifyToken, checkRole('trader'));
+
+// Real-trader-authenticated relay to ngo-backend (Web Login accounts,
+// smartphone pairing) — see ngoProxyController.js. Replaces the old shared
+// ngo_staff login the trader frontend used to authenticate to ngo-backend
+// directly with.
+router.get('/ngo-socket-token', ngoProxyController.socketToken);
+router.all('/ngo-proxy/*', ngoProxyController.forward);
 
 router.get('/dashboard', traderController.dashboard);
 router.get('/stats', traderController.stats);

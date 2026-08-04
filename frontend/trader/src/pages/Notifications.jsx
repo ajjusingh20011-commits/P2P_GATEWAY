@@ -4,7 +4,7 @@ import { BadgeCheck } from 'lucide-react';
 import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, EmptyState, LoadingState } from '../components/ui';
 import { IconRefresh, IconBell, IconWarning } from '../components/icons';
 import { useApi } from '../hooks/useApi';
-import { getTransactions, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
+import { getTransactions, getNgoSocketToken, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 import { notifications, ACCOUNT_TYPES } from '../utils/mock';
 
 const PER_PAGE = 8;
@@ -104,28 +104,27 @@ export default function Notifications() {
     if (!loading) setRefreshing(false);
   }, [loading]);
 
-  // Live refresh — ngo-backend's scraper emits 'new-transactions' to the
-  // NGO's own socket room the instant it saves a newly-scraped transaction
-  // (see ngo-backend/src/services/webScraper.js and update-scraper.js),
-  // which is exactly the event that grows this page's list. Same
-  // connect/join('ngoId') pattern already used by Offers.jsx/Smartphones.jsx.
-  //
-  // ngo_id isn't known until getNGOAuth() (triggered by the getTransactions()
-  // call above) resolves and caches it — joining at raw mount lost the race
-  // on a fresh session (localStorage.ngo_id still empty), silently never
-  // connecting. Waiting for `loading` to clear guarantees it's set; the
-  // socketRef guard keeps a later manual refresh from reconnecting.
+  // Live refresh — ngo-backend's scraper emits 'new-transactions' to this
+  // trader's own socket room the instant it saves a newly-scraped
+  // transaction (see ngo-backend/src/services/webScraper.js), which is
+  // exactly the event that grows this page's list. Joins via a verified
+  // service token (getNgoSocketToken) — ngo-backend places the socket in
+  // this real trader's room server-side, no client-supplied ngoId, no race
+  // on a lazily-cached value like the old shared-login version had.
   const notifSocketRef = useRef(null);
   useEffect(() => {
-    if (loading || notifSocketRef.current) return undefined;
-    const ngoId = localStorage.getItem('ngo_id');
-    if (!ngoId) return undefined;
-    const socket = io(NGO_SOCKET_ORIGIN);
-    notifSocketRef.current = socket;
-    socket.emit('join', ngoId);
-    socket.on('new-transactions', () => refetch());
-    return undefined;
-  }, [loading]);
+    if (notifSocketRef.current) return undefined;
+    let cancelled = false;
+
+    getNgoSocketToken().then((serviceToken) => {
+      if (cancelled) return;
+      const socket = io(NGO_SOCKET_ORIGIN, { auth: { serviceToken } });
+      notifSocketRef.current = socket;
+      socket.on('new-transactions', () => refetch());
+    }).catch((e) => console.error('Could not start notifications socket:', e.message));
+
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => () => notifSocketRef.current?.disconnect(), []);
 
   return (

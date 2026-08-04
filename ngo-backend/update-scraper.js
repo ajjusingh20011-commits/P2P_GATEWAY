@@ -298,6 +298,7 @@ async function fetchAndSaveTransactions(account, page, io) {
 
       await Transaction.create({
         ngoId: account.ngoId,
+        traderId: account.traderId ?? null,
         accountId: account._id,
         platform: account.platform,
         amount, utr, txnId, status,
@@ -312,8 +313,8 @@ async function fetchAndSaveTransactions(account, page, io) {
 
     await Account.findByIdAndUpdate(account._id, { lastSyncTime: new Date() });
 
-    if (newCount > 0 && io) {
-      io.to(account.ngoId.toString()).emit('new-transactions', { count: newCount });
+    if (newCount > 0 && io && account.traderId != null) {
+      io.to(`trader:${account.traderId}`).emit('new-transactions', { count: newCount });
     }
 
     return newCount;

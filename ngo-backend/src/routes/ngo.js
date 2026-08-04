@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { verifyServiceOrAdmin, resolveTraderFilter, requireTraderId } = require('../middleware/serviceAuth');
 const { ROLES, ACCOUNT_STATUS, ACCOUNT_STATUS_REASON, CONNECTION_TYPE } = require('../config/constants');
 const { encrypt } = require('../utils/encryption');
 const { assertUpiAvailable, UpiTakenError } = require('../utils/upiUniqueness');
@@ -13,23 +14,8 @@ const PaytmScraper = require('../services/webScraper')
 const SessionStore = require('../services/SessionStore')
 const router = express.Router();
 
-router.use(verifyToken, requireRole(ROLES.NGO_STAFF, ROLES.ADMIN));
-
 const CREDENTIAL_FIELDS =
   '-encryptedLoginEmail -encryptedLoginPassword -encryptedLoginPhone';
-
-function resolveNgoId(req) {
-  if (req.user.role === ROLES.ADMIN && req.query.ngoId) {
-    return req.query.ngoId;
-  }
-  if (req.user.ngoId) {
-    return req.user.ngoId;
-  }
-  if (req.body.ngoId) {
-    return req.body.ngoId;
-  }
-  return null;
-}
 
 function paginate(req) {
   const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
@@ -50,9 +36,17 @@ function sumAmounts(entries) {
   }, 0);
 }
 
-router.get('/accounts', async (req, res, next) => {
+// ---------------------------------------------------------------------------
+// Trader-facing routes: real accounts (Web Login/APK), transactions. Auth is
+// EITHER a service token minted by backend/ for a real trader (req.traderId)
+// OR a real admin's own token (req.user, sees across all traders) — see
+// middleware/serviceAuth.js. A shared ngo_staff human login no longer has
+// any path into this data.
+// ---------------------------------------------------------------------------
+
+router.get('/accounts', verifyServiceOrAdmin, async (req, res, next) => {
   try {
-    const accounts = await Account.find({ ngoId: resolveNgoId(req) })
+    const accounts = await Account.find(resolveTraderFilter(req))
       .select(CREDENTIAL_FIELDS)
       .sort({ createdAt: -1 });
     return res.json({ success: true, data: accounts });
@@ -61,9 +55,11 @@ router.get('/accounts', async (req, res, next) => {
   }
 });
 
-router.post('/accounts', async (req, res, next) => {
+router.post('/accounts', verifyServiceOrAdmin, async (req, res, next) => {
   try {
-    const ngoId = resolveNgoId(req);
+    const traderId = requireTraderId(req, res);
+    if (traderId == null) return undefined;
+
     const {
       type,
       platform,
@@ -92,7 +88,7 @@ router.post('/accounts', async (req, res, next) => {
     }
 
     const doc = {
-      ngoId,
+      traderId,
       platform,
       upiId,
       displayName,
@@ -130,7 +126,7 @@ router.post('/accounts', async (req, res, next) => {
 // initiateLogin manages status/statusReason on its own (live / paused+
 // otp_required / failed) — we let it, and just return the fresh row,
 // rather than racing it with our own blind status write.
-router.patch('/accounts/:accountId/toggle', async (req, res, next) => {
+router.patch('/accounts/:accountId/toggle', verifyServiceOrAdmin, async (req, res, next) => {
   try {
     const { status } = req.body;
     if (![ACCOUNT_STATUS.LIVE, ACCOUNT_STATUS.PAUSED].includes(status)) {
@@ -141,7 +137,7 @@ router.patch('/accounts/:accountId/toggle', async (req, res, next) => {
 
     const existing = await Account.findOne({
       _id: req.params.accountId,
-      ngoId: resolveNgoId(req),
+      ...resolveTraderFilter(req),
     });
     if (!existing) {
       return res.status(404).json({ success: false, message: 'Account not found' });
@@ -192,7 +188,7 @@ router.patch('/accounts/:accountId/toggle', async (req, res, next) => {
 // are applied, mirroring traderController.updatePaymentDetail semantics —
 // `null` explicitly clears a field (e.g. removes a window cap), `undefined`
 // (omitted) leaves it untouched.
-router.patch('/accounts/:accountId', async (req, res, next) => {
+router.patch('/accounts/:accountId', verifyServiceOrAdmin, async (req, res, next) => {
   try {
     const patch = {};
     const passthrough = [
@@ -214,7 +210,7 @@ router.patch('/accounts/:accountId', async (req, res, next) => {
     }
 
     const account = await Account.findOneAndUpdate(
-      { _id: req.params.accountId, ngoId: resolveNgoId(req) },
+      { _id: req.params.accountId, ...resolveTraderFilter(req) },
       patch,
       { new: true }
     ).select(CREDENTIAL_FIELDS);
@@ -234,11 +230,11 @@ router.patch('/accounts/:accountId', async (req, res, next) => {
 // interval — SessionStore.removeSession, NOT scraperEngine.js's stopSession,
 // which is dead code per the prior fix) and removes its saved session-cookie
 // file so orphaned paytm-session-<id>.json files don't pile up.
-router.delete('/accounts/:accountId', async (req, res, next) => {
+router.delete('/accounts/:accountId', verifyServiceOrAdmin, async (req, res, next) => {
   try {
     const account = await Account.findOne({
       _id: req.params.accountId,
-      ngoId: resolveNgoId(req),
+      ...resolveTraderFilter(req),
     });
     if (!account) {
       return res.status(404).json({ success: false, message: 'Account not found' });
@@ -260,10 +256,10 @@ router.delete('/accounts/:accountId', async (req, res, next) => {
   }
 });
 
-router.get('/transactions', async (req, res, next) => {
+router.get('/transactions', verifyServiceOrAdmin, async (req, res, next) => {
   try {
     const { page, limit, skip } = paginate(req);
-    const query = { ngoId: resolveNgoId(req) };
+    const query = { ...resolveTraderFilter(req) };
     if (req.query.status) {
       query.status = req.query.status;
     }
@@ -284,10 +280,151 @@ router.get('/transactions', async (req, res, next) => {
   }
 });
 
-router.get('/ledger', async (req, res, next) => {
+// Start connect / login process. Previously did Account.findById with NO
+// ownership check at all — any valid staff token could drive a login
+// attempt on ANY account by id, not just their own org's. Now scoped like
+// every other trader route above.
+router.post(
+  '/accounts/:accountId/connect',
+  verifyServiceOrAdmin,
+  async (req, res, next) => {
+    try {
+      const io = req.app.locals.io
+      const account = await Account.findOne({ _id: req.params.accountId, ...resolveTraderFilter(req) })
+
+      if (!account) {
+        return res.status(404).json({
+          success: false,
+          message: 'Account not found'
+        })
+      }
+
+      const result = await PaytmScraper
+        .initiateLogin(account, io)
+
+      res.json(result)
+    } catch (err) {
+      next(err)
+    }
+  }
+)
+
+// NGO submits OTP. Same missing-ownership-check issue as /connect, fixed
+// the same way.
+router.post(
+  '/accounts/:accountId/verify-otp',
+  verifyServiceOrAdmin,
+  async (req, res, next) => {
+    try {
+      const { otp } = req.body
+      if (!otp) {
+        return res.status(400).json({
+          success: false,
+          message: 'OTP is required'
+        })
+      }
+
+      const io = req.app.locals.io
+      const account = await Account.findOne({ _id: req.params.accountId, ...resolveTraderFilter(req) })
+
+      if (!account) {
+        return res.status(404).json({
+          success: false,
+          message: 'Account not found'
+        })
+      }
+
+      const result = await PaytmScraper
+        .submitOTP(account, otp, io)
+
+      res.json(result)
+    } catch (err) {
+      next(err)
+    }
+  }
+)
+
+// Get session status. Was fully unauthenticated before (no verifyToken at
+// all) — now requires the same trader/admin auth as everything else, and
+// confirms the caller actually owns this account before reporting on it.
+router.get(
+  '/accounts/:accountId/status',
+  verifyServiceOrAdmin,
+  async (req, res, next) => {
+    const { accountId } = req.params
+    const owned = await Account.exists({ _id: accountId, ...resolveTraderFilter(req) })
+    if (!owned) {
+      return res.status(404).json({ success: false, message: 'Account not found' })
+    }
+    const status = SessionStore.getStatus(accountId)
+    const isAlive = await SessionStore.isSessionAlive(accountId)
+
+    res.json({
+      success: true,
+      status,
+      isAlive
+    })
+  }
+)
+
+// Manual sync. Same missing-ownership-check issue as /connect, fixed the
+// same way.
+router.post(
+  '/accounts/:accountId/sync',
+  verifyServiceOrAdmin,
+  async (req, res, next) => {
+    try {
+      const accountId = req.params.accountId
+      const session = SessionStore
+        .getSession(accountId)
+
+      if (!session || !session.page) {
+        return res.status(400).json({
+          success: false,
+          message: 'No active session.' +
+            ' Please reconnect first.'
+        })
+      }
+
+      const account = await Account.findOne({ _id: accountId, ...resolveTraderFilter(req) })
+      if (!account) {
+        return res.status(404).json({ success: false, message: 'Account not found' })
+      }
+
+      const count = await PaytmScraper
+        .fetchAndSaveTransactions(
+          account, session.page,
+          req.app.locals.io
+        )
+
+      res.json({
+        success: true,
+        newTransactions: count,
+        message: `${count} new transactions found`
+      })
+    } catch (err) {
+      next(err)
+    }
+  }
+)
+
+// ---------------------------------------------------------------------------
+// Legacy donation-org routes (Ledger-backed totalDonations/todayDonations) —
+// unrelated to trader Web Login/device accounts, not called anywhere by the
+// trader frontend (confirmed: ngoApi.js's getNGOStats() has zero importers).
+// Left on the original shared-ngoId human auth unchanged; out of scope for
+// the trader-isolation fix.
+// ---------------------------------------------------------------------------
+
+function resolveLegacyNgoId(req) {
+  if (req.user.role === ROLES.ADMIN && req.query.ngoId) return req.query.ngoId;
+  return req.user.ngoId || req.body.ngoId || null;
+}
+
+router.get('/ledger', verifyToken, requireRole(ROLES.NGO_STAFF, ROLES.ADMIN), async (req, res, next) => {
   try {
     const { page, limit, skip } = paginate(req);
-    const query = { ngoId: resolveNgoId(req) };
+    const query = { ngoId: resolveLegacyNgoId(req) };
 
     const [entries, total] = await Promise.all([
       ledgerService.getLedger(query, { skip, limit }),
@@ -305,9 +442,9 @@ router.get('/ledger', async (req, res, next) => {
   }
 });
 
-router.get('/stats', async (req, res, next) => {
+router.get('/stats', verifyToken, requireRole(ROLES.NGO_STAFF, ROLES.ADMIN), async (req, res, next) => {
   try {
-    const ngoId = resolveNgoId(req);
+    const ngoId = resolveLegacyNgoId(req);
 
     const [entries, todayEntries, activeAccounts] = await Promise.all([
       Ledger.find({ ngoId }).select('amount').lean(),
@@ -330,120 +467,5 @@ router.get('/stats', async (req, res, next) => {
     return next(err);
   }
 });
-
-// Start connect / login process
-router.post(
-  '/accounts/:accountId/connect',
-  async (req, res, next) => {
-    try {
-      const io = req.app.locals.io
-      const account = await Account
-        .findById(req.params.accountId)
-
-      if (!account) {
-        return res.status(404).json({
-          success: false,
-          message: 'Account not found'
-        })
-      }
-
-      const result = await PaytmScraper
-        .initiateLogin(account, io)
-
-      res.json(result)
-    } catch (err) {
-      next(err)
-    }
-  }
-)
-
-// NGO submits OTP
-router.post(
-  '/accounts/:accountId/verify-otp',
-  async (req, res, next) => {
-    try {
-      const { otp } = req.body
-      if (!otp) {
-        return res.status(400).json({
-          success: false,
-          message: 'OTP is required'
-        })
-      }
-
-      const io = req.app.locals.io
-      const account = await Account
-        .findById(req.params.accountId)
-
-      if (!account) {
-        return res.status(404).json({
-          success: false,
-          message: 'Account not found'
-        })
-      }
-
-      const result = await PaytmScraper
-        .submitOTP(account, otp, io)
-
-      res.json(result)
-    } catch (err) {
-      next(err)
-    }
-  }
-)
-
-// Get session status
-router.get(
-  '/accounts/:accountId/status',
-  async (req, res) => {
-    const { accountId } = req.params
-    const status = SessionStore
-      .getStatus(accountId)
-    const isAlive = await SessionStore
-      .isSessionAlive(accountId)
-
-    res.json({
-      success: true,
-      status,
-      isAlive
-    })
-  }
-)
-
-// Manual sync
-router.post(
-  '/accounts/:accountId/sync',
-  async (req, res, next) => {
-    try {
-      const accountId = req.params.accountId
-      const session = SessionStore
-        .getSession(accountId)
-
-      if (!session || !session.page) {
-        return res.status(400).json({
-          success: false,
-          message: 'No active session.' +
-            ' Please reconnect first.'
-        })
-      }
-
-      const account = await Account
-        .findById(accountId)
-
-      const count = await PaytmScraper
-        .fetchAndSaveTransactions(
-          account, session.page,
-          req.app.locals.io
-        )
-
-      res.json({
-        success: true,
-        newTransactions: count,
-        message: `${count} new transactions found`
-      })
-    } catch (err) {
-      next(err)
-    }
-  }
-)
 
 module.exports = router;

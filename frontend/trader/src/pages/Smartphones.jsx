@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 import { Smartphone, RefreshCw } from 'lucide-react';
 import { Card, Badge, Button, SearchInput, Select, PageHeader, Modal, EmptyState, LoadingState } from '../components/ui';
 import { IconPlus, IconChevron } from '../components/icons';
-import { getDevices, generateLicense, renameDevice, deleteDevice, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
+import { getDevices, generateLicense, renameDevice, deleteDevice, getNgoSocketToken, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 import { traderApi } from '../services/api';
 
 function heartbeatAgo(dateStr) {
@@ -143,25 +143,29 @@ export default function Smartphones() {
   };
 
   // Only connect while the code screen is up — not on every page visit.
-  // Joins the trader's REAL ngoId room (the same value every other NGO API
-  // call resolves via getNGOAuth(), cached at localStorage.ngo_id by the
-  // time this runs since generateLicense() already awaited it) — previously
-  // a hardcoded, unrelated id, so this event never arrived and the modal
-  // never auto-closed.
+  // Presents a short-lived signed service token (see backend/'s
+  // GET /trader/ngo-socket-token) at handshake time; ngo-backend verifies it
+  // and joins this real trader's own room server-side — no client-supplied
+  // room name, no shared ngoId.
   useEffect(() => {
     if (pairStep !== 'code') return undefined;
-    const ngoId = localStorage.getItem('ngo_id');
-    if (!ngoId) return undefined;
+    let socket;
+    let cancelled = false;
 
-    const socket = io(NGO_SOCKET_ORIGIN);
-    socket.emit('join', ngoId);
-    socket.on('device-registered', (data) => {
-      closePairing();
-      alert(data.deviceName + ' connected!');
-      loadDevices();
-    });
+    getNgoSocketToken().then((serviceToken) => {
+      if (cancelled) return;
+      socket = io(NGO_SOCKET_ORIGIN, { auth: { serviceToken } });
+      socket.on('device-registered', (data) => {
+        closePairing();
+        alert(data.deviceName + ' connected!');
+        loadDevices();
+      });
+    }).catch((e) => console.error('Could not start pairing socket:', e.message));
 
-    return () => socket.disconnect();
+    return () => {
+      cancelled = true;
+      socket?.disconnect();
+    };
   }, [pairStep]);
 
   const set = (k) => (v) => setFilters((f) => ({ ...f, [k]: v }));

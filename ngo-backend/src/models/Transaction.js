@@ -9,6 +9,14 @@ const transactionSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    // Denormalized from Account.traderId at write time (the scraper creates
+    // these per-Account, not per-request) so listing a trader's own
+    // transactions doesn't need a join on every read.
+    traderId: {
+      type: Number,
+      default: null,
+      index: true,
+    },
     accountId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Account',

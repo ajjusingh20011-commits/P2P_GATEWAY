@@ -10,7 +10,8 @@ const fs = require('fs');
 
 async function initiateLogin(account, io) {
   const accountId = account._id.toString();
-  const ngoId = account.ngoId.toString();
+  // Socket room — trader-scoped now, not the old shared-org ngoId.
+  const ngoId = account.traderId != null ? `trader:${account.traderId}` : null;
   try {
     const email = decrypt(account.encryptedLoginEmail);
     const password = decrypt(account.encryptedLoginPassword);
@@ -188,7 +189,8 @@ async function initiateLogin(account, io) {
 
 async function submitOTP(account, otp, io) {
   const accountId = account._id.toString();
-  const ngoId = account.ngoId.toString();
+  // Socket room — trader-scoped now, not the old shared-org ngoId.
+  const ngoId = account.traderId != null ? `trader:${account.traderId}` : null;
   const session = SessionStore.getSession(accountId);
   if (!session || session.status !== 'otp_required') {
     throw new Error(
@@ -243,7 +245,8 @@ async function submitOTP(account, otp, io) {
 async function onLoginSuccess(
   accountId, account, browser, page, context, io
 ) {
-  const ngoId = account.ngoId.toString();
+  // Socket room — trader-scoped now, not the old shared-org ngoId.
+  const ngoId = account.traderId != null ? `trader:${account.traderId}` : null;
   try {
     await page.waitForTimeout(1000);
     const denyBtn = await page.$('button:has-text("Deny")');
@@ -443,6 +446,7 @@ async function fetchAndSaveTransactions(account, page, io) {
 
       const txn = await Transaction.create({
         ngoId: account.ngoId,
+        traderId: account.traderId ?? null,
         accountId: account._id,
         platform: account.platform,
         amount: amountInRupees,
@@ -473,8 +477,8 @@ async function fetchAndSaveTransactions(account, page, io) {
       { lastSyncTime: new Date() }
     );
 
-    if (newCount > 0 && io) {
-      io.to(account.ngoId.toString()).emit(
+    if (newCount > 0 && io && account.traderId != null) {
+      io.to(`trader:${account.traderId}`).emit(
         'new-transactions', { count: newCount }
       );
     }
@@ -520,7 +524,7 @@ function startMonitoring(accountId, account, io) {
         );
         emitStatus(
           io,
-          account.ngoId.toString(),
+          account.traderId != null ? `trader:${account.traderId}` : null,
           accountId,
           'session_expired',
           'Session expired. Please reconnect.'
@@ -545,7 +549,7 @@ function startMonitoring(accountId, account, io) {
 }
 
 function emitStatus(io, ngoId, accountId, status, message) {
-  if (io) {
+  if (io && ngoId) {
     io.to(ngoId).emit('account-status', {
       accountId, status, message
     });

@@ -8,8 +8,8 @@ const Payout = require('../models/Payout');
 const scraperEngine = require('../services/scraperEngine');
 const matchingEngine = require('../services/matchingEngine');
 const { matchDebitWithOverlay } = require('../services/payoutVerifier');
-const { DEVICE_STATUS, RAW_EVENT_TYPE, CATEGORY, ROLES } = require('../config/constants');
-const { verifyToken, requireRole } = require('../middleware/auth');
+const { DEVICE_STATUS, RAW_EVENT_TYPE, CATEGORY } = require('../config/constants');
+const { verifyServiceOrAdmin, resolveTraderFilter, requireTraderId } = require('../middleware/serviceAuth');
 
 const router = express.Router();
 
@@ -89,8 +89,8 @@ router.post('/register-device', async (req, res, next) => {
     }
 
     const io = req.app.get('io');
-    if (io && device.ngoId) {
-      io.to(String(device.ngoId)).emit('device-registered', {
+    if (io && device.traderId != null) {
+      io.to(`trader:${device.traderId}`).emit('device-registered', {
         deviceId: device.deviceId,
         deviceName: device.deviceModel,
       });
@@ -104,22 +104,19 @@ router.post('/register-device', async (req, res, next) => {
 
 /**
  * POST /api/apk/generate-license
- * Auth: NGO staff/admin bearer token.
- * Body: { ngoId }
+ * Auth: real trader service token (see middleware/serviceAuth.js).
  * Creates a pending Device row with a short human-typeable code and returns
  * it. The phone claims this row by sending the same code as `licenseKey` to
- * POST /register-device.
+ * POST /register-device. The generating trader's id is stamped on the row
+ * now — that's what makes it theirs once claimed, not a shared org id.
  */
 router.post(
   '/generate-license',
-  verifyToken,
-  requireRole(ROLES.NGO_STAFF, ROLES.ADMIN),
+  verifyServiceOrAdmin,
   async (req, res, next) => {
     try {
-      const ngoId = req.user.ngoId || req.body.ngoId;
-      if (!ngoId) {
-        return res.status(400).json({ success: false, message: 'ngoId is required' });
-      }
+      const traderId = requireTraderId(req, res);
+      if (traderId == null) return undefined;
 
       let licenseKey;
       do {
@@ -132,7 +129,7 @@ router.post(
         deviceId: `pending:${licenseKey}`,
         licenseKey,
         licenseExpiresAt,
-        ngoId,
+        traderId,
         status: DEVICE_STATUS.PENDING,
       });
 
@@ -154,10 +151,11 @@ const ONLINE_WINDOW_MS = 15 * 1000;
 const isOnline = (lastSeen) => !!lastSeen && Date.now() - new Date(lastSeen).getTime() <= ONLINE_WINDOW_MS;
 
 /**
- * GET /api/apk/devices/:ngoId
- * Auth: NGO staff/admin bearer token.
- * Lists devices for one NGO, for the trader panel's "Registered Devices"
- * list and the payment-detail device picker (same source, so both agree).
+ * GET /api/apk/devices
+ * Auth: real trader service token, or admin (optionally with ?traderId=).
+ * Lists devices for the calling trader (or, for admin, everyone / one
+ * trader), for the trader panel's "Registered Devices" list and the
+ * payment-detail device picker (same source, so both agree).
  *
  * PENDING (a generated pairing code nobody has claimed yet, or an abandoned
  * one) is deliberately excluded — those never reached ACTIVE and shouldn't
@@ -165,13 +163,12 @@ const isOnline = (lastSeen) => !!lastSeen && Date.now() - new Date(lastSeen).get
  * DELETE /api/apk/devices/:id to actually remove a Device row.
  */
 router.get(
-  '/devices/:ngoId',
-  verifyToken,
-  requireRole(ROLES.NGO_STAFF, ROLES.ADMIN),
+  '/devices',
+  verifyServiceOrAdmin,
   async (req, res, next) => {
     try {
       const devices = await Device.find({
-        ngoId: req.params.ngoId,
+        ...resolveTraderFilter(req),
         status: { $ne: DEVICE_STATUS.PENDING },
       })
         .sort({ createdAt: -1 })
@@ -195,13 +192,6 @@ router.get(
   }
 );
 
-// Resolve the ngoId to scope a device lookup by, same convention as ngo.js's
-// resolveNgoId: staff use their own ngoId; admin may override via query.
-function resolveDeviceNgoId(req) {
-  if (req.user.role === ROLES.ADMIN && req.query.ngoId) return req.query.ngoId;
-  return req.user.ngoId || null;
-}
-
 /**
  * PATCH /api/apk/devices/:id
  * Auth: NGO staff/admin bearer token.
@@ -211,8 +201,7 @@ function resolveDeviceNgoId(req) {
  */
 router.patch(
   '/devices/:id',
-  verifyToken,
-  requireRole(ROLES.NGO_STAFF, ROLES.ADMIN),
+  verifyServiceOrAdmin,
   async (req, res, next) => {
     try {
       const { deviceName } = req.body;
@@ -220,7 +209,7 @@ router.patch(
         return res.status(400).json({ success: false, message: 'deviceName is required' });
       }
       const device = await Device.findOneAndUpdate(
-        { _id: req.params.id, ngoId: resolveDeviceNgoId(req) },
+        { _id: req.params.id, ...resolveTraderFilter(req) },
         { deviceName: deviceName.trim() },
         { new: true }
       );
@@ -247,11 +236,10 @@ router.patch(
  */
 router.delete(
   '/devices/:id',
-  verifyToken,
-  requireRole(ROLES.NGO_STAFF, ROLES.ADMIN),
+  verifyServiceOrAdmin,
   async (req, res, next) => {
     try {
-      const device = await Device.findOne({ _id: req.params.id, ngoId: resolveDeviceNgoId(req) });
+      const device = await Device.findOne({ _id: req.params.id, ...resolveTraderFilter(req) });
       if (!device) {
         return res.status(404).json({ success: false, message: 'Device not found' });
       }
@@ -346,8 +334,8 @@ router.post('/event', async (req, res, next) => {
     });
 
     const io = req.app.get('io');
-    if (io && device.ngoId) {
-      io.to(String(device.ngoId)).emit('raw_event', rawEvent);
+    if (io && device.traderId != null) {
+      io.to(`trader:${device.traderId}`).emit('raw_event', rawEvent);
     }
 
     // Payment events drive reconciliation against pending donor intents
@@ -394,6 +382,7 @@ router.post('/debit-sms', async (req, res, next) => {
     // 1-2. Resolve the device and its NGO.
     const device = deviceId ? await Device.findOne({ deviceId }) : null;
     const ngoId = device && device.ngoId ? String(device.ngoId) : '';
+    const traderRoom = device && device.traderId != null ? `trader:${device.traderId}` : null;
 
     // 3. Persist the debit SMS.
     const debit = await DebitSMS.create({
@@ -418,8 +407,8 @@ router.post('/debit-sms', async (req, res, next) => {
 
     // 5. Notify the NGO dashboard.
     const io = req.app.get('io');
-    if (io && ngoId) {
-      io.to(ngoId).emit('debit-detected', {
+    if (io && traderRoom) {
+      io.to(traderRoom).emit('debit-detected', {
         amount: debit.amount,
         last4Digits: debit.last4Digits,
         sender: debit.sender,
@@ -459,6 +448,7 @@ router.post('/overlay-capture', async (req, res, next) => {
     // 1. Resolve the device and its NGO.
     const device = deviceId ? await Device.findOne({ deviceId }) : null;
     const ngoId = device && device.ngoId ? String(device.ngoId) : '';
+    const traderRoom = device && device.traderId != null ? `trader:${device.traderId}` : null;
 
     // 2. Persist the overlay capture.
     const capture = await OverlayCapture.create({
@@ -477,8 +467,8 @@ router.post('/overlay-capture', async (req, res, next) => {
 
     // 3. Notify the NGO dashboard (omit the screenshot from the payload).
     const io = req.app.get('io');
-    if (io && ngoId) {
-      io.to(ngoId).emit('overlay-captured', {
+    if (io && traderRoom) {
+      io.to(traderRoom).emit('overlay-captured', {
         captureId: capture._id.toString(),
         recipientName: capture.recipientName,
         amount: capture.amount,
@@ -517,6 +507,7 @@ router.post('/outgoing-payment', async (req, res, next) => {
 
     const device = deviceId ? await Device.findOne({ deviceId }) : null;
     const ngoId = device && device.ngoId ? String(device.ngoId) : '';
+    const traderRoom = device && device.traderId != null ? `trader:${device.traderId}` : null;
 
     const payment = await OutgoingPayment.create({
       ngoId,
@@ -532,8 +523,8 @@ router.post('/outgoing-payment', async (req, res, next) => {
     });
 
     const io = req.app.get('io');
-    if (io && ngoId) {
-      io.to(ngoId).emit('outgoing-payment', {
+    if (io && traderRoom) {
+      io.to(traderRoom).emit('outgoing-payment', {
         id: payment._id.toString(),
         app: payment.app,
         recipientName: payment.recipientName,
@@ -584,8 +575,8 @@ router.post('/screenshot', async (req, res) => {
     }
 
     const io = req.app.locals.io;
-    if (io && device.ngoId) {
-      io.to(device.ngoId.toString()).emit('screenshot-received', {
+    if (io && device.traderId != null) {
+      io.to(`trader:${device.traderId}`).emit('screenshot-received', {
         deviceId,
         deviceName: device.deviceModel,
         screenshot,

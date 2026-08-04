@@ -20,6 +20,14 @@ const deviceSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    // The real trader (MySQL trader.id) who generated this device's pairing
+    // code — the actual authorization boundary going forward, same as
+    // Account.traderId.
+    traderId: {
+      type: Number,
+      default: null,
+      index: true,
+    },
     deviceModel: { type: String, default: '' },
     // Trader-assigned display name (set via SetDeviceNameActivity), distinct
     // from deviceModel (the hardware model string).
