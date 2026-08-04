@@ -101,3 +101,18 @@ export const IconPower = (p) => (
 export const IconShield = (p) => (
   <svg {...base} {...p}><path d="M12 3l8 3v5c0 5-3.5 8-8 10-4.5-2-8-5-8-10V6z" /></svg>
 );
+export const IconAlertTriangle = (p) => (
+  <svg {...base} {...p}><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg>
+);
+export const IconRoute = (p) => (
+  <svg {...base} {...p}><circle cx="6" cy="19" r="2" /><circle cx="18" cy="5" r="2" /><path d="M8 19h7a4 4 0 0 0 4-4V9a4 4 0 0 0-4-4h-1" /></svg>
+);
+export const IconGauge = (p) => (
+  <svg {...base} {...p}><path d="M12 14l3-4" /><circle cx="12" cy="14" r="1" /><path d="M4 14a8 8 0 1 1 16 0" /><path d="M4 14h1M19 14h1M6.3 8.3l.7.7M17.7 8.3l-.7.7" /></svg>
+);
+export const IconAlertOctagon = (p) => (
+  <svg {...base} {...p}><path d="M7.9 2h8.2L22 7.9v8.2L16.1 22H7.9L2 16.1V7.9z" /><path d="M12 8v5M12 16h.01" /></svg>
+);
+export const IconUserShield = (p) => (
+  <svg {...base} {...p}><path d="M9 20a6 6 0 0 1 6-6" /><circle cx="8" cy="8" r="4" /><path d="M17 12l4 1.5v3c0 2.5-1.7 4-4 5-2.3-1-4-2.5-4-5v-3z" /></svg>
+);

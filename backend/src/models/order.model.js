@@ -76,6 +76,20 @@ module.exports = (sequelize) => {
       payer_name: { type: DataTypes.STRING(191), allowNull: true },
       payer_upi: { type: DataTypes.STRING(191), allowNull: true },
       auto_verified: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+
+      // ---- Matching engine v2 (services/matchingEngineV2.js) ----
+      // Donor-entered UTR at checkout (Prompt 3 — not wired to any UI yet).
+      donor_submitted_utr: { type: DataTypes.STRING(64), allowNull: true },
+      // 0 = exact UTR match, 1 = UTR present but mismatched, 2 = amount-only.
+      match_tier: { type: DataTypes.TINYINT.UNSIGNED, allowNull: true },
+      // What settled this order (smartMerge.confirmOrder's `engine` param) —
+      // 'apk_notification'/'scraper' (matching engine v2), 'trader_manual'
+      // (trader Confirm button), 'sms'/'notification'/'screen_scraper'/'manual'
+      // (legacy paymentController pipeline). Null for admin confirms.
+      confirm_engine: { type: DataTypes.STRING(30), allowNull: true },
+      // Set once by jobs/underReviewReminder.js so the reminder fires exactly
+      // once per order — never read by status-changing logic.
+      reminder_sent_at: { type: DataTypes.DATE, allowNull: true },
     },
     {
       sequelize,

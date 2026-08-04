@@ -2,6 +2,7 @@ const axios = require('axios');
 const Webhook = require('../models/Webhook');
 const Transaction = require('../models/Transaction');
 const NGO = require('../models/NGO');
+const Account = require('../models/Account');
 const ledgerService = require('./ledgerService');
 const { isWithinMinutes } = require('../utils/timeHelper');
 const {
@@ -235,4 +236,81 @@ async function runMatching(io) {
   return { matched, expired };
 }
 
-module.exports = { checkMatch, matchWebhook, runMatching, normalizeAmount };
+/**
+ * Matching engine v2 — settles a P2P order directly from a receiver-side
+ * payment event, independent of the donor-webhook flow above. Calls the
+ * gateway backend's matching engine (backend/src/services/matchingEngineV2.js)
+ * via POST /api/internal/match-settlement, since Order/PaymentDetail (and the
+ * amount-lock constraint that makes the lookup safe-by-construction) only
+ * exist in that service's MySQL database. Best-effort: a down/unreachable
+ * gateway backend must not throw back into the APK/scraper ingestion path —
+ * failures are logged and the event is otherwise fully persisted already.
+ */
+async function callMatchSettlement(payload) {
+  try {
+    const base = process.env.P2P_BACKEND_URL || 'http://localhost:4000';
+    const res = await axios.post(`${base}/api/internal/match-settlement`, payload, { timeout: 5000 });
+    return res.data;
+  } catch (e) {
+    console.error('matchingEngineV2 callMatchSettlement failed:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Triggered from POST /api/apk/event for a PAYMENT-category RawEvent. A
+ * Device is only tied to an NGO, not to one specific Account/UPI (an NGO can
+ * run several UPI accounts on the same phone/app), so this resolves every
+ * UPI belonging to the event's NGO and lets the backend's timing-based
+ * disambiguation pick the right order if more than one is amount-eligible.
+ */
+async function triggerOrderSettlementFromRawEvent(rawEvent) {
+  if (!rawEvent || !rawEvent.ngoId) return null;
+
+  const target = normalizeAmount(rawEvent.amount);
+  if (Number.isNaN(target) || target <= 0) return null;
+
+  const upiIds = (await Account.find({ ngoId: rawEvent.ngoId }).distinct('upiId')).filter(Boolean);
+  if (!upiIds.length) return null;
+
+  return callMatchSettlement({
+    upi_ids: upiIds,
+    amount: target,
+    utr: rawEvent.utr || '',
+    event_time: rawEvent.createdAt || rawEvent.utcTimestamp || new Date().toISOString(),
+    source: 'apk_notification',
+  });
+}
+
+/**
+ * Triggered right after the web scraper persists a new Transaction. The
+ * Transaction is already tied to one specific Account, so there's no
+ * multi-UPI ambiguity here — only the usual same-amount timing case.
+ */
+async function triggerOrderSettlementFromTransaction(txn, account) {
+  if (!txn) return null;
+  const upiId = account?.upiId;
+  if (!upiId) return null;
+
+  const target = normalizeAmount(txn.amount);
+  if (Number.isNaN(target) || target <= 0) return null;
+
+  return callMatchSettlement({
+    upi_ids: [upiId],
+    amount: target,
+    utr: txn.utr || '',
+    event_time: txn.txnTime || txn.scrapedAt || new Date().toISOString(),
+    payer_name: txn.payerName || '',
+    payer_upi: txn.payerUpiId || '',
+    source: 'scraper',
+  });
+}
+
+module.exports = {
+  checkMatch,
+  matchWebhook,
+  runMatching,
+  normalizeAmount,
+  triggerOrderSettlementFromRawEvent,
+  triggerOrderSettlementFromTransaction,
+};

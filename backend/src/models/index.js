@@ -25,6 +25,7 @@ db.Settlement = require('./settlement.model')(sequelize);
 db.Dispute = require('./dispute.model')(sequelize);
 db.BalanceLog = require('./balanceLog.model')(sequelize);
 db.Setting = require('./setting.model')(sequelize);
+db.UtrDiscrepancyLog = require('./utrDiscrepancyLog.model')(sequelize);
 
 // Wire associations
 Object.values(db).forEach((model) => {

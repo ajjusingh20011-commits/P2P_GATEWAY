@@ -73,6 +73,7 @@ async function confirmOrder(order, { utrNumber, engine, senderName, reviewedBy }
     confirmed_at: new Date(),
     upi_ref_id: utrNumber || order.upi_ref_id,
     utr_number: utrNumber || order.utr_number,
+    confirm_engine: engine || order.confirm_engine,
     ...(reviewedBy ? { reviewed_by: reviewedBy, reviewed_at: new Date() } : {}),
   });
 

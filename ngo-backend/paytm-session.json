@@ -1,31 +1,11 @@
 {
   "cookies": [
     {
-      "name": "_gid",
-      "value": "GA1.2.258358330.1783602188",
-      "domain": ".paytm.com",
-      "path": "/",
-      "expires": 1783759333,
-      "httpOnly": false,
-      "secure": false,
-      "sameSite": "Lax"
-    },
-    {
       "name": "_ga",
       "value": "GA1.3.361165046.1783602188",
       "domain": ".dashboard.paytm.com",
       "path": "/",
-      "expires": 1818232932.53308,
-      "httpOnly": false,
-      "secure": false,
-      "sameSite": "Lax"
-    },
-    {
-      "name": "_gid",
-      "value": "GA1.3.258358330.1783602188",
-      "domain": ".dashboard.paytm.com",
-      "path": "/",
-      "expires": 1783759332,
+      "expires": 1819214802.35329,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
@@ -35,7 +15,7 @@
       "value": "87f57f80-7b96-11f1-b4c9-b7274ef132bb",
       "domain": "dashboard.paytm.com",
       "path": "/",
-      "expires": 1815208932,
+      "expires": 1816190802,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
@@ -45,7 +25,7 @@
       "value": "888cb670-7b96-11f1-b493-c1d061d1ae20",
       "domain": "accounts.paytm.com",
       "path": "/",
-      "expires": 1815208302,
+      "expires": 1816190709,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
@@ -65,37 +45,17 @@
       "value": "fb.1.1783602282831.930390434881624815",
       "domain": ".paytm.com",
       "path": "/",
-      "expires": 1791448301,
+      "expires": 1792430708,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
-    },
-    {
-      "name": "market-merchant.sid",
-      "value": "s%3AivodUWGQRSTuRCkqtXzhkGWjoYC6pSlI.rmqEJJSK5JYDnnz8FMG%2BbXqaTZaWd02P%2Ba4v9DAeKUI",
-      "domain": "seller.paytm.com",
-      "path": "/",
-      "expires": -1,
-      "httpOnly": true,
-      "secure": true,
-      "sameSite": "None"
-    },
-    {
-      "name": "IDE",
-      "value": "AHWqTUkQYHODigayAZZrT_AmXzWXiZZzs0spLQJiNRTPso7jtem7rGeK6aC5zYcR",
-      "domain": ".doubleclick.net",
-      "path": "/",
-      "expires": 1818162284.366117,
-      "httpOnly": true,
-      "secure": true,
-      "sameSite": "None"
     },
     {
       "name": "_hjSessionUser_2137993",
       "value": "eyJpZCI6ImZiNGU5MWQzLTg3NDYtNTYyYS1iY2JjLTY5MWMzYWZiMmE0YiIsImNyZWF0ZWQiOjE3ODM2MDIyODE3NzMsImV4aXN0aW5nIjp0cnVlfQ==",
       "domain": ".paytm.com",
       "path": "/",
-      "expires": 1815208932,
+      "expires": 1816190801,
       "httpOnly": false,
       "secure": true,
       "sameSite": "None"
@@ -111,18 +71,28 @@
       "sameSite": "Lax"
     },
     {
-      "name": "_hjSession_2137993",
-      "value": "eyJpZCI6Ijc3ZDljYWZhLTA5OGUtNGE5Zi05ZTRmLTk3MTNlOTI2YjhhNSIsImMiOjE3ODM2NzIyNDg3NjksInMiOjAsInIiOjAsInNiIjowLCJzciI6MCwic2UiOjAsImZzIjowLCJzcCI6MX0=",
+      "name": "_gid",
+      "value": "GA1.2.2130687234.1784654648",
       "domain": ".paytm.com",
       "path": "/",
-      "expires": 1783674048,
+      "expires": 1784741202,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_hjSession_2137993",
+      "value": "eyJpZCI6ImIyYjRlNDM2LTQyM2QtNDRkOC05MTUzLWNhZTA3M2EwNzNkNCIsImMiOjE3ODQ2NTQ2NDgzNTIsInMiOjAsInIiOjAsInNiIjowLCJzciI6MCwic2UiOjAsImZzIjowLCJzcCI6MH0=",
+      "domain": ".paytm.com",
+      "path": "/",
+      "expires": 1784656448,
       "httpOnly": false,
       "secure": true,
       "sameSite": "None"
     },
     {
       "name": "SESSION",
-      "value": "0c98b5b2-fd59-4657-815f-56d3e22402a6",
+      "value": "8be65fa6-25a1-4dda-baee-324db0c90ec6",
       "domain": "dashboard.paytm.com",
       "path": "/",
       "expires": -1,
@@ -131,8 +101,18 @@
       "sameSite": "Lax"
     },
     {
+      "name": "_gid",
+      "value": "GA1.3.2130687234.1784654648",
+      "domain": ".dashboard.paytm.com",
+      "path": "/",
+      "expires": 1784741202,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
       "name": "SESSION",
-      "value": "c9b3147c-227f-44a3-ab05-d552f297820b",
+      "value": "1410fc55-e6b9-4798-ade9-ade3cc56d430",
       "domain": "staging-dashboard.paytm.com",
       "path": "/",
       "expires": -1,
@@ -142,17 +122,27 @@
     },
     {
       "name": "bm_sz",
-      "value": "B53EB19A81019E32D8218AEB3C89723F~YAAQjgFAF528aEqfAQAAKhUlSwBMJf6pxlHWE2aw6BPWCHF3VTd0mXEdDrXPYb7p7BGgQgNtN3P0FNAuOsSIlvtkVQx3hCwyQVAol1OIOvrtoa7fI8gey8kdJEVe0P/H9XVMBJ0RSHSHTsBflcAI0mPKj/xLnA3Kukorw2HhN0MGx/VhzMxpq1rRpXwEIArGoiHzI/gbqgTpfWVONs3mWK2vebw3l8jixuij9fqce6IYzJWQtCaQNBAnwM/L2Kid1ejEBQ/Z/MQr8om3zKeAm0asZbda0tDk2WlAY1Br+rxfBWSXj1ynOg9En3Iu7+QFcOwJ3plUod7E8D/FQV3fOonUmnDC8jYuO27hZlSo7eYvXzVW~3424563~3294022",
+      "value": "2E9B64CB22FA7DB5B3A4EC79B6DB526E~YAAQpgFAF7u23YGfAQAAGjKzhQDjTNPQ7MrEyr4Y3R+9loYetByzzxQIHNa9dlbcKcJ9qgtXXJ6UqTqDxfULy0lcTfv/9fml5pj9niwpQQQ20Y5AuBMGO/ABw2tzR8Vsr9MbDFurzLDagwOP+KSUs6YU/Ik++2mdFC6E3UetIijMcOdcccX01iSnOWhv1PEaAojousCUgaykp4qa30CZXBrEyCLn51ZW05IoeuUzdSaVZanOgdOxXarc2ApYND0Ze3OdgtP7RTSRGa0QhbvEBP9aj0o6FYQTY2QPihqmUkRHNpljDiedxJ6f8yF7/MMhRpBHgfcL295k5s1y0t2hjZzOwXwBDd+0NB+P/1ap8821v4bfeg==~3225650~3289650",
       "domain": ".paytm.com",
       "path": "/",
-      "expires": 1783686650.85499,
+      "expires": 1784669050.067829,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
     },
     {
+      "name": "IDE",
+      "value": "AHWqTUnIv53D5E3cW5Lpp8UdTr28BQYagAbzgSu9Ry7K6gSGqt71cigNxJMHpEQM",
+      "domain": ".doubleclick.net",
+      "path": "/",
+      "expires": 1819214678.746072,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
       "name": "XSRF-TOKEN",
-      "value": "90802f44-60d2-4d8c-9e2e-d1c46c912c0c",
+      "value": "5b583980-8e1f-4c31-9b94-64e78e37a3f9",
       "domain": "dashboard.paytm.com",
       "path": "/",
       "expires": -1,
@@ -162,17 +152,17 @@
     },
     {
       "name": "PTSC",
-      "value": "web-377e16cb-5465-591e-ba59-2fb0c1946033",
+      "value": "web-c2dabc02-6bc0-56d1-b564-6cbd724d4733",
       "domain": "accounts.paytm.com",
       "path": "/",
-      "expires": 1783758699.626344,
+      "expires": 1784741105.688785,
       "httpOnly": true,
       "secure": true,
       "sameSite": "None"
     },
     {
       "name": "UMP_SESSION",
-      "value": "0c98b5b2-fd59-4657-815f-56d3e22402a6",
+      "value": "8be65fa6-25a1-4dda-baee-324db0c90ec6",
       "domain": ".paytm.com",
       "path": "/",
       "expires": -1,
@@ -181,18 +171,48 @@
       "sameSite": "Lax"
     },
     {
-      "name": "_abck",
-      "value": "5590E8B3C2B0469008005505C338A657~-1~YAAQjgFAF2PqaUqfAQAAON8lSxAClBxZzZHH4KP2wsWvJGMUfQZetUH0Ap4jlkegKgpVyEd7q3fgl72hHqYo991PTxSAbCNoUufhkCrqXxIjHCT6/fxOC2M1p5XJ3/4kQNBFxGDK02dmIOe79/Vy8OyvAlCJvWfNXnb8dJvRTPocLwXgMcOELpSpUQJ+TOa18+03fDaAOM3wXY9rTc26nlpOOvtEuLsvKSzXmcxUjvfMudgN4b48wa3vo4UBgGIhtYtkvRwbealaVsx4L9dfc+XGwqpcM/Zay0XUHluCqoe1uNSZqdvGBYZScrUnJOy8svC58F/15Ok5HZDrzAx8TeVaF4dzdTzsB0E22rO/z6i33Dw0S936XcVrMr11pJLW10mf6uy2k0SHJ1dg1LXD2XYRqjZMGrTqmVCLIkSE5BJJw9Uy8uUU9K1ZM0s4yCA4l5zhjv9KjS4DXeAGSO921/5Kia4DA+duN+CCBGM+dQWQ8T+poSEQSkaqBwNhIOpjha9X7nbl7B715WsKjTY0umHByBvzKb9s9EQWYYdwDc+9utLZiKmJ11cJYYEtT9R3g5C2raNAIJh9XpxHVMH++ZstiGJTHXYrHBF3HG8AQxf4deAjSqbeyXXddLdGnI1sqarYwc57Fkn6EeeLFgmyITNLtV/j1wPWRcUAvQLncdXFNekQgfIgsiiLxIFmJK1EzgpJtk9sOr0Dt6ckZMxe9tOPHRB4z/8hTfTVM4Zf7+ijeBRQzsYPm6fRUT9KhweEiNVO1aihzf1nCW5VbG11GsegDJRNItmSL2PtS1lPnzeDKVPi9PQ9QCZPOVn8fV8dRLcUXScylFJNVRwgdAULhrvIY9pUy5BvzE4mBcBXNPORTVZ+frfF5EMY4kiqn9DayHVHsM7T2nltsNbNaICLPtH5xs4jtO1rL1dvAgLnp3qdyQEKduyvRKUOQ3MsDGfDjNjRm6FF5cW/kk0kgX/GaoPPQbWOQhfztDtYXPRNC7VOKM4yezOj5t1jIRZpYMKgfd8RESC7gP7NoUHKRYNIQfbRw1kuop3g9lTksRlCitIapFOSQ3N8qdbwxBZuNKsk7+OMTMm9E1aiVqI=~-1~-1~-1~AAQAAAAF%2f%2f%2f%2f%2f882uRHVdYgC+vKlFLEiXSNFZLMmmQim90ZfI%2fLEfH9i4UzStWnjqKO3z2ZAdW7dhz5WdKSYo8VxEjfUsLaOV4VlebFWVignY5qhoIvWJlC9cBJU+4rCYss4CS0j72oOlM5MTS0%3d~-1",
+      "name": "_ga_Z4F7L25N51",
+      "value": "GS2.3.s1784654678$o4$g1$t1784654709$j29$l0$h0",
+      "domain": ".dashboard.paytm.com",
+      "path": "/",
+      "expires": 1819214709.513116,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga_Z4F7L25N51",
+      "value": "GS2.2.s1784654678$o4$g1$t1784654709$j29$l0$h0",
       "domain": ".paytm.com",
       "path": "/",
-      "expires": 1815208302.540594,
+      "expires": 1819214709.964849,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "market-merchant.sid",
+      "value": "s%3AGElNPoEqLzDJMqGMfE_OEky7xpPsqTbj.URNtjkJV44QszUdOtwI9kesTqIBmSnj9Bweax1F%2FtIE",
+      "domain": "seller.paytm.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_abck",
+      "value": "5590E8B3C2B0469008005505C338A657~-1~YAAQpgFAF6YQ34GfAQAAByG0hRCuPsJdmFtwrWuZgwzvrb8ffbOor398kgubOmt1HfWl823190mHIucwG3EOneaaVQ7NqYLmWmrjvqdjpMNzdE+dzr7XabjuGi00vTio5M0m37MuMO/Dx0lZn6LSSM08LvPhr3MlbjHRf4JR0S2l48AltWGwZKHB29VFDjdmXZ0tJ5K6hLjRfZDZCEoPInZkgEXkVXXd/XfepilI9rRDiFV+NU0lVtanCDVHL6FzgMTN5DnGROXJvszqavrCoI6YhvaOiN+ZG/K2o7NEWTLxCtk1LSZ87OwsPgZ+dNAFMvgWOd3E3n8UGNrWJ/ntlfLWm9a+hKdqju1dv7FQmPDVLEcAg+4iWqLxD8zVUkwqSKWhGnnCuYANXColyDHlrkdnPd7vGWCjMkqVwu0QnrsA3qvDauH+cxlPIrRcFVpkaP3xrKNYuqj/wqdJLpoyWytx2XxJLYKUq4B+NnFpRWBgvJ1lLKZs7UZxu6qdQc4K2BiAWDVE+fkY/ZgwiOMozXU8ehfKNSIcwTvGqJzZyy388rR4ot5or2S51oG+4O9jOWULh6DT7tOj5SzHWliGNmN/k9NcmPEZBcEJlbzjchuwfhrEIINTibuq5HSNwNGOSjcfaOJW6rCkphnwURrv6vWv9nteqsoCBve02naKZA80YI0dtIWWPRf8+LVu0lmBCjkzWbFEBCMD2pDQLpLWWaNu2XxiJqXEDiAd9Ehe2hl1zQILXvkDf2XrVbUxEMZeyX8fpbOyRuC5MX3cv9hi1oG/+Z57DSG268U19lPn14RzEJM9peiyh9fPpU0m1aMUJfkAiIDVlZFFk23e+hNKzDrqnpmr4YAWlfOaA+zKyc1la8kvkFVVeTP55w17eHzq66mCrhU5sa678+7pJux46pjDMqT3xhcUDt+NOlTxMcOBq5wHF2tXlfhYYXrsVzE6/M2nwaCHb/J10SYdq5JMPg3QLsiNDqrYlHoAdPokuoSCWAgFhexfBn0YCDyErrX1XNEblX7Vnz0CCdxOyDrSG/3Ba9GUuZYTg+xtHdtfkWva~-1~-1~-1~AAQAAAAG%2f%2f%2f%2f%2f%2ft8CPkz8z%2f6P6t9VSBY9k2fSObVSGcr%2fz8ew+7rcsKnojDBtsRQbZyv6xPH7EmwkBceueWMEubSVc5qZnZ9w08%2fq1aqcOY4p56M~-1",
+      "domain": ".paytm.com",
+      "path": "/",
+      "expires": 1816190711.229659,
       "httpOnly": false,
       "secure": true,
       "sameSite": "Lax"
     },
     {
       "name": "XSRF-TOKEN",
-      "value": "7a9c3d55-67e6-45b8-b592-b3c759d734b0",
+      "value": "5d7d8397-490b-480d-bf51-25263169a82c",
       "domain": "staging-dashboard.paytm.com",
       "path": "/",
       "expires": -1,
@@ -201,11 +221,21 @@
       "sameSite": "None"
     },
     {
+      "name": "_ga_NF9V3YTCLK",
+      "value": "GS2.2.s1784654649$o4$g0$t1784654711$j58$l0$h0",
+      "domain": ".paytm.com",
+      "path": "/",
+      "expires": 1819214711.818301,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
       "name": "_dc_gtm_UA-48995472-3",
       "value": "1",
       "domain": ".dashboard.paytm.com",
       "path": "/",
-      "expires": 1783672992,
+      "expires": 1784654862,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
@@ -215,72 +245,32 @@
       "value": "1",
       "domain": ".paytm.com",
       "path": "/",
-      "expires": 1783672992,
+      "expires": 1784654862,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
     },
     {
       "name": "_ga_LSKTYTR270",
-      "value": "GS2.1.s1783672248$o3$g1$t1783672933$j60$l0$h0",
+      "value": "GS2.1.s1784654649$o4$g1$t1784654803$j60$l0$h0",
       "domain": ".paytm.com",
       "path": "/",
-      "expires": 1818232933.101284,
-      "httpOnly": false,
-      "secure": false,
-      "sameSite": "Lax"
-    },
-    {
-      "name": "_ga_Z4F7L25N51",
-      "value": "GS2.3.s1783672249$o3$g1$t1783672933$j60$l0$h0",
-      "domain": ".dashboard.paytm.com",
-      "path": "/",
-      "expires": 1818232933.218706,
-      "httpOnly": false,
-      "secure": false,
-      "sameSite": "Lax"
-    },
-    {
-      "name": "_ga_NF9V3YTCLK",
-      "value": "GS2.2.s1783672250$o3$g0$t1783672933$j60$l0$h0",
-      "domain": ".paytm.com",
-      "path": "/",
-      "expires": 1818232933.353317,
+      "expires": 1819214803.293349,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
     },
     {
       "name": "_ga",
-      "value": "GA1.2.361165046.1783602188",
+      "value": "GA1.1.361165046.1783602188",
       "domain": ".paytm.com",
       "path": "/",
-      "expires": 1818232933.579646,
-      "httpOnly": false,
-      "secure": false,
-      "sameSite": "Lax"
-    },
-    {
-      "name": "_gat_UA-48995472-3",
-      "value": "1",
-      "domain": ".paytm.com",
-      "path": "/",
-      "expires": 1783672993,
-      "httpOnly": false,
-      "secure": false,
-      "sameSite": "Lax"
-    },
-    {
-      "name": "_ga_Z4F7L25N51",
-      "value": "GS2.2.s1783672249$o3$g1$t1783672933$j60$l0$h0",
-      "domain": ".paytm.com",
-      "path": "/",
-      "expires": 1818232933.54595,
+      "expires": 1819214803.295427,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
     }
   ],
-  "savedAt": "2026-07-10T08:42:16.004Z",
-  "accountId": "6a4e7ce9e889fc673773be48"
+  "savedAt": "2026-07-21T17:26:45.663Z",
+  "accountId": "6a5fabcf1d5f64a93f37e486"
 }

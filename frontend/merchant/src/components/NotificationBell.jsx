@@ -27,7 +27,7 @@ function timeAgo(dateStr) {
 
 const STATUS_HEX = {
   confirmed: '#22c55e', paid: '#3b82f6', assigned: '#f59e0b',
-  disputed: '#ef4444', cancelled: '#94a3b8', expired: '#94a3b8', new: '#8b5cf6',
+  disputed: '#ef4444', cancelled: '#94a3b8', expired: '#94a3b8', new: '#15803d',
 };
 const short = (uuid, id) => (uuid ? String(uuid).split('-')[0].toUpperCase() : `#${id}`);
 
@@ -132,7 +132,7 @@ export default function NotificationBell() {
             <div key={o.id} style={{ padding: '11px 14px', borderBottom: '1px solid var(--cardborder)' }}>
               <div className="flex items-center justify-between gap-3">
                 <span style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600 }}>Order {short(o.uuid, o.id)}</span>
-                <span style={{ color: '#8b5cf6', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>₹{o.amount_inr}</span>
+                <span style={{ color: 'var(--accent)', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>₹{o.amount_inr}</span>
               </div>
               <div className="flex items-center gap-2" style={{ marginTop: 3 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'capitalize', color: STATUS_HEX[o.status] || 'var(--muted)' }}>{o.status}</span>

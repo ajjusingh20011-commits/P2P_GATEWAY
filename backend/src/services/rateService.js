@@ -75,66 +75,24 @@ async function getBaseRate() {
 }
 
 /**
- * Compute the trader/admin rates and USDT amounts for an order.
- *   trader_rate = base × (1 + trader_margin/100)
- *   admin_rate  = base × (1 + admin_margin/100)
- *   trader_deduction_usdt = amount_inr / trader_rate   (deducted from trader)
- *   admin_receives_usdt   = amount_inr / admin_rate    (platform records)
- *   platform_profit_usdt  = trader_deduction − admin_receives
- * @param {number} amountInr
- * @param {number|object} traderOrId  Trader instance or id (falls back to defaults)
- */
-async function calculateOrderRates(amountInr, traderOrId) {
-  const base = await getBaseRate();
-
-  let trader = traderOrId;
-  if (traderOrId != null && typeof traderOrId !== 'object') {
-    trader = await db.Trader.findByPk(traderOrId);
-  }
-  const traderMargin = Number(trader?.trader_margin ?? (await settingsService.getNumber('trader_default_margin', 4)));
-  const adminMargin = Number(trader?.admin_margin ?? (await settingsService.getNumber('admin_default_margin', 5)));
-
-  const traderRate = round4(base + (base * traderMargin) / 100);
-  const adminRate = round4(base + (base * adminMargin) / 100);
-
-  const traderDeduction = round8(Number(amountInr) / traderRate);
-  const adminReceives = round8(Number(amountInr) / adminRate);
-  const platformProfit = round8(traderDeduction - adminReceives);
-
-  return {
-    base_rate: base,
-    trader_margin: traderMargin,
-    admin_margin: adminMargin,
-    trader_rate: traderRate,
-    admin_rate: adminRate,
-    trader_deduction_usdt: traderDeduction,
-    admin_receives_usdt: adminReceives,
-    platform_profit_usdt: platformProfit,
-  };
-}
-
-/**
- * Merchant fee is taken from what the admin records (admin_receives_usdt):
- *   merchant_fee      = admin_receives × merchant_payin% / 100
- *   merchant_receives = admin_receives − merchant_fee
- */
-function calculateMerchantReceives(adminReceivesUsdt, merchantPayinPercent) {
-  const fee = round8((Number(adminReceivesUsdt) * Number(merchantPayinPercent)) / 100);
-  const receives = round8(Number(adminReceivesUsdt) - fee);
-  return { merchant_fee_usdt: fee, merchant_receives_usdt: receives };
-}
-
-/**
- * Full three-way settlement for an order (the canonical model):
- *   admin_rate               = base + (base × merchant_payin% / 100)
- *   merchant_settlement_usdt = amount_inr / admin_rate      → credited to merchant
- *   trader_rate              = base + (base × trader_margin% / 100)
- *   trader_deduction_usdt    = amount_inr / trader_rate     → deducted from trader
- *   platform_revenue_usdt    = trader_deduction − merchant_settlement → platform wallet
+ * Full three-way settlement for an order — the SUBTRACTIVE fee model:
+ *   base_usdt         = amount_inr / base_rate
+ *   merchant_receives = base_usdt − (base_usdt × merchant_payin% / 100)   → credited to merchant
+ *   trader_deduction  = base_usdt − (base_usdt × trader_margin% / 100)   → deducted from trader
+ *   platform_revenue  = trader_deduction − merchant_receives             → platform wallet
+ *   merchant_fee_usdt = base_usdt × merchant_payin% / 100                → real amount subtracted from base_usdt
+ *
+ * Both percentages are taken off the SAME base_usdt (no more admin_rate/trader_rate
+ * divisor pair) — merchant_payin% and trader_margin% each independently shrink the
+ * base amount, and the platform pockets the difference.
  *
  * Rule: trader_margin should be LESS than merchant_payin% (else platform revenue
  * is zero or negative). This is validated when the admin sets the trader rate;
  * here we only warn so a settlement never hard-fails.
+ *
+ * `trader_rate`/`admin_rate` are still returned (derived from the resulting USDT
+ * amounts) purely for display/back-compat with existing readers of order.trader_rate
+ * / order.admin_rate — they no longer drive the math.
  */
 async function calculateSettlement(amountInr, traderId, merchantId) {
   const base = await getBaseRate();
@@ -153,17 +111,24 @@ async function calculateSettlement(amountInr, traderId, merchantId) {
     logger.warn(`rateService: trader margin ${traderMargin}% >= merchant fee ${merchantPayin}% — platform revenue will be <= 0`);
   }
 
-  const adminRate = round4(base + (base * merchantPayin) / 100);
-  const traderRate = round4(base + (base * traderMargin) / 100);
-  const merchantSettlement = round8(Number(amountInr) / adminRate);
-  const traderDeduction = round8(Number(amountInr) / traderRate);
+  const baseUsdt = base > 0 ? round8(Number(amountInr) / base) : 0;
+  const merchantFee = round8((baseUsdt * merchantPayin) / 100);
+  const merchantSettlement = round8(baseUsdt - merchantFee);
+  const traderDeduction = round8(baseUsdt - (baseUsdt * traderMargin) / 100);
   const platformRevenue = round8(traderDeduction - merchantSettlement);
+
+  // Derived, informational rates — the equivalent INR/USDT price implied by the
+  // resulting amounts, for anything still displaying order.trader_rate/admin_rate.
+  const traderRate = traderDeduction > 0 ? round4(Number(amountInr) / traderDeduction) : round4(base);
+  const adminRate = merchantSettlement > 0 ? round4(Number(amountInr) / merchantSettlement) : round4(base);
 
   return {
     base_rate: base,
+    base_usdt: baseUsdt,
     admin_rate: adminRate,
     merchant_payin_percent: merchantPayin,
     merchant_settlement_usdt: merchantSettlement,
+    merchant_fee_usdt: merchantFee,
     trader_rate: traderRate,
     trader_margin_percent: traderMargin,
     trader_deduction_usdt: traderDeduction,
@@ -176,8 +141,6 @@ module.exports = {
   inrToUsdt,
   fetchLiveRate,
   getBaseRate,
-  calculateOrderRates,
-  calculateMerchantReceives,
   calculateSettlement,
   FALLBACK_RATE,
 };

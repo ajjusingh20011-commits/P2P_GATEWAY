@@ -11,6 +11,8 @@ import Balance from './pages/Balance.jsx';
 import ApiCredentials from './pages/ApiCredentials.jsx';
 import Webhooks from './pages/Webhooks.jsx';
 import Profile from './pages/Profile.jsx';
+import Settlements from './pages/Settlements.jsx';
+import Reports from './pages/Reports.jsx';
 
 export default function App() {
   return (
@@ -32,6 +34,8 @@ export default function App() {
             <Route path="/payouts" element={<Payouts />} />
             <Route path="/transactions" element={<Transactions />} />
             <Route path="/balance" element={<Balance />} />
+            <Route path="/settlements" element={<Settlements />} />
+            <Route path="/reports" element={<Reports />} />
             <Route path="/api-credentials" element={<ApiCredentials />} />
             <Route path="/webhooks" element={<Webhooks />} />
             <Route path="/profile" element={<Profile />} />

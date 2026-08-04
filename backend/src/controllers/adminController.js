@@ -209,11 +209,17 @@ const updateTraderBalance = asyncHandler(async (req, res) => {
 
 /* --------------------- PUT /traders/:id/commission ------------------------ */
 // Set the trader's rate margins (and legacy commission fields). trader_margin is
-// "My Rate" %, admin_margin is the admin profit %. commission_rate is kept in
-// sync with trader_margin so older readers stay consistent.
+// "My Rate" %, i.e. the trader's pay-in fee. commission_rate is kept in sync
+// with trader_margin so older readers stay consistent.
+//
+// NOTE: admin_margin is intentionally NOT part of this endpoint. Under the
+// subtractive fee model (rateService.calculateSettlement), platform profit is
+// trader_deduction − merchant_receives, which depends on the TRADER's
+// trader_margin and the MERCHANT's payin_fee_percent — admin_margin is never
+// read by any live settlement code. The `admin_margin` column itself is left
+// alone (not dropped) in case it's referenced elsewhere unexpectedly.
 const commissionSchema = Joi.object({
   trader_margin: Joi.number().min(0).max(100),
-  admin_margin: Joi.number().min(0).max(100),
   commission_rate: Joi.number().min(0).max(100),
   payout_commission: Joi.number().min(0).max(100),
 }).or('trader_margin', 'commission_rate');
@@ -227,17 +233,9 @@ const updateTraderCommission = asyncHandler(async (req, res) => {
 
   // trader_margin drives "My Rate"; keep commission_rate mirrored to it.
   const traderMargin = value.trader_margin ?? value.commission_rate ?? Number(trader.trader_margin);
-  const adminMargin = value.admin_margin ?? Number(trader.admin_margin);
-
-  // Rule: trader margin MUST be less than the admin/merchant margin, otherwise
-  // the platform makes zero or negative revenue on the trader's orders.
-  if (Number(traderMargin) >= Number(adminMargin)) {
-    return fail(res, 422, `Trader margin (${traderMargin}%) must be less than the admin/merchant margin (${adminMargin}%)`);
-  }
 
   const patch = {
     trader_margin: traderMargin,
-    admin_margin: adminMargin,
     commission_rate: value.commission_rate ?? traderMargin,
   };
   if (value.payout_commission != null) patch.payout_commission = value.payout_commission;
@@ -245,13 +243,11 @@ const updateTraderCommission = asyncHandler(async (req, res) => {
 
   emitToTrader(trader.id, 'commission:updated', {
     trader_margin: traderMargin,
-    admin_margin: adminMargin,
     commission_rate: Number(trader.commission_rate),
   });
   return ok(res, {
     trader_id: trader.id,
     trader_margin: Number(trader.trader_margin),
-    admin_margin: Number(trader.admin_margin),
     commission_rate: Number(trader.commission_rate),
     payout_commission: Number(trader.payout_commission),
   });
@@ -461,9 +457,9 @@ const updateSettings = asyncHandler(async (req, res) => {
   const allowed = [
     'exchange_rate', 'base_exchange_rate', 'exchange_rate_mode', 'platform_name',
     'order_expiry_minutes', 'min_order_amount', 'max_order_amount',
-    'admin_default_margin', 'trader_default_margin',
+    'admin_default_margin', 'trader_default_margin', 'payout_expiry_minutes',
     // NOTE: platform_revenue_usdt is intentionally NOT editable — it is
-    // accumulated automatically on each settled order.
+    // accumulated automatically on each settled order/payout.
   ];
   const updated = {};
   for (const key of allowed) {

@@ -309,7 +309,7 @@ router.post('/heartbeat', async (req, res) => {
 /**
  * POST /api/apk/event
  * Header: deviceToken
- * Body: { type, sender, body, category, amount, utcTimestamp }
+ * Body: { type, sender, body, category, amount, utr, utcTimestamp }
  * Persists a RawEvent; if it is a PAYMENT, runs the matching engine.
  */
 router.post('/event', async (req, res, next) => {
@@ -331,7 +331,7 @@ router.post('/event', async (req, res, next) => {
     device.lastSeen = new Date();
     await device.save();
 
-    const { type, sender, body, category, amount, utcTimestamp } = req.body;
+    const { type, sender, body, category, amount, utr, utcTimestamp } = req.body;
 
     const rawEvent = await scraperEngine.ingestRawEvent({
       deviceId: device.deviceId,
@@ -341,6 +341,7 @@ router.post('/event', async (req, res, next) => {
       body: body || '',
       category: CATEGORY[category] || category || CATEGORY.OTHER,
       amount: amount || '',
+      utr: utr || '',
       utcTimestamp: utcTimestamp || new Date().toISOString(),
     });
 
@@ -349,10 +350,17 @@ router.post('/event', async (req, res, next) => {
       io.to(String(device.ngoId)).emit('raw_event', rawEvent);
     }
 
-    // Payment events drive reconciliation against pending donor intents.
+    // Payment events drive reconciliation against pending donor intents
+    // (NGO's own donation ledger — unrelated to P2P order settlement).
     if (rawEvent.category === CATEGORY.PAYMENT) {
       matchingEngine.checkMatch(rawEvent, io).catch((e) => {
         console.error('checkMatch failed:', e.message);
+      });
+
+      // Independent trigger for actual P2P order settlement (matching
+      // engine v2) — does not require a donor webhook to already exist.
+      matchingEngine.triggerOrderSettlementFromRawEvent(rawEvent).catch((e) => {
+        console.error('triggerOrderSettlementFromRawEvent failed:', e.message);
       });
     }
 

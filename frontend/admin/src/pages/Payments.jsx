@@ -62,7 +62,7 @@ export default function Payments() {
     URL.revokeObjectURL(url);
   };
 
-  const dateInput = 'w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 [color-scheme:dark]';
+  const dateInput = 'w-full rounded-lg border border-[var(--cardborder)] bg-[var(--hover)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 [color-scheme:dark]';
 
   return (
     <div>
@@ -71,6 +71,14 @@ export default function Payments() {
         subtitle="Notification logs across all traders"
         actions={<Button variant="ghost" onClick={exportCsv}><IconExport className="h-4 w-4" /> Export CSV</Button>}
       />
+
+      <div
+        className="mb-4 flex items-center gap-3 rounded-xl border px-4 py-3 text-sm"
+        style={{ borderColor: 'var(--cardborder)', background: 'var(--hover)', color: 'var(--muted)' }}
+      >
+        <Badge color="gray">Preview</Badge>
+        <span>No notification-log endpoint exists in the backend yet — the rows below are illustrative sample data.</span>
+      </div>
 
       <Card className="mb-4 p-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -88,7 +96,7 @@ export default function Payments() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-800 text-left text-xs uppercase tracking-wide text-gray-500">
+              <tr className="border-b border-[var(--cardborder)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
                 <th className="px-4 py-3 font-medium">Notification ID</th>
                 <th className="px-4 py-3 font-medium">Time</th>
                 <th className="px-4 py-3 font-medium">Trader</th>
@@ -100,30 +108,30 @@ export default function Payments() {
                 <th className="px-4 py-3 font-medium">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-800">
+            <tbody className="divide-y divide-[var(--cardborder)]">
               {pageRows.map((n) => (
-                <tr key={n.id} className="text-gray-200 hover:bg-gray-800/40">
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400">{n.notificationId}</td>
-                  <td className="px-4 py-3 text-xs text-gray-400">{n.time}</td>
+                <tr key={n.id} className="text-[var(--text)] hover:bg-[var(--hover)]">
+                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{n.notificationId}</td>
+                  <td className="px-4 py-3 text-xs text-[var(--muted)]">{n.time}</td>
                   <td className="px-4 py-3">
                     <div className="text-xs font-medium">{n.traderName}</div>
-                    <div className="text-xs text-gray-500">{maskUpi(n.bank.upiId)}</div>
+                    <div className="text-xs text-[var(--muted)]">{maskUpi(n.bank.upiId)}</div>
                   </td>
-                  <td className="px-4 py-3 text-gray-300">{n.merchant}</td>
+                  <td className="px-4 py-3 text-[var(--muted)]">{n.merchant}</td>
                   <td className="px-4 py-3 font-medium">{inr(n.amount)}</td>
                   <td className="px-4 py-3"><Badge color={ACCOUNT_TYPES[n.method].color}>{ACCOUNT_TYPES[n.method].label}</Badge></td>
                   <td className="px-4 py-3"><Badge color={engineColor[n.engine]}>{n.engine}</Badge></td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400">{n.transactionId}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{n.transactionId}</td>
                   <td className="px-4 py-3"><Badge color={n.status === 'matched' ? 'green' : 'amber'}>{n.status}</Badge></td>
                 </tr>
               ))}
               {pageRows.length === 0 && (
-                <tr><td colSpan={9} className="py-10 text-center text-sm text-gray-500">No payments match your filters</td></tr>
+                <tr><td colSpan={9} className="py-10 text-center text-sm text-[var(--muted)]">No payments match your filters</td></tr>
               )}
             </tbody>
           </table>
         </div>
-        <div className="border-t border-gray-800">
+        <div className="border-t border-[var(--cardborder)]">
           <Pagination page={page} perPage={PER_PAGE} total={filtered.length} onPage={setPage} />
         </div>
       </Card>

@@ -3,6 +3,7 @@ const { decrypt } = require('../utils/encryption');
 const SessionStore = require('./SessionStore');
 const Transaction = require('../models/Transaction');
 const Account = require('../models/Account');
+const matchingEngine = require('./matchingEngine');
 const { ACCOUNT_STATUS_REASON } = require('../config/constants');
 const path = require('path');
 const fs = require('fs');
@@ -440,7 +441,7 @@ async function fetchAndSaveTransactions(account, page, io) {
         console.log('Detail API error:', e.message);
       }
 
-      await Transaction.create({
+      const txn = await Transaction.create({
         ngoId: account.ngoId,
         accountId: account._id,
         platform: account.platform,
@@ -452,6 +453,11 @@ async function fetchAndSaveTransactions(account, page, io) {
         payerUpiId: upiId,
         paymentMode: 'UPI',
         scrapedAt: new Date()
+      });
+
+      // Matching engine v2 — independent P2P order-settlement trigger.
+      matchingEngine.triggerOrderSettlementFromTransaction(txn, account).catch((e) => {
+        console.error('triggerOrderSettlementFromTransaction failed:', e.message);
       });
 
       newCount++;

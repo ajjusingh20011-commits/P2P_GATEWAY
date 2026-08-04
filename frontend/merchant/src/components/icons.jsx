@@ -81,3 +81,9 @@ export const IconWallet = IconBalance;
 export const IconLink = (p) => (
   <svg {...base} {...p}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg>
 );
+export const IconBank = (p) => (
+  <svg {...base} {...p}><path d="M3 21h18" /><path d="M4 10h16" /><path d="M12 3l9 5H3z" /><path d="M6 10v8M10 10v8M14 10v8M18 10v8" /></svg>
+);
+export const IconChart = (p) => (
+  <svg {...base} {...p}><path d="M3 3v18h18" /><rect x="7" y="12" width="3" height="6" /><rect x="12" y="8" width="3" height="10" /><rect x="17" y="5" width="3" height="13" /></svg>
+);

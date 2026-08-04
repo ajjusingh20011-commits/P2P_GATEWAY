@@ -20,6 +20,7 @@ const traderRoutes = require('./routes/traderRoutes');
 const merchantRoutes = require('./routes/merchantRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const payoutRoutes = require('./routes/payoutRoutes');
+const internalRoutes = require('./routes/internalRoutes');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -52,6 +53,7 @@ app.use('/api/trader', traderRoutes);
 app.use('/api/merchant', merchantRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payout-requests', payoutRoutes);
+app.use('/api/internal', internalRoutes);
 
 app.get('/api', (req, res) => res.json({ success: true, data: { name: 'P2P UPI Gateway API' } }));
 

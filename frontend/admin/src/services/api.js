@@ -101,6 +101,12 @@ export const adminApi = {
   approvePayoutRequest: (id) => api.post(`/admin/payout-requests/${id}/approve`).then(unwrap),
   rejectPayoutRequest: (id, reason) => api.post(`/admin/payout-requests/${id}/reject`, { reason }).then(unwrap),
   resolvePayoutDispute: (id, payload) => api.post(`/admin/payout-requests/${id}/dispute-resolve`, payload).then(unwrap),
+
+  listSettlements: () => api.get('/admin/settlements').then(unwrap),
+  triggerSettlement: () => api.post('/admin/settlements/trigger').then(unwrap),
+
+  listSmartphones: () => api.get('/admin/smartphones').then(unwrap),
+  disconnectSmartphone: (id) => api.put(`/admin/smartphones/${id}/disconnect`).then(unwrap),
 };
 
 // Order lifecycle actions. `id` is the order UUID (exposed as the order's

@@ -23,6 +23,10 @@ const rawEventSchema = new mongoose.Schema(
       default: CATEGORY.OTHER,
     },
     amount: { type: String, default: '' },
+    // UPI ref/UTR the device already extracted from the SMS/notification
+    // text (see SMSReceiver.java / NotificationService.java's UTR_PATTERNS).
+    // Used by matchingEngineV2's Tier 0/1/2 logic — see routes/apk.js.
+    utr: { type: String, default: '' },
     utcTimestamp: { type: String, default: '' },
     processed: { type: Boolean, default: false, index: true },
     createdAt: { type: Date, default: Date.now },

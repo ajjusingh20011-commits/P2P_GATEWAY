@@ -4,12 +4,12 @@
  * balanceService — trader USDT balance mutations + the per-order fee/commission
  * settlement. Every change writes an append-only row to balance_logs.
  *
- * Three-way settlement model (amounts in USDT), computed in rateService:
- *   admin_rate           = base × (1 + merchant_payin%/100)
- *   merchant_settlement  = amount_inr / admin_rate       → credited to merchant
- *   trader_rate          = base × (1 + trader_margin%/100)
- *   trader_deduction     = amount_inr / trader_rate      → deducted from trader
- *   platform_revenue     = trader_deduction - merchant_settlement → platform wallet
+ * Three-way settlement model (amounts in USDT), computed in rateService — SUBTRACTIVE:
+ *   base_usdt            = amount_inr / base_rate
+ *   merchant_settlement  = base_usdt - (base_usdt × merchant_payin%/100)  → credited to merchant
+ *   trader_deduction     = base_usdt - (base_usdt × trader_margin%/100)  → deducted from trader
+ *   platform_revenue     = trader_deduction - merchant_settlement        → platform wallet
+ *   merchant_fee_usdt    = base_usdt × merchant_payin%/100               → real amount subtracted
  *
  * Balance effects on confirmation:
  *   trader.balance_usdt   -= trader_deduction
@@ -64,14 +64,14 @@ async function adminAdjust(traderId, action, amountUsdt, note) {
 
 /**
  * Compute the rate-margin breakdown for an order without mutating anything.
- *   trader_rate = base × (1 + trader_margin/100)   admin_rate = base × (1 + admin_margin/100)
- *   trader_deduction = amount_inr / trader_rate     admin_receives = amount_inr / admin_rate
- *   platform_profit  = trader_deduction − admin_receives
- *   merchant_fee     = admin_receives × merchant_payin%   merchant_receives = admin_receives − merchant_fee
+ *   base_usdt         = amount_inr / base_rate
+ *   trader_deduction  = base_usdt − (base_usdt × trader_margin%/100)
+ *   merchant_receives = base_usdt − (base_usdt × merchant_payin%/100)
+ *   merchant_fee      = base_usdt × merchant_payin%/100   (the real amount subtracted)
+ *   platform_profit   = trader_deduction − merchant_receives
  */
 async function computeFees(order) {
   const s = await rateService.calculateSettlement(order.amount_inr, order.trader_id, order.merchant_id);
-  const amountUsdtBase = round8(Number(order.amount_inr) / s.base_rate);
 
   return {
     base_rate: s.base_rate,
@@ -79,12 +79,13 @@ async function computeFees(order) {
     admin_rate: s.admin_rate,
     trader_margin: s.trader_margin_percent,
     merchant_payin_percent: s.merchant_payin_percent,
-    // Merchant is credited the full amount_inr / admin_rate (fee baked into rate).
+    // Merchant is credited base_usdt minus the real subtracted merchant fee.
     merchant_settlement_usdt: s.merchant_settlement_usdt,
     merchant_receives_usdt: s.merchant_settlement_usdt,
     admin_receives_usdt: s.merchant_settlement_usdt,
-    // Effective payin fee vs the base rate (for reporting only).
-    merchant_fee_usdt: round8(amountUsdtBase - s.merchant_settlement_usdt),
+    // Real amount subtracted from base_usdt (base_usdt × merchant_payin%/100) —
+    // no longer a reporting-only implied figure.
+    merchant_fee_usdt: s.merchant_fee_usdt,
     trader_deduction_usdt: s.trader_deduction_usdt,
     platform_profit_usdt: s.platform_revenue_usdt,
   };

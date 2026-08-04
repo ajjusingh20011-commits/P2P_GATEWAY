@@ -21,6 +21,7 @@ const apkRoutes = require('./src/routes/apk');
 const webhookRoutes = require('./src/routes/webhook');
 const checkoutRoutes = require('./src/routes/checkout');
 const publicRoutes = require('./src/routes/public');
+const internalRoutes = require('./src/routes/internal');
 
 const app = express();
 
@@ -88,6 +89,7 @@ app.use('/api/apk', apkRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/checkout', checkoutRoutes);
 app.use('/api/public', publicRoutes);
+app.use('/api/internal', internalRoutes);
 
 // 404 fallback
 app.use((req, res) => {

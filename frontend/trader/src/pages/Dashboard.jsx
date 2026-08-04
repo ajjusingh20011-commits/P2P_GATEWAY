@@ -59,7 +59,7 @@ export default function Dashboard() {
   const [query, setQuery] = useState('');
   const [details, setDetails] = useState([]);
 
-  const { data: dash, loading } = useApi(
+  const { data: dash, loading, refetch: refetchDash } = useApi(
     () => traderApi.dashboard().then((res) => res.data.data),
     {
       fallback: {
@@ -90,10 +90,17 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadDetails();
-    // Refresh when a new order arrives over the socket (re-emitted by the layout).
-    const onOrder = () => loadDetails();
+    // Refresh when a new order arrives, or an existing one settles/expires/
+    // gets paid — both real events re-emitted by TraderLayout from the
+    // socket. 'order:update' covers everything that changes payment-detail
+    // usage counters and dash.today_volume_inr (Live Pool's tiles).
+    const onOrder = () => { loadDetails(); refetchDash(); };
     window.addEventListener('order:new', onOrder);
-    return () => window.removeEventListener('order:new', onOrder);
+    window.addEventListener('order:update', onOrder);
+    return () => {
+      window.removeEventListener('order:new', onOrder);
+      window.removeEventListener('order:update', onOrder);
+    };
   }, []);
 
   const filtered = useMemo(() => {

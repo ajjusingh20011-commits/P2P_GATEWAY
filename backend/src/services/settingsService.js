@@ -23,6 +23,7 @@ const DEFAULTS = {
   order_expiry_minutes: '10',
   min_order_amount: '100',
   max_order_amount: '500000',
+  payout_expiry_minutes: '15',
 };
 
 /** Get a raw string setting (cache → db → default). */

@@ -55,9 +55,14 @@ export function mapCheckout(d) {
 
 async function req(path, opts) {
   const res = await fetch(`${BASE}${path}`, opts);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  return json.data;
+  let json = null;
+  try { json = await res.json(); } catch (_) { /* non-JSON error body */ }
+  if (!res.ok) {
+    const err = new Error(json?.message || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return json?.data;
 }
 
 /** GET /api/orders/:id */

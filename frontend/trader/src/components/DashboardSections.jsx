@@ -653,43 +653,56 @@ export function AttentionSection() {
 
   useEffect(() => {
     let alive = true;
-    Promise.allSettled([getDevices(), traderApi.payoutRequests('in_processing')])
-      .then(([devicesRes, payoutRes]) => {
-        if (!alive) return;
-        const list = [];
+    const load = () => {
+      Promise.allSettled([getDevices(), traderApi.payoutRequests('in_processing')])
+        .then(([devicesRes, payoutRes]) => {
+          if (!alive) return;
+          const list = [];
 
-        const devices = devicesRes.status === 'fulfilled' ? (devicesRes.value || []) : [];
-        devices.filter((d) => !d.online).forEach((d) => {
-          list.push({
-            key: `device-${d.id}`,
-            icon: Smartphone,
-            tone: 'blue',
-            title: `${d.deviceName || 'Device'} is offline`,
-            sub: `Last seen ${timeAgo(d.lastSeen)}`,
-            to: '/smartphones',
-          });
-        });
-
-        const payouts = payoutRes.status === 'fulfilled' ? (payoutRes.value.data?.data?.payout_requests || []) : [];
-        payouts.forEach((r) => {
-          if (!r.expires_at) return;
-          const msLeft = new Date(r.expires_at).getTime() - Date.now();
-          if (msLeft < EXPIRING_SOON_MS) {
+          const devices = devicesRes.status === 'fulfilled' ? (devicesRes.value || []) : [];
+          devices.filter((d) => !d.online).forEach((d) => {
             list.push({
-              key: `payout-${r.id}`,
-              icon: Clock3,
-              tone: 'amber',
-              title: msLeft <= 0 ? 'A payout request expired' : 'Payout request expiring soon',
-              sub: msLeft <= 0 ? `#${r.id} needs review` : `#${r.id} — ${fmtDuration(msLeft)} left`,
-              to: '/buy-usdt',
+              key: `device-${d.id}`,
+              icon: Smartphone,
+              tone: 'blue',
+              title: `${d.deviceName || 'Device'} is offline`,
+              sub: `Last seen ${timeAgo(d.lastSeen)}`,
+              to: '/smartphones',
             });
-          }
-        });
+          });
 
-        setAlerts(list);
-      })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
+          const payouts = payoutRes.status === 'fulfilled' ? (payoutRes.value.data?.data?.payout_requests || []) : [];
+          payouts.forEach((r) => {
+            if (!r.expires_at) return;
+            const msLeft = new Date(r.expires_at).getTime() - Date.now();
+            if (msLeft < EXPIRING_SOON_MS) {
+              list.push({
+                key: `payout-${r.id}`,
+                icon: Clock3,
+                tone: 'amber',
+                title: msLeft <= 0 ? 'A payout request expired' : 'Payout request expiring soon',
+                sub: msLeft <= 0 ? `#${r.id} needs review` : `#${r.id} — ${fmtDuration(msLeft)} left`,
+                to: '/buy-usdt',
+              });
+            }
+          });
+
+          setAlerts(list);
+        })
+        .finally(() => { if (alive) setLoading(false); });
+    };
+
+    load();
+    // Refresh on real payout state changes (accepted/settled/canceled/
+    // disputed/expired) and device disconnects — both re-emitted by
+    // TraderLayout as 'order:update' / 'device:disconnected' window events.
+    window.addEventListener('order:update', load);
+    window.addEventListener('device:disconnected', load);
+    return () => {
+      alive = false;
+      window.removeEventListener('order:update', load);
+      window.removeEventListener('device:disconnected', load);
+    };
   }, []);
 
   return (

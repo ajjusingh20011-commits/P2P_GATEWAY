@@ -1,6 +1,7 @@
 const NGO = require('../models/NGO');
 const Account = require('../models/Account');
 const { encrypt, decrypt } = require('../utils/encryption');
+const { assertUpiAvailable } = require('../utils/upiUniqueness');
 
 /**
  * NGO lifecycle + account credential management.
@@ -32,6 +33,7 @@ async function updateNGO(id, updates) {
  * Adds a payment account to an NGO, encrypting the login credentials.
  */
 async function addAccount(ngoId, { platform, upiId, accountNumber, displayName, loginEmail, loginPassword }) {
+  if (upiId) await assertUpiAvailable(upiId);
   return Account.create({
     ngoId,
     platform,

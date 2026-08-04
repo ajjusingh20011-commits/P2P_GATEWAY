@@ -73,6 +73,12 @@ module.exports = (sequelize) => {
       trader_payout_percent: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
       effective_payout_rate: { type: DataTypes.DECIMAL(15, 4), allowNull: true },
       trader_credit_usdt: { type: DataTypes.DECIMAL(20, 8), allowNull: true },
+      // Merchant side of the two-sided fee model (also frozen at accept):
+      //   merchant_liability_usdt = base_usdt + (base_usdt × merchant_payout_percent/100)
+      //   platform_profit_usdt    = merchant_liability_usdt - trader_credit_usdt
+      merchant_payout_percent: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+      merchant_liability_usdt: { type: DataTypes.DECIMAL(20, 8), allowNull: true },
+      platform_profit_usdt: { type: DataTypes.DECIMAL(20, 8), allowNull: true },
 
       receipt_url: { type: DataTypes.STRING(512), allowNull: true },
     },

@@ -4,6 +4,7 @@ import { STRINGS } from '../utils/i18n';
 import { getOrderIdFromUrl, upiLink, inr, fmtTimer, SUPPORT_WHATSAPP } from '../utils/order';
 import { fetchCheckout, claimPaid, markCheckoutOpened, cancelOrder } from '../services/api';
 import { useOrderSocket } from '../hooks/useOrderSocket';
+import { isJunkUtr } from '../utils/utrValidation';
 
 const STEP = {
   PAYMENT: 'payment',
@@ -442,14 +443,23 @@ export default function CheckoutPage() {
     if (proof === 'utr') {
       if (!clean) { setUtrError(t.utrRequired); return; }
       if (clean.length < 12) { setUtrError(t.utrInvalid); return; }
+      if (isJunkUtr(clean)) { setUtrError(t.utrJunk); return; }
     }
     setUtrError('');
     submittingRef.current = true;
     setStep(STEP.PROCESSING);
     try {
       await claimPaid(orderId, { utrNumber: proof === 'utr' ? clean : undefined, confirmationType: proof });
-    } catch (_) {
-      // Backend will still reflect via polling; keep processing.
+    } catch (e) {
+      // A validation rejection (e.g. the server's own junk-UTR check catching
+      // something the client check missed) needs to go back in front of the
+      // customer, not silently proceed to "verifying" — any other failure
+      // (network, etc.) still just waits on the next poll as before.
+      if (proof === 'utr' && e.status === 422) {
+        submittingRef.current = false;
+        setStep(STEP.PAYMENT);
+        setUtrError(e.message || t.utrJunk);
+      }
     }
   }, [utr, proof, orderId, t]);
 

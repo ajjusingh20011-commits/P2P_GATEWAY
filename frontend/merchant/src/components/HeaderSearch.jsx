@@ -117,7 +117,7 @@ export default function HeaderSearch() {
                 <div key={o.id} style={rowStyle}>
                   <div className="flex items-center justify-between gap-3">
                     <span style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600 }}>#{short(o.uuid, o.id)}</span>
-                    <span style={{ color: '#8b5cf6', fontSize: 13, fontWeight: 700 }}>₹{o.amount_inr}</span>
+                    <span style={{ color: 'var(--accent)', fontSize: 13, fontWeight: 700 }}>₹{o.amount_inr}</span>
                   </div>
                   <div className="flex items-center gap-2" style={{ marginTop: 2 }}>
                     <span style={{ color: 'var(--muted)', fontSize: 11, textTransform: 'capitalize' }}>{o.status}</span>

@@ -1,8 +1,14 @@
 import { useState } from 'react';
-import { Button, Input, Section, PageHeader, Modal } from '../components/ui';
+import { Badge, Button, Input, Section, PageHeader, Modal } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { profile as seed } from '../utils/mock';
 
+// Neither a profile-update endpoint nor a password-change endpoint exists
+// in the backend for any role (confirmed: not in merchantRoutes.js, and no
+// change-password route anywhere). Both actions below used to fake success
+// with a bare setTimeout — replaced with honest, clearly-labeled preview
+// states instead, per the rule against faking server success for
+// credential/permission changes.
 export default function Profile() {
   const { user } = useAuth();
   const [form, setForm] = useState({
@@ -19,17 +25,12 @@ export default function Profile() {
 
   const save = () => {
     setSaved(true);
-    setTimeout(() => setSaved(false), 1800);
   };
 
   const changePassword = () => {
     if (!pwd.current || !pwd.next) return setPwdMsg('Please fill all fields.');
     if (pwd.next !== pwd.confirm) return setPwdMsg('New passwords do not match.');
-    setPwdMsg('');
-    setShowPwd(false);
-    setPwd({ current: '', next: '', confirm: '' });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1800);
+    setPwdMsg('preview');
   };
 
   return (
@@ -37,22 +38,26 @@ export default function Profile() {
       <PageHeader
         title="Profile"
         subtitle="Business account details"
-        actions={<Button onClick={save}>{saved ? '✓ Saved' : 'Save changes'}</Button>}
+        actions={<Button onClick={save}>{saved ? 'Preview saved (not persisted)' : 'Save changes'}</Button>}
       />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Section title="Business Information" description="Shown on customer checkout pages">
+        <Section
+          title="Business Information"
+          description="Shown on customer checkout pages"
+        >
+          <div className="mb-3"><Badge color="gray">Preview — editing here isn't saved yet</Badge></div>
           <div className="space-y-4">
             <div>
-              <label className="mb-1.5 block text-sm text-gray-400">Business name</label>
+              <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Business name</label>
               <Input value={form.businessName} onChange={set('businessName')} />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm text-gray-400">Email</label>
+              <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Email</label>
               <Input type="email" value={form.email} onChange={set('email')} />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm text-gray-400">Phone</label>
+              <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Phone</label>
               <Input value={form.phone} onChange={set('phone')} />
             </div>
           </div>
@@ -60,9 +65,9 @@ export default function Profile() {
 
         <Section title="Security" description="Password and access">
           <div className="space-y-4">
-            <div className="rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
-              <p className="text-sm font-medium text-gray-100">Password</p>
-              <p className="text-xs text-gray-500">Last changed 42 days ago</p>
+            <div className="rounded-lg border px-4 py-3" style={{ borderColor: 'var(--cardborder)', background: 'var(--hover)' }}>
+              <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>Password</p>
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>Last changed 42 days ago</p>
             </div>
             <Button variant="ghost" onClick={() => setShowPwd(true)}>Change password</Button>
           </div>
@@ -71,26 +76,39 @@ export default function Profile() {
 
       <Modal
         open={showPwd}
-        onClose={() => setShowPwd(false)}
+        onClose={() => { setShowPwd(false); setPwdMsg(''); setPwd({ current: '', next: '', confirm: '' }); }}
         size="md"
         title="Change Password"
-        footer={<><Button variant="ghost" onClick={() => setShowPwd(false)}>Cancel</Button><Button onClick={changePassword}>Update password</Button></>}
+        subtitle="Preview — not yet connected to a live account-security endpoint"
+        footer={
+          pwdMsg === 'preview' ? (
+            <Button onClick={() => { setShowPwd(false); setPwdMsg(''); setPwd({ current: '', next: '', confirm: '' }); }}>Close</Button>
+          ) : (
+            <><Button variant="ghost" onClick={() => setShowPwd(false)}>Cancel</Button><Button onClick={changePassword}>Preview update</Button></>
+          )
+        }
       >
-        <div className="space-y-4">
-          {pwdMsg && <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">{pwdMsg}</p>}
-          <div>
-            <label className="mb-1.5 block text-sm text-gray-400">Current password</label>
-            <Input type="password" value={pwd.current} onChange={(e) => setPwd((p) => ({ ...p, current: e.target.value }))} />
+        {pwdMsg === 'preview' ? (
+          <div className="rounded-lg border px-3 py-3 text-sm" style={{ borderColor: 'var(--cardborder)', background: 'var(--hover)', color: 'var(--text)' }}>
+            <strong>Preview only.</strong> Password changes aren't connected to a live endpoint yet — nothing was updated.
           </div>
-          <div>
-            <label className="mb-1.5 block text-sm text-gray-400">New password</label>
-            <Input type="password" value={pwd.next} onChange={(e) => setPwd((p) => ({ ...p, next: e.target.value }))} />
+        ) : (
+          <div className="space-y-4">
+            {pwdMsg && <p className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>{pwdMsg}</p>}
+            <div>
+              <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Current password</label>
+              <Input type="password" value={pwd.current} onChange={(e) => setPwd((p) => ({ ...p, current: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>New password</label>
+              <Input type="password" value={pwd.next} onChange={(e) => setPwd((p) => ({ ...p, next: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Confirm new password</label>
+              <Input type="password" value={pwd.confirm} onChange={(e) => setPwd((p) => ({ ...p, confirm: e.target.value }))} />
+            </div>
           </div>
-          <div>
-            <label className="mb-1.5 block text-sm text-gray-400">Confirm new password</label>
-            <Input type="password" value={pwd.confirm} onChange={(e) => setPwd((p) => ({ ...p, confirm: e.target.value }))} />
-          </div>
-        </div>
+        )}
       </Modal>
     </div>
   );

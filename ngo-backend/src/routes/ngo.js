@@ -4,6 +4,7 @@ const express = require('express');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { ROLES, ACCOUNT_STATUS, ACCOUNT_STATUS_REASON, CONNECTION_TYPE } = require('../config/constants');
 const { encrypt } = require('../utils/encryption');
+const { assertUpiAvailable, UpiTakenError } = require('../utils/upiUniqueness');
 const ledgerService = require('../services/ledgerService');
 const Account = require('../models/Account');
 const Transaction = require('../models/Transaction');
@@ -79,6 +80,17 @@ router.post('/accounts', async (req, res, next) => {
         .json({ success: false, message: 'type must be "apk" or "web"' });
     }
 
+    if (upiId) {
+      try {
+        await assertUpiAvailable(upiId);
+      } catch (err) {
+        if (err instanceof UpiTakenError) {
+          return res.status(err.status).json({ success: false, message: err.message });
+        }
+        throw err;
+      }
+    }
+
     const doc = {
       ngoId,
       platform,
@@ -101,6 +113,9 @@ router.post('/accounts', async (req, res, next) => {
     const safe = await Account.findById(account._id).select(CREDENTIAL_FIELDS);
     return res.status(201).json({ success: true, data: safe });
   } catch (err) {
+    if (err.code === 11000 && err.keyPattern?.upiId) {
+      return res.status(409).json({ success: false, message: 'This UPI ID is already registered on the platform' });
+    }
     return next(err);
   }
 });

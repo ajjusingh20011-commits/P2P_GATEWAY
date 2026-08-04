@@ -128,17 +128,45 @@ export default function TraderLayout() {
     }
   }, [refreshProfile]);
 
-  // Real-time: surface new orders as toasts and let pages refresh their stats.
+  // Real-time: surface new orders as toasts, and re-broadcast every socket
+  // event that can change a Dashboard number as a window CustomEvent so
+  // pages/sections don't each need their own socket connection (Dashboard.jsx,
+  // DashboardSections.jsx already had 'order:update' listeners wired up for
+  // this — nothing ever dispatched that event, so they were dead code).
   useEffect(() => {
     if (!socket) return;
     const onNewOrder = (payload = {}) => {
       const amount = payload.amount ?? payload.amount_inr ?? payload.amountInr ?? 0;
       toast(`New order: ${inr(amount)}`, 'success');
       window.dispatchEvent(new CustomEvent('order:new', { detail: payload }));
+      window.dispatchEvent(new CustomEvent('order:update', { detail: payload }));
     };
+    // Every one of these is a real, confirmed-firing backend event that
+    // changes this trader's own volume/success-rate/commission/live-pool
+    // numbers (order settlement/cancellation/expiry, a payment being
+    // detected, or a payout request changing state) — see
+    // backend/src/services/{smartMerge,payoutService,orderService}.js and
+    // backend/src/controllers/orderController.js.
+    const REFRESH_EVENTS = [
+      'order:confirmed', 'order:completed', 'order:claimed_paid',
+      'order:cancelled', 'order:expired', 'payment:detected',
+      'payout:accepted', 'payout:settled', 'payout:canceled',
+      'payout:disputed', 'payout:expired',
+    ];
+    const onRefresh = (payload = {}) => window.dispatchEvent(new CustomEvent('order:update', { detail: payload }));
+    // Admin force-disconnected one of this trader's devices — the only
+    // device-state event actually pushed to the trader room (heartbeat
+    // online/offline is polled, not socket-pushed — see refreshProfile's
+    // 30s interval above).
+    const onDeviceDisconnected = (payload = {}) => window.dispatchEvent(new CustomEvent('device:disconnected', { detail: payload }));
+
     socket.on('order:new', onNewOrder);
+    REFRESH_EVENTS.forEach((ev) => socket.on(ev, onRefresh));
+    socket.on('device:disconnected', onDeviceDisconnected);
     return () => {
       socket.off('order:new', onNewOrder);
+      REFRESH_EVENTS.forEach((ev) => socket.off(ev, onRefresh));
+      socket.off('device:disconnected', onDeviceDisconnected);
     };
   }, [socket]);
 

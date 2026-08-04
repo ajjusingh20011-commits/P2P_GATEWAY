@@ -104,6 +104,27 @@ async function bootstrap() {
     logger.warn(`Could not start stale-claim sweep: ${err.message}`);
   }
 
+  // ---- In-process under-review reminder sweep (works with or without Redis) ----
+  // Nudges a trader (in-panel notification) + admin (Telegram) when an order
+  // has sat in under_review for 2+ hours nobody has acted on. Notifications
+  // only — never changes status/balances; reminder_sent_at keeps it to one
+  // shot per order. Runs every 5 minutes rather than the 30s used by the
+  // other sweeps here: the threshold it's checking is 2 hours, so polling
+  // every 30s would be ~240 checks per order for no benefit — 5 minutes
+  // still catches the 2-hour mark promptly (worst case a few minutes late)
+  // at a fraction of the DB load.
+  try {
+    const { checkUnderReviewReminders } = require('./jobs/underReviewReminder');
+    setInterval(() => {
+      checkUnderReviewReminders().catch((err) => {
+        logger.warn(`Under-review reminder sweep error (ignored): ${err.message}`);
+      });
+    }, 5 * 60_000).unref();
+    logger.info('Under-review reminder sweep running every 5 minutes');
+  } catch (err) {
+    logger.warn(`Could not start under-review reminder sweep: ${err.message}`);
+  }
+
   // ---- In-process payout-request expiry sweep (works with or without Redis) ----
   // Moves accepted-but-not-transferred payout requests to `dispute` once their
   // timer elapses. Isolated from the order sweep above.

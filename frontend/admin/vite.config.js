@@ -8,7 +8,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/api': { target: 'http://localhost:4000', changeOrigin: true },
+      // Trailing slash matters — see the identical fix + explanation in
+      // frontend/merchant/vite.config.js (a bare '/api' prefix also matches
+      // any future SPA route that happens to start with the string 'api').
+      '/api/': { target: 'http://localhost:4000', changeOrigin: true },
       '/socket.io': { target: 'http://localhost:4000', ws: true },
     },
   },

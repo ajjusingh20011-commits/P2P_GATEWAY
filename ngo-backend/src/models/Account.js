@@ -14,6 +14,11 @@ const accountSchema = new mongoose.Schema(
       enum: Object.values(PLATFORMS),
       required: true,
     },
+    // Globally unique across the platform (see cross-database check in
+    // routes/ngo.js and services/ngoService.js — the MySQL side of the
+    // platform enforces this too via payment_details app-level checks).
+    // Partial index below excludes '' so multiple accounts without a UPI
+    // yet don't collide with each other.
     upiId: { type: String, trim: true, default: '' },
     accountNumber: { type: String, trim: true, default: '' },
     displayName: { type: String, trim: true, default: '' },
@@ -67,6 +72,14 @@ const accountSchema = new mongoose.Schema(
     createdAt: { type: Date, default: Date.now },
   },
   { timestamps: true }
+);
+
+accountSchema.index(
+  { upiId: 1 },
+  // $ne isn't supported in partial filter expressions; $gt: '' is
+  // equivalent for excluding the empty-string default (lexicographically
+  // every non-empty string is greater than '').
+  { unique: true, partialFilterExpression: { upiId: { $gt: '' } } }
 );
 
 module.exports = mongoose.model('Account', accountSchema);

@@ -4,6 +4,7 @@ import ProtectedRoute from './routes/ProtectedRoute';
 import AdminLayout from './layouts/AdminLayout';
 import Admin from './pages/Admin.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import Attention from './pages/Attention.jsx';
 import Traders from './pages/Traders.jsx';
 import Merchants from './pages/Merchants.jsx';
 import Orders from './pages/Orders.jsx';
@@ -13,6 +14,10 @@ import Disputes from './pages/Disputes.jsx';
 import Smartphones from './pages/Smartphones.jsx';
 import Settlement from './pages/Settlement.jsx';
 import Settings from './pages/Settings.jsx';
+import Routing from './pages/Routing.jsx';
+import Capacity from './pages/Capacity.jsx';
+import Risk from './pages/Risk.jsx';
+import Admins from './pages/Admins.jsx';
 
 export default function App() {
   return (
@@ -30,6 +35,7 @@ export default function App() {
             }
           >
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/attention" element={<Attention />} />
             <Route path="/traders" element={<Traders />} />
             <Route path="/merchants" element={<Merchants />} />
             <Route path="/orders" element={<Orders />} />
@@ -38,6 +44,10 @@ export default function App() {
             <Route path="/disputes" element={<Disputes />} />
             <Route path="/smartphones" element={<Smartphones />} />
             <Route path="/settlement" element={<Settlement />} />
+            <Route path="/routing" element={<Routing />} />
+            <Route path="/capacity" element={<Capacity />} />
+            <Route path="/risk" element={<Risk />} />
+            <Route path="/admins" element={<Admins />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
 
