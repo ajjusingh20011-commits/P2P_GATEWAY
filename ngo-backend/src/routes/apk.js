@@ -20,72 +20,63 @@ const router = express.Router();
 
 /**
  * POST /api/apk/register-device
- * Body: { deviceId, ngoId, deviceModel, androidVersion, appVersion, licenseKey? }
- * Saves or updates the device and returns its deviceToken.
+ * Body: { deviceId, deviceModel, androidVersion, appVersion, licenseKey }
+ * Claims the pending Device row created by POST /generate-license (the
+ * trader-panel pairing flow) and returns its deviceToken.
  *
- * If `licenseKey` is supplied, this claims the pending Device row created by
- * POST /generate-license (the trader-panel pairing flow) instead of
- * creating/updating by deviceId directly. Existing callers that don't send a
- * licenseKey (the current Android app) are unaffected — same behavior as
- * before.
+ * licenseKey is now REQUIRED. This route used to also accept a bare
+ * deviceId with no licenseKey and no authentication at all — if a Device
+ * with that deviceId already existed, it would reactivate it in place
+ * (status back to ACTIVE, fields updated) and hand back its existing
+ * deviceToken to whoever asked, with zero ownership check. The current
+ * Android app never used that path (it always sends a licenseKey — see
+ * RegistrationActivity), so removing it needs no APK change; it was only
+ * ever reachable via a direct API call. Every (re-)registration now goes
+ * through the real, owned licenseKey pairing flow.
  */
 router.post('/register-device', async (req, res, next) => {
   try {
-    const { deviceId, ngoId, deviceModel, androidVersion, appVersion, licenseKey } = req.body;
+    const { deviceId, deviceModel, androidVersion, appVersion, licenseKey } = req.body;
     if (!deviceId) {
       return res.status(400).json({ success: false, message: 'deviceId is required' });
     }
+    if (!licenseKey) {
+      return res.status(404).json({ success: false, message: 'Invalid or already-used license code' });
+    }
 
-    let device;
+    const device = await Device.findOne({ licenseKey, status: DEVICE_STATUS.PENDING });
+    if (!device) {
+      return res
+        .status(404)
+        .json({ success: false, message: 'Invalid or already-used license code' });
+    }
+    if (device.licenseExpiresAt && device.licenseExpiresAt.getTime() < Date.now()) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Code expired — generate a new one' });
+    }
+    device.deviceId = deviceId;
+    device.deviceModel = deviceModel || device.deviceModel;
+    device.androidVersion = androidVersion || device.androidVersion;
+    device.appVersion = appVersion || device.appVersion;
+    device.status = DEVICE_STATUS.ACTIVE;
+    device.lastSeen = new Date();
+    if (!device.deviceToken) {
+      device.deviceToken = crypto.randomBytes(24).toString('hex');
+    }
 
-    if (licenseKey) {
-      device = await Device.findOne({ licenseKey, status: DEVICE_STATUS.PENDING });
-      if (!device) {
-        return res
-          .status(400)
-          .json({ success: false, message: 'Invalid or already-used license code' });
-      }
-      if (device.licenseExpiresAt && device.licenseExpiresAt.getTime() < Date.now()) {
-        return res
-          .status(400)
-          .json({ success: false, message: 'Code expired — generate a new one' });
-      }
-      device.deviceId = deviceId;
-      device.ngoId = ngoId || device.ngoId;
-      device.deviceModel = deviceModel || device.deviceModel;
-      device.androidVersion = androidVersion || device.androidVersion;
-      device.appVersion = appVersion || device.appVersion;
-      device.status = DEVICE_STATUS.ACTIVE;
-      device.lastSeen = new Date();
-      if (!device.deviceToken) {
-        device.deviceToken = crypto.randomBytes(24).toString('hex');
-      }
+    try {
       await device.save();
-    } else {
-      device = await Device.findOne({ deviceId });
-      if (device) {
-        device.ngoId = ngoId || device.ngoId;
-        device.deviceModel = deviceModel || device.deviceModel;
-        device.androidVersion = androidVersion || device.androidVersion;
-        device.appVersion = appVersion || device.appVersion;
-        device.status = DEVICE_STATUS.ACTIVE;
-        device.lastSeen = new Date();
-        if (!device.deviceToken) {
-          device.deviceToken = crypto.randomBytes(24).toString('hex');
-        }
-        await device.save();
-      } else {
-        device = await Device.create({
-          deviceId,
-          deviceToken: crypto.randomBytes(24).toString('hex'),
-          ngoId: ngoId || null,
-          deviceModel,
-          androidVersion,
-          appVersion,
-          status: DEVICE_STATUS.ACTIVE,
-          lastSeen: new Date(),
-        });
+    } catch (saveErr) {
+      // deviceId has a unique index (Device.js) — this is what actually
+      // blocks Trader B's licenseKey claim from silently taking over a
+      // device Trader A already owns. Previously this fell through to the
+      // generic error handler and leaked the raw Mongo E11000 string as a
+      // 500; now it's a clean, honest 409.
+      if (saveErr && saveErr.code === 11000) {
+        return res.status(409).json({ success: false, message: 'This device is already registered' });
       }
+      throw saveErr;
     }
 
     const io = req.app.get('io');
