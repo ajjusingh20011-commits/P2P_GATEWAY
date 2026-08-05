@@ -51,6 +51,24 @@ public final class RegistrationManager {
     }
 
     /**
+     * Wipes the pairing identity (license key, device name, device token) so
+     * {@link #isRegistered} goes back to false and the pairing flow shows
+     * again — used when SplashActivity confirms with the server that this
+     * device no longer exists (deleted from the trader panel, or a stale
+     * pairing silently restored by Android's app-data backup on reinstall;
+     * see AndroidManifest's dataExtractionRules for the backup side of that
+     * fix). Deliberately leaves `server_url` alone — that's connection
+     * config, not pairing identity.
+     */
+    public static void clearRegistration(Context ctx) {
+        prefs(ctx).edit()
+                .remove("license_key")
+                .remove("device_name")
+                .remove("device_token")
+                .apply();
+    }
+
+    /**
      * Persists the pairing result: the claimed license key, a device name
      * (initially the hardware model, later overwritten with the trader's
      * chosen name), and — if supplied — a server URL override.

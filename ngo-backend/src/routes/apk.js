@@ -273,24 +273,42 @@ router.post('/update-device-name', async (req, res) => {
 });
 
 /**
- * POST /api/apk/heartbeat — no auth (the APK posts this directly, every 4s
- * from HeartbeatService). Body: { licenseKey, deviceId, status }
- * Always resolves success — a flaky heartbeat should never surface an error
- * to the phone, it just tries again in 4 seconds.
+ * POST /api/apk/heartbeat — the APK posts this directly, every 4s from
+ * HeartbeatService. Body: { licenseKey, deviceId, status }, header
+ * `devicetoken` (same header /event uses).
+ *
+ * Requires deviceId + devicetoken to match a real, still-existing Device —
+ * previously this matched on deviceId alone with no token check at all, so
+ * anyone who learned/guessed a deviceId could spoof heartbeats or overwrite
+ * another device's status. A missing/mismatched pair now gets a real 404
+ * instead of a silent no-op update — HeartbeatService reacts to that
+ * specific code by clearing local pairing and notifying the user, since it
+ * means this device genuinely no longer exists (e.g. deleted from the
+ * trader panel), not a flake. Any other failure (DB hiccup, etc.) still
+ * resolves success, same as before — a transient error should never force
+ * a real device through re-pairing.
  */
 router.post('/heartbeat', async (req, res) => {
   try {
     const { deviceId, status } = req.body;
-    await Device.findOneAndUpdate(
-      { deviceId },
+    const token = req.headers.devicetoken || req.headers['x-device-token'];
+    if (!deviceId || !token) {
+      return res.status(404).json({ success: false, message: 'deviceId and devicetoken are required' });
+    }
+
+    const device = await Device.findOneAndUpdate(
+      { deviceId, deviceToken: token },
       {
         lastSeen: new Date(),
         status: status || 'active',
       }
     );
-    res.json({ success: true });
+    if (!device) {
+      return res.status(404).json({ success: false, message: 'Device not registered' });
+    }
+    return res.json({ success: true });
   } catch (err) {
-    res.json({ success: true });
+    return res.json({ success: true });
   }
 });
 

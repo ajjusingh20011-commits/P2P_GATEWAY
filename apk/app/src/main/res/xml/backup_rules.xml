@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Legacy Auto Backup exclusion rules, for API 23-30 (minSdk is 24) —
+  data_extraction_rules.xml covers API 31+ with the same exclusion. See
+  that file for why the pairing SharedPreferences file must never survive
+  a restore.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="paymentbot.xml"/>
+</full-backup-content>

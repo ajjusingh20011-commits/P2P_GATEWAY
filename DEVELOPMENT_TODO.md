@@ -41,11 +41,14 @@ Status as analyzed from the codebase (no code changed during this analysis).
 
 ## 🔴 What is risky or can bite you
 
-1. **Background jobs are OFF on old Redis.** With Redis 3.0.504 (local), BullMQ is
-   disabled, so **heartbeat-check** and **settlement** jobs do **not** run (only the
-   in-process expiry+retry sweep does). Traders may not auto-go-offline; daily
-   settlement won't auto-run (use `POST /api/admin/settlements/trigger` manually).
+1. **Background jobs are OFF on old Redis — local dev only.** With Redis 3.0.504
+   (local), BullMQ is disabled, so **heartbeat-check** and **settlement** jobs do
+   **not** run (only the in-process expiry+retry sweep does). Traders may not
+   auto-go-offline; daily settlement won't auto-run (use
+   `POST /api/admin/settlements/trigger` manually).
    → *Fix by using Redis ≥ 5, or add in-process fallbacks for those two jobs.*
+   → **Production is already on Redis 7.0.15 (2026-08-05)** — this item is
+   local-dev-only now; see `PRODUCTION_READINESS_AUDIT.md` §4.
 2. **Frontends mask a down backend with mock data.** `useApi` + `utils/mock.js` show
    fake data on network error (trader `api.js` even mock-resolves requests). A page
    can *look* like it works while nothing is being saved. → *Add a visible "offline

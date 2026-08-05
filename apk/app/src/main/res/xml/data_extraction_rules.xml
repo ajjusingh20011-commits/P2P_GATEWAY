@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Excludes the pairing SharedPreferences file (license_key, device_token,
+  device_name — written by RegistrationManager) from Android's cloud
+  backup and device-to-device transfer, API 31+.
+
+  Without this, a genuine uninstall+reinstall on the same phone/Google
+  account silently restores this file, making the app think it's still
+  paired with a device row the trader may have long since deleted
+  server-side. SplashActivity's server status-check is the other half of
+  this fix, for installs where a stale pairing already exists.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="paymentbot.xml"/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="paymentbot.xml"/>
+    </device-transfer>
+</data-extraction-rules>

@@ -1,11 +1,19 @@
 package com.example.paymentbot;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
+
+import androidx.core.app.NotificationCompat;
+
 import org.json.JSONObject;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -13,6 +21,9 @@ import java.net.URL;
 public class HeartbeatService extends Service {
 
   private static final String TAG = "MaxPay";
+  private static final String CHANNEL_ID = "PaymentBot";
+  private static final String CHANNEL_NAME = "PaymentBot";
+  private static final int REPAIR_NOTIF_ID = 1002;
   private Handler handler;
   private Runnable heartbeatRunnable;
   private static final int INTERVAL = 4000;
@@ -37,6 +48,7 @@ public class HeartbeatService extends Service {
       return;
 
     new Thread(() -> {
+      HttpURLConnection conn = null;
       try {
         String serverUrl =
           RegistrationManager.getServerUrl(this);
@@ -44,6 +56,8 @@ public class HeartbeatService extends Service {
           RegistrationManager.getLicenseKey(this);
         String deviceId =
           RegistrationManager.getDeviceId(this);
+        String deviceToken =
+          RegistrationManager.getDeviceToken(this);
 
         JSONObject json = new JSONObject();
         json.put("licenseKey", licenseKey);
@@ -58,25 +72,65 @@ public class HeartbeatService extends Service {
         URL url = new URL(
           serverUrl + "/api/apk/heartbeat"
         );
-        HttpURLConnection conn =
+        conn =
           (HttpURLConnection)
           url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty(
           "Content-Type", "application/json");
+        // Server now validates deviceId+deviceToken match a real,
+        // still-existing device before accepting the heartbeat (see
+        // ngo-backend/src/routes/apk.js) — send the token so a 404 here
+        // actually means something instead of never being reachable.
+        conn.setRequestProperty("devicetoken", deviceToken);
         conn.setDoOutput(true);
         conn.setConnectTimeout(3000);
         conn.setReadTimeout(3000);
         conn.getOutputStream().write(
           json.toString().getBytes("utf-8"));
-        conn.getResponseCode();
-        conn.disconnect();
+
+        int code = conn.getResponseCode();
+        if (code == 404) {
+          // Server has confirmed — not a flake — this device no longer
+          // exists (deleted from the trader panel, or the deviceToken
+          // doesn't match). Clear local pairing now rather than waiting
+          // for the next app open, and tell whoever's watching this phone
+          // instead of quietly going dark with no explanation.
+          Log.d(TAG, "Heartbeat rejected (404) — device no longer valid, clearing pairing");
+          RegistrationManager.clearRegistration(this);
+          showRepairNotification();
+        }
+        // Any other non-2xx (5xx, network hiccup surfaced as an HTTP
+        // error, etc.) is treated as transient, same as before — just
+        // retry on the next tick, don't force a re-pair over a flake.
 
       } catch (Exception e) {
         Log.d(TAG, "Heartbeat failed: "
           + e.getMessage());
+      } finally {
+        if (conn != null) {
+          conn.disconnect();
+        }
       }
     }).start();
+  }
+
+  private void showRepairNotification() {
+    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+    if (nm == null) return;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      NotificationChannel channel = new NotificationChannel(
+              CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT);
+      nm.createNotificationChannel(channel);
+    }
+    Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("⚠ PaymentBot needs re-pairing")
+            .setContentText("This device was disconnected from the trader panel. Open the app to pair again.")
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build();
+    nm.notify(REPAIR_NOTIF_ID, notification);
   }
 
   @Override
