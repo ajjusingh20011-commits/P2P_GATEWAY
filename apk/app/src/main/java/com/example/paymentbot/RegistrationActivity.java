@@ -205,6 +205,7 @@ public class RegistrationActivity extends Activity {
     new AsyncTask<Void, Void, String>() {
       @Override
       protected String doInBackground(Void... v) {
+        HttpURLConnection conn = null;
         try {
           JSONObject json = new JSONObject();
           json.put("licenseKey", code);
@@ -215,7 +216,7 @@ public class RegistrationActivity extends Activity {
 
           URL url = new URL(serverUrl +
             "/api/apk/register-device");
-          HttpURLConnection conn =
+          conn =
             (HttpURLConnection)
             url.openConnection();
           conn.setRequestMethod("POST");
@@ -226,10 +227,21 @@ public class RegistrationActivity extends Activity {
           conn.getOutputStream().write(
             json.toString().getBytes("utf-8"));
 
+          int status = conn.getResponseCode();
+          // getInputStream() throws for ANY 4xx/5xx before a single byte
+          // of the body is readable — every server-side rejection (wrong
+          // code, expired code, device already registered) was landing
+          // in the catch below and showing as "Connection failed. Check
+          // server.", indistinguishable from an actual dead connection.
+          // The real reason was always in the response body; read it via
+          // getErrorStream() for non-2xx so onPostExecute's existing
+          // success:false handling can show the real message.
+          java.io.InputStream stream = (status >= 200 && status < 300)
+            ? conn.getInputStream()
+            : conn.getErrorStream();
           BufferedReader reader =
             new BufferedReader(
-              new InputStreamReader(
-                conn.getInputStream()));
+              new InputStreamReader(stream));
           StringBuilder sb = new StringBuilder();
           String line;
           while ((line = reader.readLine())
@@ -237,6 +249,10 @@ public class RegistrationActivity extends Activity {
           return sb.toString();
         } catch (Exception e) {
           return "ERROR:" + e.getMessage();
+        } finally {
+          if (conn != null) {
+            conn.disconnect();
+          }
         }
       }
 
