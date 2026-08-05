@@ -32,6 +32,10 @@ const STATUS_OPTIONS = [
 // within this window — matches the ~4s HeartbeatService interval with slack.
 const ONLINE_POLL_MS = 15 * 1000;
 
+// Debug APK download — see .env / .env.local. Fallback matches the real
+// VPS URL in case the env var is ever missing from a build.
+const APK_DOWNLOAD_URL = import.meta.env.VITE_APK_DOWNLOAD_URL || 'http://198.44.140.74/downloads/paymentbot.apk';
+
 export default function Smartphones() {
   const [filters, setFilters] = useState({ status: 'all', name: '' });
   const [menuOpen, setMenuOpen] = useState(false);
@@ -389,21 +393,18 @@ export default function Smartphones() {
             It will read notifications and automatically verify payments.
           </p>
           <p style={{ color: 'var(--accent)', fontSize: 13, fontWeight: 600, margin: '0 0 16px' }}>PaymentBot</p>
-          {/* No public APK download is hosted yet — a working link here would
-              either dead-end (no route serves one) or point at a debug-signed
-              local build artifact, which isn't safe to distribute. Disabled
-              + labeled, matching the sidebar's "Downloads · Soon" item,
-              instead of a live-looking link that silently does nothing. */}
-          <div
+          {/* Debug APK, uploaded manually and served by Nginx from
+              /var/www/downloads/ on the VPS (no build/deploy automation for
+              this yet). VITE_APK_DOWNLOAD_URL falls back to the known-good
+              VPS URL if the env var isn't set. */}
+          <a
+            href={APK_DOWNLOAD_URL}
+            download
             className="mb-2.5 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold"
-            style={{ background: 'var(--hover)', color: 'var(--muted)', border: '1px solid var(--cardborder)', cursor: 'not-allowed' }}
+            style={{ background: 'var(--accent)', color: '#fff', textDecoration: 'none' }}
           >
             Download Android APK
-            <Badge color="gray">Coming soon</Badge>
-          </div>
-          <p style={{ color: 'var(--muted)', fontSize: 11, margin: '0 0 12px' }}>
-            Ask support for the current install file in the meantime.
-          </p>
+          </a>
           <Button variant="ghost" className="mb-4 w-full" onClick={handleAppInstalled} disabled={generating}>
             {generating ? 'Generating code…' : 'The app is installed'}
           </Button>
