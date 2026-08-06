@@ -10,13 +10,13 @@ const fs = require('fs');
 
 async function initiateLogin(account, io) {
   const accountId = account._id.toString();
-  // Socket room — trader-scoped now, not the old shared-org ngoId.
-  const ngoId = account.traderId != null ? `trader:${account.traderId}` : null;
+  // Trader-scoped socket room string — no longer the old shared-org ngoId.
+  const room = account.traderId != null ? `trader:${account.traderId}` : null;
   try {
     const email = decrypt(account.encryptedLoginEmail);
     const password = decrypt(account.encryptedLoginPassword);
     SessionStore.setSession(accountId, { status: 'connecting' });
-    emitStatus(io, ngoId, accountId, 'connecting', 'Connecting...');
+    emitStatus(io, room, accountId, 'connecting', 'Connecting...');
     // Headless by default (production/server). Set SCRAPER_HEADLESS=false in
     // a LOCAL .env.local (or via scripts/test-web-login.js) to watch a real
     // login in a visible window — the deployed server never sets this var,
@@ -152,7 +152,7 @@ async function initiateLogin(account, io) {
             browser, page, context,
             status: 'otp_required'
           });
-          emitStatus(io, ngoId, accountId,
+          emitStatus(io, room, accountId,
             'otp_required',
             'OTP sent to your phone.'
           );
@@ -182,15 +182,15 @@ async function initiateLogin(account, io) {
   } catch (err) {
     await Account.findByIdAndUpdate(accountId, { status: 'failed', statusReason: null });
     SessionStore.removeSession(accountId);
-    emitStatus(io, ngoId, accountId, 'error', err.message);
+    emitStatus(io, room, accountId, 'error', err.message);
     throw err;
   }
 }
 
 async function submitOTP(account, otp, io) {
   const accountId = account._id.toString();
-  // Socket room — trader-scoped now, not the old shared-org ngoId.
-  const ngoId = account.traderId != null ? `trader:${account.traderId}` : null;
+  // Trader-scoped socket room string — no longer the old shared-org ngoId.
+  const room = account.traderId != null ? `trader:${account.traderId}` : null;
   const session = SessionStore.getSession(accountId);
   if (!session || session.status !== 'otp_required') {
     throw new Error(
@@ -236,7 +236,7 @@ async function submitOTP(account, otp, io) {
     throw new Error('Invalid OTP. Try again.');
   } catch (err) {
     await Account.findByIdAndUpdate(accountId, { status: 'failed', statusReason: null });
-    emitStatus(io, ngoId, accountId,
+    emitStatus(io, room, accountId,
       'otp_error', err.message);
     throw err;
   }
@@ -245,8 +245,8 @@ async function submitOTP(account, otp, io) {
 async function onLoginSuccess(
   accountId, account, browser, page, context, io
 ) {
-  // Socket room — trader-scoped now, not the old shared-org ngoId.
-  const ngoId = account.traderId != null ? `trader:${account.traderId}` : null;
+  // Trader-scoped socket room string — no longer the old shared-org ngoId.
+  const room = account.traderId != null ? `trader:${account.traderId}` : null;
   try {
     await page.waitForTimeout(1000);
     const denyBtn = await page.$('button:has-text("Deny")');
@@ -275,7 +275,7 @@ async function onLoginSuccess(
     statusReason: null,
     lastSyncTime: new Date()
   });
-  emitStatus(io, ngoId, accountId,
+  emitStatus(io, room, accountId,
     'active', 'Connected! Monitoring transactions...');
   await fetchAndSaveTransactions(account, page, io);
   startMonitoring(accountId, account, io);

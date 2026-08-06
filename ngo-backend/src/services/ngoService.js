@@ -1,7 +1,6 @@
 const NGO = require('../models/NGO');
 const Account = require('../models/Account');
 const { encrypt, decrypt } = require('../utils/encryption');
-const { assertUpiAvailable } = require('../utils/upiUniqueness');
 
 /**
  * NGO lifecycle + account credential management.
@@ -30,22 +29,6 @@ async function updateNGO(id, updates) {
 }
 
 /**
- * Adds a payment account to an NGO, encrypting the login credentials.
- */
-async function addAccount(ngoId, { platform, upiId, accountNumber, displayName, loginEmail, loginPassword }) {
-  if (upiId) await assertUpiAvailable(upiId);
-  return Account.create({
-    ngoId,
-    platform,
-    upiId,
-    accountNumber,
-    displayName,
-    encryptedLoginEmail: encrypt(loginEmail || ''),
-    encryptedLoginPassword: encrypt(loginPassword || ''),
-  });
-}
-
-/**
  * Returns an account with its login credentials decrypted — used only by
  * the scraper engine, never exposed over the public API.
  */
@@ -62,16 +45,10 @@ async function getAccountWithCredentials(accountId) {
   };
 }
 
-async function listAccounts(ngoId) {
-  return Account.find({ ngoId }).sort({ createdAt: -1 });
-}
-
 module.exports = {
   createNGO,
   listNGOs,
   getNGO,
   updateNGO,
-  addAccount,
   getAccountWithCredentials,
-  listAccounts,
 };

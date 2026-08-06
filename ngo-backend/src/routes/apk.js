@@ -610,7 +610,7 @@ router.post('/screenshot', async (req, res) => {
 router.get('/status/:deviceId', async (req, res, next) => {
   try {
     const device = await Device.findOne({ deviceId: req.params.deviceId }).select(
-      'deviceId status lastSeen ngoId deviceModel appVersion'
+      'deviceId status lastSeen deviceModel appVersion'
     );
     if (!device) {
       return res.status(404).json({ success: false, message: 'Device not found' });
@@ -621,7 +621,6 @@ router.get('/status/:deviceId', async (req, res, next) => {
         deviceId: device.deviceId,
         status: device.status,
         lastSeen: device.lastSeen,
-        ngoId: device.ngoId,
       },
     });
   } catch (err) {

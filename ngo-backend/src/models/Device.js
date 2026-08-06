@@ -14,6 +14,12 @@ const deviceSchema = new mongoose.Schema(
     // status === PENDING — /register-device rejects a claim attempt past
     // this, whether it's a fresh scan or a retry against a stale code.
     licenseExpiresAt: { type: Date, default: null },
+    // DEPRECATED (2026-08-06): superseded by traderId below, which is the
+    // real authorization boundary now. NOT dead — still read by apk.js
+    // (stamped onto RawEvent.ngoId, and copied onto DebitSMS/OverlayCapture/
+    // OutgoingPayment) to feed the not-yet-retired donation-ledger matching
+    // path (matchingEngine.checkMatch) and payoutVerifier.js. Do not drop
+    // without first retiring/rekeying those.
     ngoId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'NGO',
