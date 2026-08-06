@@ -13,7 +13,6 @@
  */
 
 const Joi = require('joi');
-const axios = require('axios');
 
 const db = require('../models');
 const config = require('../config');
@@ -215,27 +214,17 @@ const claimPaid = asyncHandler(async (req, res) => {
     screenshot_path: req.body?.screenshot_path || order.screenshot_path,
   });
 
-  // Notify NGO backend to start verification. Best-effort — the customer's
-  // claim is already saved above; a down NGO backend must not block checkout.
-  try {
-    await axios.post(
-      (process.env.NGO_BACKEND_URL || 'http://localhost:3000') + '/api/checkout/verify',
-      {
-        orderId: order.uuid,
-        amount: order.amount_inr.toString(),
-        ngoId: order.merchant_id.toString(),
-        traderUPI: order.paymentDetail?.upi_id || '',
-        donorClickedAt: new Date().toISOString(),
-        utr: utrNumber || '',
-        confirmationType,
-      },
-      { timeout: 5000 }
-    );
-    console.log('NGO verify triggered for order:', order.uuid);
-  } catch (e) {
-    console.log('NGO notify failed:', e.message);
-    // Don't block - continue even if NGO fails.
-  }
+  // Donation-ledger subsystem retired (2026-08-06): this used to bridge into
+  // ngo-backend's POST /api/checkout/verify to seed a donor-intent Webhook/
+  // Verification and nudge the scraper for the OLD webhook+ledger matching
+  // flow (ngo-backend's matchingEngine.checkMatch -> notifyP2PBackend ->
+  // POST /api/orders/verify-payment). Real settlement no longer depends on
+  // any of that — it's driven independently by matching engine v2 straight
+  // off the receiver-side RawEvent/Transaction (see matchingEngineV2.js),
+  // with no donor-claim prerequisite. Removed rather than left as a dead
+  // call: it was also sending order.merchant_id as a synthetic "ngoId",
+  // which stopped meaning anything once the receiving end had no real NGO
+  // concept for a P2P order.
 
   emitToAdmin('order:claimed_paid', { order_id: order.uuid, gateway_order_id: order.gateway_order_id, amount_inr: order.amount_inr, deposit_type: order.deposit_type });
   if (order.trader_id) emitToTrader(order.trader_id, 'order:claimed_paid', { order_id: order.uuid, gateway_order_id: order.gateway_order_id, amount_inr: order.amount_inr });
