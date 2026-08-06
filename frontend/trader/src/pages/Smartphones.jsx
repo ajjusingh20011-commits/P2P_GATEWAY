@@ -5,6 +5,7 @@ import { Card, Badge, Button, SearchInput, Select, PageHeader, Modal, EmptyState
 import { IconPlus, IconChevron } from '../components/icons';
 import { getDevices, generateLicense, renameDevice, deleteDevice, getNgoSocketToken, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 import { traderApi } from '../services/api';
+import ConfirmModal from '../components/ConfirmModal';
 
 function heartbeatAgo(dateStr) {
   if (!dateStr) return 'Never';
@@ -207,15 +208,23 @@ export default function Smartphones() {
     }
   };
 
-  const removeDevice = async (s) => {
-    const label = s.deviceName || 'this device';
-    if (!window.confirm(`Delete ${label}? This permanently removes it and cannot be undone.`)) return;
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const removeDevice = (s) => setDeleteTarget(s);
+
+  const confirmRemoveDevice = async () => {
+    const s = deleteTarget;
+    if (!s) return;
+    setDeleting(true);
     try {
       await deleteDevice(s.id);
       setDevices((list) => list.filter((d) => d.id !== s.id));
+      setDeleteTarget(null);
     } catch (e) {
       console.error('Delete failed:', e);
       alert('Delete failed: ' + e.message);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -233,6 +242,7 @@ export default function Smartphones() {
   }, [devices, filters]);
 
   return (
+    <>
     <div>
       <PageHeader
         title="Smartphones"
@@ -458,5 +468,16 @@ export default function Smartphones() {
         </div>
       </Modal>
     </div>
+    <ConfirmModal
+      open={!!deleteTarget}
+      title="Delete this device?"
+      description={deleteTarget ? `Delete ${deleteTarget.deviceName || 'this device'}? This permanently removes it and cannot be undone.` : ''}
+      confirmLabel="Delete"
+      tone="danger"
+      busy={deleting}
+      onConfirm={confirmRemoveDevice}
+      onClose={() => setDeleteTarget(null)}
+    />
+    </>
   );
 }

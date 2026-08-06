@@ -7,6 +7,7 @@ import { BankBadge, Segments } from './ui';
 import { IconRobot, IconGlobe } from './icons';
 import { toast } from './Toaster';
 import { ACCOUNT_TYPES, inr } from '../utils/mock';
+import ConfirmModal from './ConfirmModal';
 
 /*
   Dashboard sections used below the trader stat grid:
@@ -455,6 +456,7 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
   const [deviceNames, setDeviceNames] = useState({});
   const [payoutSummary, setPayoutSummary] = useState({ count: 0, total: 0 });
   const [busyId, setBusyId] = useState(null);
+  const [confirmTarget, setConfirmTarget] = useState(null);
 
   // Every row here is already live (is_active), so this control only ever
   // turns an account OFF — the same real field (is_active_detail) Offers.jsx's
@@ -462,8 +464,11 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
   // runs a liveness check (device heartbeat / web-session status) this page
   // has no access to, and skipping it would let a trader "activate" an
   // account with no live data source with no warning.
-  const deactivate = async (d) => {
-    if (!window.confirm(`Turn off "${d.account_name}"? It will stop receiving new orders.`)) return;
+  const deactivate = (d) => setConfirmTarget(d);
+
+  const confirmDeactivate = async () => {
+    const d = confirmTarget;
+    if (!d) return;
     setBusyId(d.id);
     try {
       await traderApi.updatePaymentDetail(d.id, { is_active_detail: false });
@@ -473,6 +478,7 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
       toast(e.response?.data?.message || 'Could not turn off this account', 'error');
     } finally {
       setBusyId(null);
+      setConfirmTarget(null);
     }
   };
 
@@ -513,6 +519,7 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
     : null;
 
   return (
+    <>
     <div className="tf-card tf-livepool-full" style={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '20px 22px 16px' }}>
         <div>
@@ -620,6 +627,17 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
         )}
       </div>
     </div>
+    <ConfirmModal
+      open={!!confirmTarget}
+      title="Turn off this account?"
+      description={confirmTarget ? `Turn off "${confirmTarget.account_name}"? It will stop receiving new orders.` : ''}
+      confirmLabel="Turn off"
+      tone="danger"
+      busy={busyId === confirmTarget?.id}
+      onConfirm={confirmDeactivate}
+      onClose={() => setConfirmTarget(null)}
+    />
+    </>
   );
 }
 

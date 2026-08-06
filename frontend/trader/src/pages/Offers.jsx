@@ -8,6 +8,7 @@ import {
 import { ACCOUNT_TYPES } from '../utils/mock';
 import { traderApi } from '../services/api';
 import { toast } from '../components/Toaster';
+import ConfirmModal from '../components/ConfirmModal';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import {
@@ -1050,6 +1051,7 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
     monthly_start_date: detail.monthly_start_date ? String(detail.monthly_start_date).slice(0, 10) : '',
   }));
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   // Pre-open a window if it already has an amount cap set.
   const [caps, setCaps] = useState({
     month: detail.monthly_limit != null,
@@ -1126,8 +1128,9 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
     }
   };
 
-  const remove = async () => {
-    if (!window.confirm('Delete this payment detail? This cannot be undone.')) return;
+  const remove = () => setConfirmDelete(true);
+
+  const confirmRemove = async () => {
     try {
       await traderApi.deletePaymentDetail(detail.id);
       toast('Payment detail deleted', 'success');
@@ -1135,10 +1138,12 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
       onClose();
     } catch (e) {
       toast(apiError(e), 'error');
+      setConfirmDelete(false);
     }
   };
 
   return (
+    <>
     <Modal open title="Edit Payment Detail" onClose={onClose} width={560}>
       {/* identity + real connection state — same data the row list shows,
           just surfaced here too so an edit never opens "blind" to whether
@@ -1220,6 +1225,16 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
         <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
       </div>
     </Modal>
+    <ConfirmModal
+      open={confirmDelete}
+      title="Delete this payment detail?"
+      description="Delete this payment detail? This cannot be undone."
+      confirmLabel="Delete"
+      tone="danger"
+      onConfirm={confirmRemove}
+      onClose={() => setConfirmDelete(false)}
+    />
+    </>
   );
 }
 
@@ -2036,14 +2051,23 @@ export default function Offers() {
     }
   };
 
-  const deleteNGO = async (account) => {
-    if (!window.confirm(`Delete ${account.displayName || 'this account'}? This cannot be undone.`)) return;
+  const [deleteNgoTarget, setDeleteNgoTarget] = useState(null);
+  const [deletingNgo, setDeletingNgo] = useState(false);
+  const deleteNGO = (account) => setDeleteNgoTarget(account);
+
+  const confirmDeleteNGO = async () => {
+    const account = deleteNgoTarget;
+    if (!account) return;
+    setDeletingNgo(true);
     try {
       await deleteAccount(account._id);
       setNgoAccounts((list) => list.filter((a) => a._id !== account._id));
       toast('Account deleted', 'success');
+      setDeleteNgoTarget(null);
     } catch (e) {
       toast(e.message, 'error');
+    } finally {
+      setDeletingNgo(false);
     }
   };
 
@@ -2205,6 +2229,7 @@ export default function Offers() {
   const openAdd = (bank) => { setPresetBank(bank); setAdding(true); };
 
   return (
+    <>
     <div>
       <PageHeader
         title="Payment details"
@@ -2309,5 +2334,16 @@ export default function Offers() {
         />
       )}
     </div>
+    <ConfirmModal
+      open={!!deleteNgoTarget}
+      title="Delete this account?"
+      description={deleteNgoTarget ? `Delete ${deleteNgoTarget.displayName || 'this account'}? This cannot be undone.` : ''}
+      confirmLabel="Delete"
+      tone="danger"
+      busy={deletingNgo}
+      onConfirm={confirmDeleteNGO}
+      onClose={() => setDeleteNgoTarget(null)}
+    />
+    </>
   );
 }

@@ -5,6 +5,7 @@ import { useApi } from '../hooks/useApi';
 import { useSocket } from '../hooks/useSocket';
 import { traderApi } from '../services/api';
 import { toast } from '../components/Toaster';
+import ConfirmModal from '../components/ConfirmModal';
 import { trades, inr, usdt, ACCOUNT_TYPES } from '../utils/mock';
 
 const PER_PAGE = 25;
@@ -200,8 +201,12 @@ export default function Trades() {
     return () => socket.off('order:confirmed', onConfirmed);
   }, [socket]);
 
-  const handleConfirm = async (id) => {
-    if (!window.confirm('Confirm this order as paid? This settles the trade immediately.')) return;
+  const [confirmOrderId, setConfirmOrderId] = useState(null);
+  const handleConfirm = (id) => setConfirmOrderId(id);
+
+  const doConfirm = async () => {
+    const id = confirmOrderId;
+    if (!id) return;
     setConfirmingId(id);
     try {
       await traderApi.confirmOrder(id);
@@ -211,6 +216,7 @@ export default function Trades() {
       toast(err.response?.data?.message || 'Failed to confirm order', 'error');
     } finally {
       setConfirmingId(null);
+      setConfirmOrderId(null);
     }
   };
 
@@ -287,6 +293,7 @@ export default function Trades() {
   };
 
   return (
+    <>
     <div>
       <PageHeader
         title="Sell USDT"
@@ -434,5 +441,16 @@ export default function Trades() {
         </Modal>
       )}
     </div>
+    <ConfirmModal
+      open={!!confirmOrderId}
+      title="Confirm this order?"
+      description="Confirm this order as paid? This settles the trade immediately."
+      confirmLabel="Confirm"
+      tone="primary"
+      busy={confirmingId === confirmOrderId}
+      onConfirm={doConfirm}
+      onClose={() => setConfirmOrderId(null)}
+    />
+    </>
   );
 }
