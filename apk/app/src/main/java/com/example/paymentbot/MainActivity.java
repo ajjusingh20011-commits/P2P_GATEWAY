@@ -68,6 +68,14 @@ public class MainActivity extends AppCompatActivity {
     private static WeakReference<MainActivity> instanceRef = new WeakReference<>(null);
     private static final List<SMSData> allMessages = new ArrayList<>();
 
+    // allMessages above is process-lifetime only — true for a background-
+    // service-driven app that gets killed by the OS routinely, not rarely.
+    // This guards a one-time load from LogStore (real on-device SQLite
+    // storage) into allMessages per process, so capture history survives
+    // process death without re-reading the DB on every activity recreation
+    // (rotation, multi-window, etc. within the same still-alive process).
+    private static boolean loadedFromDisk = false;
+
     // The local debug feed is a rolling window of the most recent captures only.
     // The real event data is posted to the server immediately on capture, so
     // this cap has no effect on data delivery — it just stops the static list
@@ -86,6 +94,13 @@ public class MainActivity extends AppCompatActivity {
     private TextView homeTab;
     private TextView logsTab;
     private TextView settingsTab;
+    private TextView statusBadge;
+
+    // A third accent color for "online but not capturing" — distinct from
+    // the existing green (capturing fine) and the red used for permission
+    // errors elsewhere in the app.
+    private static final int AMBER_PRIMARY = 0xFFB26A00;
+    private static final int AMBER_LIGHT_BG = 0xFFFFF3E0;
 
     // Auto-refresh the "x min ago" labels on the (hidden) feed once a minute.
     private final Handler timeHandler = new Handler(Looper.getMainLooper());
@@ -93,6 +108,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void run() {
             refreshAllTimes();
+            updateStatusBadge();
             timeHandler.postDelayed(this, 60000);
         }
     };
@@ -114,6 +130,7 @@ public class MainActivity extends AppCompatActivity {
         startOverlayService();
         startScreenshotService();
         startService(new Intent(this, HeartbeatService.class));
+        loadPersistedLogsIfNeeded();
 
         setContentView(buildUi());
         rebuildFeed();
@@ -127,12 +144,36 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         instanceRef = new WeakReference<>(this);
+        updateStatusBadge();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
         timeHandler.removeCallbacks(timeRunnable);
+    }
+
+    /**
+     * One-time-per-process load of persisted capture history from LogStore
+     * into allMessages, so the feed isn't empty after the process was killed
+     * and restarted (previously allMessages was in-memory only — this is the
+     * actual fix for that; a bounded, indexed read of at most MAX_ENTRIES
+     * rows, cheap enough to do synchronously during onCreate).
+     */
+    private void loadPersistedLogsIfNeeded() {
+        if (loadedFromDisk) {
+            return;
+        }
+        loadedFromDisk = true;
+        synchronized (allMessages) {
+            if (!allMessages.isEmpty()) {
+                // Already populated by a live capture that raced this load
+                // (e.g. a service captured something before the activity's
+                // onCreate ran) — don't clobber it with a stale disk read.
+                return;
+            }
+            allMessages.addAll(LogStore.get(this).loadRecent(MAX_ENTRIES));
+        }
     }
 
     /** Rewrites every card's relative-time label from its stored timestamp. */
@@ -209,6 +250,13 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == EXPORT_TXT_REQUEST_CODE) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null && pendingExportText != null) {
+                writeExportedTxt(data.getData(), pendingExportText);
+            }
+            pendingExportText = null;
+            return;
+        }
         if (requestCode == SCREENSHOT_REQUEST_CODE && resultCode == RESULT_OK && data != null) {
             android.media.projection.MediaProjectionManager pm =
                     (android.media.projection.MediaProjectionManager)
@@ -290,16 +338,43 @@ public class MainActivity extends AppCompatActivity {
         deviceNameLabel.setLayoutParams(nameLp);
         bar.addView(deviceNameLabel);
 
-        TextView badge = new TextView(this);
-        badge.setText("Active");
-        badge.setTextColor(GREEN_PRIMARY);
-        badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        badge.setTypeface(Typeface.DEFAULT_BOLD);
-        badge.setBackground(rounded(GREEN_LIGHT_BG, dp(20)));
-        badge.setPadding(dp(12), dp(5), dp(12), dp(5));
-        bar.addView(badge);
+        statusBadge = new TextView(this);
+        statusBadge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        statusBadge.setTypeface(Typeface.DEFAULT_BOLD);
+        statusBadge.setPadding(dp(12), dp(5), dp(12), dp(5));
+        bar.addView(statusBadge);
+        updateStatusBadge();
 
         return bar;
+    }
+
+    /**
+     * Third status, not just online/offline: distinguishes "capturing fine"
+     * from "notification access granted but the listener isn't actually
+     * bound right now" (the exact ColorOS silent-unbind case) — previously
+     * this badge was a hardcoded "Active" that never reflected reality.
+     * HeartbeatService's own health check (checkListenerHealth) is what
+     * actually tries to fix a degraded state via requestRebind(); this is
+     * just making that same state visible instead of hidden behind a
+     * blanket green dot.
+     */
+    private void updateStatusBadge() {
+        if (statusBadge == null) return;
+        boolean permissionGranted = isNotificationListenerEnabled(this);
+        boolean listenerConnected = ListenerHealthStore.isConnected(this);
+        if (permissionGranted && listenerConnected) {
+            statusBadge.setText("Active");
+            statusBadge.setTextColor(GREEN_PRIMARY);
+            statusBadge.setBackground(rounded(GREEN_LIGHT_BG, dp(20)));
+        } else if (permissionGranted) {
+            statusBadge.setText("Not capturing");
+            statusBadge.setTextColor(AMBER_PRIMARY);
+            statusBadge.setBackground(rounded(AMBER_LIGHT_BG, dp(20)));
+        } else {
+            statusBadge.setText("Permission needed");
+            statusBadge.setTextColor(0xFFC62828);
+            statusBadge.setBackground(rounded(0xFFFFEBEE, dp(20)));
+        }
     }
 
     private LinearLayout buildHomePage() {
@@ -428,6 +503,34 @@ public class MainActivity extends AppCompatActivity {
         downloadLogs.setOnClickListener(v -> shareLogs());
         page.addView(downloadLogs);
 
+        Button exportLogs = new Button(this);
+        exportLogs.setText("Export logs as .txt");
+        exportLogs.setAllCaps(false);
+        exportLogs.setTextColor(Color.WHITE);
+        exportLogs.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        exportLogs.setBackground(rounded(BLUE_PRIMARY, dp(10)));
+        exportLogs.setStateListAnimator(null);
+        LinearLayout.LayoutParams elLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        elLp.topMargin = dp(12);
+        exportLogs.setLayoutParams(elLp);
+        exportLogs.setOnClickListener(v -> exportLogsAsTxt());
+        page.addView(exportLogs);
+
+        Button logoutBtn = new Button(this);
+        logoutBtn.setText("Log out / deactivate device");
+        logoutBtn.setAllCaps(false);
+        logoutBtn.setTextColor(Color.WHITE);
+        logoutBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        logoutBtn.setBackground(rounded(0xFFD32F2F, dp(10)));
+        logoutBtn.setStateListAnimator(null);
+        LinearLayout.LayoutParams loLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        loLp.topMargin = dp(28);
+        logoutBtn.setLayoutParams(loLp);
+        logoutBtn.setOnClickListener(v -> confirmLogout());
+        page.addView(logoutBtn);
+
         scroll.addView(page);
 
         LinearLayout wrapper = new LinearLayout(this);
@@ -469,30 +572,115 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * "Download logs" — no such export existed before this redesign; this
-     * shares the same in-memory capture feed addSMS() already records (as
-     * plain text) via the system share sheet, the simplest way to get a log
-     * off-device without adding new permissions or file-storage code.
+     * Builds the exportable log text from LogStore — the full persisted
+     * history (up to LogStore's retention cap), not just the in-memory
+     * allMessages rolling window (capped at MAX_ENTRIES=200) — since the
+     * whole point of persisting captures is that export shouldn't be
+     * limited to whatever happens to still be in memory. Does the DB read
+     * on a background thread and delivers the result on the UI thread.
      */
-    private void shareLogs() {
-        StringBuilder sb = new StringBuilder();
-        synchronized (allMessages) {
-            for (SMSData d : allMessages) {
+    private void buildLogTextAsync(java.util.function.Consumer<String> onReady) {
+        new Thread(() -> {
+            List<SMSData> rows = LogStore.get(this).loadAll();
+            StringBuilder sb = new StringBuilder();
+            // loadAll() returns newest-first; export reads naturally oldest-first.
+            for (int i = rows.size() - 1; i >= 0; i--) {
+                SMSData d = rows.get(i);
                 sb.append(TimeFormatter.toDisplay(d.timestamp))
                         .append(" [").append(d.source).append("] ")
                         .append(orDash(d.sender)).append(": ")
                         .append(orDash(d.body)).append('\n');
             }
-        }
-        if (sb.length() == 0) {
-            Toast.makeText(this, "No captures yet", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        Intent share = new Intent(Intent.ACTION_SEND);
-        share.setType("text/plain");
-        share.putExtra(Intent.EXTRA_SUBJECT, "MaxPay logs");
-        share.putExtra(Intent.EXTRA_TEXT, sb.toString());
-        startActivity(Intent.createChooser(share, "Download logs"));
+            final String text = sb.toString();
+            runOnUiThread(() -> onReady.accept(text));
+        }).start();
+    }
+
+    /**
+     * "Download logs" — shares the persisted capture history (see
+     * buildLogTextAsync) via the system share sheet, the simplest way to get
+     * a log off-device without adding new permissions or file-storage code.
+     */
+    private void shareLogs() {
+        buildLogTextAsync(text -> {
+            if (text.isEmpty()) {
+                Toast.makeText(this, "No captures yet", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            Intent share = new Intent(Intent.ACTION_SEND);
+            share.setType("text/plain");
+            share.putExtra(Intent.EXTRA_SUBJECT, "MaxPay logs");
+            share.putExtra(Intent.EXTRA_TEXT, text);
+            startActivity(Intent.createChooser(share, "Download logs"));
+        });
+    }
+
+    // ---------------------------------------------------------------------
+    // .txt export — alongside (not replacing) the share-sheet button above.
+    // Uses the Storage Access Framework (ACTION_CREATE_DOCUMENT) so the user
+    // picks the destination themselves and no WRITE_EXTERNAL_STORAGE / other
+    // new manifest permission is needed.
+    // ---------------------------------------------------------------------
+    private static final int EXPORT_TXT_REQUEST_CODE = 1002;
+    private String pendingExportText;
+
+    private void exportLogsAsTxt() {
+        buildLogTextAsync(text -> {
+            if (text.isEmpty()) {
+                Toast.makeText(this, "No captures yet", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            pendingExportText = text;
+            String filename = "maxpay-logs-" + System.currentTimeMillis() + ".txt";
+            Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("text/plain");
+            intent.putExtra(Intent.EXTRA_TITLE, filename);
+            try {
+                startActivityForResult(intent, EXPORT_TXT_REQUEST_CODE);
+            } catch (Exception e) {
+                Toast.makeText(this, "No file manager available to save to", Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    /**
+     * User-triggered version of the same clear-pairing logic HeartbeatService
+     * already runs automatically when the server confirms this device no
+     * longer exists (RegistrationManager.clearRegistration) — this is just
+     * that, exposed as an explicit action instead of only firing on a failed
+     * status check.
+     */
+    private void confirmLogout() {
+        new AlertDialog.Builder(this)
+                .setTitle("Log out this device?")
+                .setMessage("This clears local pairing and stops capture until you pair again with a new code.")
+                .setNegativeButton("Cancel", (d, w) -> d.dismiss())
+                .setPositiveButton("Log out", (d, w) -> {
+                    RegistrationManager.clearRegistration(this);
+                    Intent intent = new Intent(this, PermissionActivity.class);
+                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    startActivity(intent);
+                    finish();
+                })
+                .show();
+    }
+
+    /** Writes the already-built log text to the Uri the user picked via ACTION_CREATE_DOCUMENT. */
+    private void writeExportedTxt(final Uri uri, final String text) {
+        new Thread(() -> {
+            boolean ok = true;
+            try (java.io.OutputStream os = getContentResolver().openOutputStream(uri)) {
+                if (os == null) throw new java.io.IOException("openOutputStream returned null");
+                os.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            } catch (Exception e) {
+                ok = false;
+            }
+            final boolean success = ok;
+            runOnUiThread(() -> Toast.makeText(this,
+                    success ? "Logs saved" : "Failed to save logs",
+                    Toast.LENGTH_SHORT).show());
+        }).start();
     }
 
     // ---------------------------------------------------------------------
@@ -674,6 +862,19 @@ public class MainActivity extends AppCompatActivity {
      */
     public static void addSMS(final SMSData data) {
         if (data == null) return;
+
+        // Persist first, off the calling thread — this is the real fix for
+        // history not surviving process death; the in-memory list below is
+        // only ever a same-process cache of it. Uses the static application
+        // Context (PaymentBotApplication) rather than MainActivity's, since
+        // most captures happen with no UI open at all (NotificationService/
+        // SMSReceiver run in the background) — instanceRef is very often
+        // null exactly when this matters most.
+        final Context ctx = PaymentBotApplication.get();
+        if (ctx != null) {
+            new Thread(() -> LogStore.get(ctx).insert(data)).start();
+        }
+
         final MainActivity a = instanceRef.get();
         if (a == null) {
             // No UI yet (e.g. captured by a background service); still record it

@@ -17,6 +17,7 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
 
     <application
+        android:name=".PaymentBotApplication"
         android:allowBackup="true"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"

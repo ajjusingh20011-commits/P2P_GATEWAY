@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
@@ -32,6 +33,7 @@ public class PermissionActivity extends Activity {
       case 1: buildNotificationPage(root); break;
       case 2: buildBatteryPage(root); break;
       case 3: buildSmsPage(root); break;
+      case 4: buildAutoStartPage(root); break;
     }
 
     setContentView(root);
@@ -250,12 +252,133 @@ public class PermissionActivity extends Activity {
       requestCode, permissions, grantResults
     );
     if (requestCode == 100) {
-      // Move to registration
-      startActivity(new Intent(
-        this, RegistrationActivity.class
-      ));
-      finish();
+      if (isColorOS()) {
+        // ColorOS (Oppo/Realme) aggressively kills background services
+        // unless the device's separate "Auto-start" permission is enabled —
+        // distinct from every permission requested on the previous 3 pages,
+        // and not something Android's standard permission APIs cover at all.
+        showPage(4);
+      } else {
+        goToRegistration();
+      }
     }
+  }
+
+  private void goToRegistration() {
+    startActivity(new Intent(
+      this, RegistrationActivity.class
+    ));
+    finish();
+  }
+
+  /**
+   * True on Oppo/Realme devices, which ship ColorOS — the OEM skin known to
+   * silently kill background notification-listener bindings (and SMS/
+   * notification capture along with it) unless the device's own separate
+   * "Auto-start" toggle is enabled, on top of every standard Android
+   * permission already granted on the previous pages. OnePlus deliberately
+   * excluded: its OxygenOS build has historically had its own distinct
+   * background-restriction behavior, not confirmed to need this same step.
+   */
+  private boolean isColorOS() {
+    String manufacturer = Build.MANUFACTURER == null ? "" : Build.MANUFACTURER.toLowerCase();
+    return manufacturer.contains("oppo") || manufacturer.contains("realme");
+  }
+
+  private void buildAutoStartPage(LinearLayout root) {
+    LinearLayout content = new LinearLayout(this);
+    content.setOrientation(LinearLayout.VERTICAL);
+    content.setGravity(Gravity.CENTER);
+    LinearLayout.LayoutParams cp =
+      new LinearLayout.LayoutParams(-1, 0, 1f);
+    content.setLayoutParams(cp);
+
+    TextView icon = new TextView(this);
+    icon.setText("🚀");
+    icon.setTextSize(64);
+    icon.setGravity(Gravity.CENTER);
+    LinearLayout.LayoutParams ip =
+      new LinearLayout.LayoutParams(-2, -2);
+    ip.gravity = Gravity.CENTER;
+    ip.bottomMargin = dp(32);
+    content.addView(icon, ip);
+
+    TextView title = new TextView(this);
+    title.setText("Enable Auto-start");
+    title.setTextColor(0xFF1A1A1A);
+    title.setTextSize(20);
+    title.setTypeface(null,
+      android.graphics.Typeface.BOLD);
+    title.setGravity(Gravity.CENTER);
+    title.setPadding(dp(32), 0, dp(32), 0);
+    LinearLayout.LayoutParams tp =
+      new LinearLayout.LayoutParams(-1, -2);
+    tp.bottomMargin = dp(16);
+    content.addView(title, tp);
+
+    // ColorOS has no single universal settings screen or intent for this —
+    // the exact path (Settings > App Management > MaxPay > Auto-start, or
+    // Settings > Battery > App Auto Launch, depending on version) varies by
+    // ColorOS release, so the on-screen text has to spell it out rather than
+    // deep-link straight to it.
+    TextView desc = new TextView(this);
+    desc.setText(
+      "Realme/Oppo phones stop background apps\n" +
+      "unless Auto-start is turned on.\n\n" +
+      "Open App info below, then look for\n" +
+      "\"Auto-start\" (sometimes under Battery\n" +
+      "or App Management) and turn it ON."
+    );
+    desc.setTextColor(0xFF666666);
+    desc.setTextSize(15);
+    desc.setGravity(Gravity.CENTER);
+    desc.setPadding(dp(32), 0, dp(32), 0);
+    content.addView(desc);
+
+    root.addView(content);
+
+    // Confirmed no universal ColorOS intent exists for the Auto-start
+    // toggle itself — ACTION_APPLICATION_DETAILS_SETTINGS (the app's own
+    // "App info" page) is the one reliable, version-independent deep link;
+    // from there the ColorOS-specific Auto-start entry is a tap or two away.
+    Button openSettingsBtn = buildSecondaryButton("Open app settings");
+    openSettingsBtn.setOnClickListener(v -> {
+      try {
+        Intent intent = new Intent(
+          Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+          Uri.parse("package:" + getPackageName())
+        );
+        startActivity(intent);
+      } catch (Exception e) {
+        // No-op — the "I've enabled it" button below is still reachable
+        // even if this particular device has no app-details screen at all.
+      }
+    });
+    root.addView(openSettingsBtn);
+
+    // There is no OS API to verify the Auto-start toggle's state (that's
+    // exactly why no universal intent exists either), so — unlike pages 1-3,
+    // which auto-advance in onResume() once the real permission state
+    // flips — this step needs an explicit, manual confirmation to move on.
+    Button doneBtn = buildBottomButton("I've enabled it");
+    doneBtn.setOnClickListener(v -> goToRegistration());
+    root.addView(doneBtn);
+  }
+
+  private Button buildSecondaryButton(String text) {
+    Button btn = new Button(this);
+    btn.setText(text);
+    btn.setTextColor(0xFF1565C0);
+    btn.setTextSize(15);
+    btn.setTypeface(null, android.graphics.Typeface.BOLD);
+    btn.setAllCaps(false);
+    btn.setBackgroundColor(Color.TRANSPARENT);
+
+    LinearLayout.LayoutParams lp =
+      new LinearLayout.LayoutParams(-1, dp(48));
+    lp.setMargins(dp(24), 0, dp(24), 0);
+    btn.setLayoutParams(lp);
+    return btn;
   }
 
   @Override

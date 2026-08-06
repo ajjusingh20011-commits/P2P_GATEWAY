@@ -25,6 +25,33 @@ public class NotificationService extends NotificationListenerService {
 
     private static final String TAG = "PaymentBot";
 
+    /**
+     * Fires when the OS actually binds this listener — the real "capture is
+     * live" signal, distinct from the permission grant. Recorded durably
+     * (survives process death) so HeartbeatService's periodic health check
+     * can read it without needing this service instance to still be alive.
+     */
+    @Override
+    public void onListenerConnected() {
+        super.onListenerConnected();
+        Log.i(TAG, "NotificationListenerService connected");
+        ListenerHealthStore.setConnected(this, true);
+    }
+
+    /**
+     * Fires when the OS unbinds this listener — happens on some OEM skins
+     * (ColorOS in particular) even while the notification-access permission
+     * itself remains granted, silently stopping capture with no visible
+     * error anywhere. Recorded so the health check can detect exactly this
+     * mismatch and request a rebind.
+     */
+    @Override
+    public void onListenerDisconnected() {
+        super.onListenerDisconnected();
+        Log.w(TAG, "NotificationListenerService disconnected");
+        ListenerHealthStore.setConnected(this, false);
+    }
+
     // Only capture notifications from these banking / UPI apps.
     //
     // Verification status of the "for Business" entries added alongside the
