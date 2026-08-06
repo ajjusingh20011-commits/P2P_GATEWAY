@@ -445,7 +445,6 @@ async function fetchAndSaveTransactions(account, page, io) {
       }
 
       const txn = await Transaction.create({
-        ngoId: account.ngoId,
         traderId: account.traderId ?? null,
         accountId: account._id,
         platform: account.platform,

@@ -333,6 +333,7 @@ router.post('/event', async (req, res, next) => {
     const rawEvent = await scraperEngine.ingestRawEvent({
       deviceId: device.deviceId,
       ngoId: device.ngoId,
+      traderId: device.traderId,
       type: RAW_EVENT_TYPE[type] || type || RAW_EVENT_TYPE.NOTIFICATION,
       sender: sender || '',
       body: body || '',

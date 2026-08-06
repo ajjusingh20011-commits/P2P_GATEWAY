@@ -10,6 +10,16 @@ const rawEventSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    // The real trader (MySQL trader.id) who owns the device this event came
+    // from — mirrors Device.traderId/Account.traderId. This is what
+    // matchingEngineV2's triggerOrderSettlementFromRawEvent actually keys
+    // off now; ngoId above is kept only for the (retired) donation-ledger
+    // matching path, which still gates on it.
+    traderId: {
+      type: Number,
+      default: null,
+      index: true,
+    },
     type: {
       type: String,
       enum: Object.values(RAW_EVENT_TYPE),

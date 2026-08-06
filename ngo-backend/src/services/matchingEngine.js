@@ -259,18 +259,24 @@ async function callMatchSettlement(payload) {
 
 /**
  * Triggered from POST /api/apk/event for a PAYMENT-category RawEvent. A
- * Device is only tied to an NGO, not to one specific Account/UPI (an NGO can
- * run several UPI accounts on the same phone/app), so this resolves every
- * UPI belonging to the event's NGO and lets the backend's timing-based
- * disambiguation pick the right order if more than one is amount-eligible.
+ * Device is only tied to one trader, not to one specific Account/UPI (a
+ * trader can run several UPI accounts on the same phone/app), so this
+ * resolves every UPI belonging to the event's trader and lets the backend's
+ * timing-based disambiguation pick the right order if more than one is
+ * amount-eligible.
+ *
+ * Keyed on rawEvent.traderId (RawEvent.js), not ngoId — devices/accounts are
+ * genuinely trader-owned now (confirmed clean, no orphaned rows without a
+ * traderId), and ngoId was the old shared-org grouping that let one
+ * account's payment settle a DIFFERENT trader's order sharing the same NGO.
  */
 async function triggerOrderSettlementFromRawEvent(rawEvent) {
-  if (!rawEvent || !rawEvent.ngoId) return null;
+  if (!rawEvent || rawEvent.traderId == null) return null;
 
   const target = normalizeAmount(rawEvent.amount);
   if (Number.isNaN(target) || target <= 0) return null;
 
-  const upiIds = (await Account.find({ ngoId: rawEvent.ngoId }).distinct('upiId')).filter(Boolean);
+  const upiIds = (await Account.find({ traderId: rawEvent.traderId }).distinct('upiId')).filter(Boolean);
   if (!upiIds.length) return null;
 
   return callMatchSettlement({

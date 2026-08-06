@@ -3,10 +3,15 @@ const { TRANSACTION_STATUS } = require('../config/constants');
 
 const transactionSchema = new mongoose.Schema(
   {
+    // No longer required — a scraper Transaction is genuinely trader-owned
+    // now (see traderId below), same reasoning as Account.ngoId/Device.ngoId.
+    // Kept nullable rather than removed: still read by the (not-yet-deleted)
+    // donation-ledger matching path (matchingEngine.checkMatch/matchWebhook)
+    // and checkout.js's GET /status/:verifyId lookup.
     ngoId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'NGO',
-      required: true,
+      default: null,
       index: true,
     },
     // Denormalized from Account.traderId at write time (the scraper creates
