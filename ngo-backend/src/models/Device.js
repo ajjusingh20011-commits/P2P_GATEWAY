@@ -34,6 +34,14 @@ const deviceSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    // Third status field, separate from the lastSeen-derived `online` check
+    // (routes/apk.js's isOnline()) — reported by HeartbeatService from
+    // ListenerHealthStore, itself set by NotificationService's
+    // onListenerConnected/onListenerDisconnected. null = never reported
+    // (older APK build predating this field, or no heartbeat yet) — must
+    // stay distinct from `false` so the trader panel doesn't show "degraded"
+    // for a device that simply hasn't said anything either way.
+    listenerConnected: { type: Boolean, default: null },
     deviceModel: { type: String, default: '' },
     // Trader-assigned display name (set via SetDeviceNameActivity), distinct
     // from deviceModel (the hardware model string).

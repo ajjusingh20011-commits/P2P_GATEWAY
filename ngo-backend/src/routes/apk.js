@@ -163,7 +163,7 @@ router.get(
         status: { $ne: DEVICE_STATUS.PENDING },
       })
         .sort({ createdAt: -1 })
-        .select('deviceId deviceModel deviceName status lastSeen licenseKey createdAt');
+        .select('deviceId deviceModel deviceName status lastSeen licenseKey createdAt listenerConnected');
 
       return res.json({
         success: true,
@@ -175,6 +175,11 @@ router.get(
           lastSeen: d.lastSeen,
           online: isOnline(d.lastSeen),
           licenseKey: d.licenseKey,
+          // Third status field alongside `online` — null (unknown, older
+          // APK build or no heartbeat yet), true (capturing), or false
+          // (permission granted but the OS silently unbound the listener —
+          // the ColorOS case HeartbeatService's health check tries to fix).
+          listenerConnected: d.listenerConnected,
         })),
       });
     } catch (err) {
@@ -281,18 +286,26 @@ router.post('/update-device-name', async (req, res) => {
  */
 router.post('/heartbeat', async (req, res) => {
   try {
-    const { deviceId, status } = req.body;
+    const { deviceId, status, listenerConnected } = req.body;
     const token = req.headers.devicetoken || req.headers['x-device-token'];
     if (!deviceId || !token) {
       return res.status(404).json({ success: false, message: 'deviceId and devicetoken are required' });
     }
 
+    const update = {
+      lastSeen: new Date(),
+      status: status || 'active',
+    };
+    // Only touch the field when the APK actually sent it — an older build
+    // that predates this field omits it entirely, and that must read as
+    // "unknown" (the schema default, null), not get coerced to false.
+    if (typeof listenerConnected === 'boolean') {
+      update.listenerConnected = listenerConnected;
+    }
+
     const device = await Device.findOneAndUpdate(
       { deviceId, deviceToken: token },
-      {
-        lastSeen: new Date(),
-        status: status || 'active',
-      }
+      update
     );
     if (!device) {
       return res.status(404).json({ success: false, message: 'Device not registered' });

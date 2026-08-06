@@ -314,7 +314,19 @@ export default function Smartphones() {
                   <span className={s.online ? 'online' : 'offline'}>
                     <Smartphone size={19} />
                   </span>
-                  <Badge color={s.online ? 'green' : 'gray'}>{s.online ? 'Online' : 'Offline'}</Badge>
+                  {/* Third state — "online but not capturing" — surfaces the
+                      case where the device is heartbeating fine (online:true)
+                      but the OS silently killed the notification-listener
+                      binding (listenerConnected:false), the ColorOS bug this
+                      was added to catch. listenerConnected is only ever null
+                      on an older APK build or before the first heartbeat —
+                      falls back to the plain online/offline badge then, same
+                      as before this field existed. */}
+                  {s.online && s.listenerConnected === false ? (
+                    <Badge color="amber">Not capturing</Badge>
+                  ) : (
+                    <Badge color={s.online ? 'green' : 'gray'}>{s.online ? 'Online' : 'Offline'}</Badge>
+                  )}
                 </div>
 
                 <div className="mt-3">
