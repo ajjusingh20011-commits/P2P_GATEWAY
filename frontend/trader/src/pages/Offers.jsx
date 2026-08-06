@@ -1308,16 +1308,6 @@ function LimitBadge({ d }) {
   return <span className="inline-block h-2 w-2 rounded-full bg-sky-400" title={lines.join('\n')} />;
 }
 
-// NGO accounts (from ngo-backend, port 3000) grouped by their payment platform.
-function groupByPlatform(accounts) {
-  return accounts.reduce((groups, account) => {
-    const key = account.platform || 'other';
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(account);
-    return groups;
-  }, {});
-}
-
 const platformNames = {
   paytm: 'Paytm Business',
   phonepe: 'PhonePe Business',
@@ -1329,6 +1319,24 @@ const platformNames = {
 
 // Mask an NGO UPI id the same way maskUpi handles trader UPIs.
 const platformLabel = (p) => platformNames[p] || p || 'UPI';
+
+// Canonical provider registry — reconciles account_type (MySQL,
+// trader-native payment_details, e.g. saved via the APK wizard) and
+// platform (Mongo, ngo-backend Account, saved via Web Login) values for
+// the SAME real-world provider, so the two can be grouped into one card
+// instead of the two separate, never-joined lists this used to be. The
+// two storage schemas keep their own raw values as-is (MySQL's
+// account_type is a fixed ENUM, not worth a migration just for display
+// grouping) — only this merged view needs one shared key.
+//
+// BharatPe is the one real mismatch found: MySQL stores 'bharat_pe',
+// Mongo stores 'bharatpe'. BankBadge (ui.jsx) already aliases both to
+// the identical visual, so either canonical spelling renders the same —
+// 'bharat_pe' is picked here since that's the side that can't be
+// changed without a DB migration.
+const PLATFORM_TO_CANONICAL = { bharatpe: 'bharat_pe' };
+const canonicalProviderKey = (raw) => PLATFORM_TO_CANONICAL[raw] || raw || 'other';
+const canonicalProviderLabel = (key) => ACCOUNT_TYPES[key]?.label || platformNames[key] || key || 'UPI';
 
 // Visual treatment per NGO Account.status. 'paused' used to be ambiguous —
 // manual pause, a genuine OTP request, and a dead session all wrote the same
@@ -1390,32 +1398,45 @@ function AccountsColumn({
     });
   }, [details, query, filter, onlyUnlinked]);
 
-  // Grouped by account_type — the same granularity as MaxPayDesign's
-  // provider groups (GPay/Paytm/Airtel...), not the finer bank_name the old
-  // Details column used.
-  const groups = useMemo(() => {
-    const map = {};
-    for (const d of filteredDetails) {
-      const t = d.account_type || 'other';
-      (map[t] = map[t] || []).push(d);
-    }
-    return Object.entries(map).map(([type, items]) => ({ key: `type-${type}`, type, items, meta: methodMeta(type) }));
-  }, [filteredDetails]);
+  // A Web Login account is mirrored into payment_details for the
+  // order-routing engine (syncNgoAccountToPaymentDetail, above), tagged
+  // back onto the ngo Account via gatewayPaymentDetailId. Exclude those
+  // mirror rows from the native side of the merged grouping below so the
+  // same real account isn't counted/rendered twice — once as its own ngo
+  // Account, once as its payment_details shadow copy. Compared as strings
+  // since one side is a Sequelize numeric id and the other whatever JSON
+  // round-tripped it through.
+  const mirroredDetailIds = useMemo(
+    () => new Set(ngoAccounts.map((a) => a.gatewayPaymentDetailId).filter(Boolean).map(String)),
+    [ngoAccounts]
+  );
 
-  // NGO accounts: same search + active/inactive filter, then group by
-  // platform. The "unlinked-only" view is a trader-detail concept, so it
-  // hides them entirely rather than showing a filter that can't apply.
-  const ngoGroups = useMemo(() => {
+  // ONE grouping, keyed by canonical provider — merges trader-native
+  // payment_details rows (account_type) and ngo Account rows (platform)
+  // into a single card per real-world provider. These used to be two
+  // separate, never-joined lists (`groups`/`ngoGroups`), so the same
+  // provider (e.g. Paytm) rendered as two cards whenever accounts existed
+  // on both sides — see canonicalProviderKey's comment for why a raw
+  // string comparison wasn't enough (BharatPe's mismatched spelling).
+  const providerGroups = useMemo(() => {
+    const nativeItems = filteredDetails.filter((d) => !mirroredDetailIds.has(String(d.id)));
+
     const q = query.trim().toLowerCase();
-    const list = ngoAccounts.filter((a) => {
+    const ngoItems = ngoAccounts.filter((a) => {
       if (onlyUnlinked) return false;
       if (filter === 'active' && a.status !== 'live') return false;
       if (filter === 'inactive' && a.status === 'live') return false;
       if (!q) return true;
       return (a.displayName || '').toLowerCase().includes(q) || (a.upiId || '').toLowerCase().includes(q);
     });
-    return Object.entries(groupByPlatform(list)).map(([platform, items]) => ({ key: `ngo-${platform}`, platform, items }));
-  }, [ngoAccounts, query, filter, onlyUnlinked]);
+
+    const map = {};
+    const bucket = (key) => (map[key] = map[key] || { key, label: canonicalProviderLabel(key), nativeItems: [], ngoItems: [] });
+    for (const d of nativeItems) bucket(canonicalProviderKey(d.account_type)).nativeItems.push(d);
+    for (const a of ngoItems) bucket(canonicalProviderKey(a.platform)).ngoItems.push(a);
+
+    return Object.values(map).map((g) => ({ ...g, mapKey: `provider-${g.key}` }));
+  }, [filteredDetails, mirroredDetailIds, ngoAccounts, query, filter, onlyUnlinked]);
 
   // Groups are OPEN by default (real traders have a handful of accounts, not
   // MaxPayDesign's 230) — `expanded[key] === false` is the only closed state.
@@ -1431,15 +1452,12 @@ function AccountsColumn({
     setExpanded((cur) => {
       let changed = false;
       const next = { ...cur };
-      for (const g of groups) {
-        if (g.items.length > 0 && next[g.key] === false) { next[g.key] = true; changed = true; }
-      }
-      for (const g of ngoGroups) {
-        if (g.items.length > 0 && next[g.key] === false) { next[g.key] = true; changed = true; }
+      for (const g of providerGroups) {
+        if ((g.nativeItems.length + g.ngoItems.length) > 0 && next[g.mapKey] === false) { next[g.mapKey] = true; changed = true; }
       }
       return changed ? next : cur;
     });
-  }, [filterActive, groups, ngoGroups]);
+  }, [filterActive, providerGroups]);
 
   const renderDetailRow = (d) => {
     const dot = limitDot(d);
@@ -1638,7 +1656,7 @@ function AccountsColumn({
     );
   };
 
-  const noResults = groups.length === 0 && ngoGroups.length === 0;
+  const noResults = providerGroups.length === 0;
 
   return (
     <Card className="flex flex-col">
@@ -1687,100 +1705,80 @@ function AccountsColumn({
         )}
 
         <div className="mt-4 space-y-3">
-          {groups.map((g) => {
-            const open = isOpen(g.key);
-            const anyActive = g.items.some((d) => d.is_active_detail);
-            const activeCount = g.items.filter((d) => d.is_active_detail).length;
+          {providerGroups.map((g) => {
+            const open = isOpen(g.mapKey);
+            const anyActive = g.nativeItems.some((d) => d.is_active_detail);
+            const activeCount = g.nativeItems.filter((d) => d.is_active_detail).length;
+            const liveCount = g.ngoItems.filter((a) => a.status === 'live').length;
+            const totalCount = g.nativeItems.length + g.ngoItems.length;
+            const totalActiveLike = activeCount + liveCount;
             return (
-              <div key={g.key} className="rounded-lg" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
+              <div key={g.mapKey} className="rounded-lg" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={() => toggleOpen(g.key)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleOpen(g.key); } }}
+                  onClick={() => toggleOpen(g.mapKey)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleOpen(g.mapKey); } }}
                   className="flex w-full cursor-pointer items-center gap-3 p-3 text-left"
                 >
-                  <BankBadge type={g.type} label={g.meta.label} size={36} />
+                  <BankBadge type={g.key} label={g.label} size={36} />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{g.meta.label}</p>
-                    <p className="text-xs" style={{ color: 'var(--muted)' }}>{g.items.length} account{g.items.length === 1 ? '' : 's'} · {activeCount} active</p>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{g.label}</p>
+                    <p className="text-xs" style={{ color: 'var(--muted)' }}>{totalCount} account{totalCount === 1 ? '' : 's'} · {totalActiveLike} active</p>
                   </div>
-                  <span onClick={(e) => e.stopPropagation()} aria-label="Toggle all in group">
-                    <Toggle checked={anyActive} onChange={(v) => onBulkToggle(g.items, v)} />
-                  </span>
-                  <div className="relative" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      onClick={() => setMenu(menu === g.key ? null : g.key)}
-                      className="tf-hbtn"
-                      style={{ width: 28, height: 28, display: 'flex' }}
-                      aria-label="Group menu"
-                    >
-                      <IconDots className="h-4 w-4" />
-                    </button>
-                    {menu === g.key && (
-                      <div
-                        className="absolute right-0 z-10 mt-1 w-40 rounded-lg py-1"
-                        style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
+                  {g.nativeItems.length > 0 && (
+                    <span onClick={(e) => e.stopPropagation()} aria-label="Toggle all in group">
+                      <Toggle checked={anyActive} onChange={(v) => onBulkToggle(g.nativeItems, v)} />
+                    </span>
+                  )}
+                  {g.nativeItems.length > 0 && (
+                    <div className="relative" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => setMenu(menu === g.mapKey ? null : g.mapKey)}
+                        className="tf-hbtn"
+                        style={{ width: 28, height: 28, display: 'flex' }}
+                        aria-label="Group menu"
                       >
-                        <button
-                          onClick={() => { onBulkToggle(g.items, true); setMenu(null); }}
-                          className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"
-                          style={{ color: 'var(--text)' }}
+                        <IconDots className="h-4 w-4" />
+                      </button>
+                      {menu === g.mapKey && (
+                        <div
+                          className="absolute right-0 z-10 mt-1 w-40 rounded-lg py-1"
+                          style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
                         >
-                          Enable all
-                        </button>
-                        <button
-                          onClick={() => { onBulkToggle(g.items, false); setMenu(null); }}
-                          className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"
-                          style={{ color: 'var(--text)' }}
-                        >
-                          Disable all
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                          <button
+                            onClick={() => { onBulkToggle(g.nativeItems, true); setMenu(null); }}
+                            className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"
+                            style={{ color: 'var(--text)' }}
+                          >
+                            Enable all
+                          </button>
+                          <button
+                            onClick={() => { onBulkToggle(g.nativeItems, false); setMenu(null); }}
+                            className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"
+                            style={{ color: 'var(--text)' }}
+                          >
+                            Disable all
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <IconChevron className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--muted)', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
                 </div>
 
                 {open && (
                   <div className="space-y-2 px-3 pb-3">
-                    {g.items.map(renderDetailRow)}
+                    {g.nativeItems.map(renderDetailRow)}
+                    {g.ngoItems.map(renderNgoRow)}
                     <button
-                      onClick={() => onAdd(BANKS.find((b) => b.type === g.type) || null)}
+                      onClick={() => onAdd(BANKS.find((b) => b.type === g.key) || null)}
                       className="flex w-full items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium"
                       style={{ border: '1px dashed var(--cardborder)', color: 'var(--muted)' }}
                     >
-                      <IconPlus className="h-3.5 w-3.5" /> Add to {g.meta.label}
+                      <IconPlus className="h-3.5 w-3.5" /> Add to {g.label}
                     </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-
-          {ngoGroups.map((g) => {
-            const open = isOpen(g.key);
-            const liveCount = g.items.filter((a) => a.status === 'live').length;
-            const label = platformLabel(g.platform);
-            return (
-              <div key={g.key} className="rounded-lg" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
-                <button
-                  type="button"
-                  onClick={() => toggleOpen(g.key)}
-                  className="flex w-full items-center gap-3 p-3 text-left"
-                >
-                  <BankBadge type={g.platform} label={label} size={36} />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{label}</p>
-                    <p className="text-xs" style={{ color: 'var(--muted)' }}>{g.items.length} account{g.items.length === 1 ? '' : 's'} · {liveCount} live</p>
-                  </div>
-                  <IconChevron className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--muted)', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
-                </button>
-
-                {open && (
-                  <div className="space-y-2 px-3 pb-3">
-                    {g.items.map(renderNgoRow)}
                   </div>
                 )}
               </div>
