@@ -209,6 +209,29 @@ router.patch('/accounts/:accountId', verifyServiceOrAdmin, async (req, res, next
       patch.status = req.body.status;
     }
 
+    // upiId is patchable but this route never checked it against the
+    // cross-database uniqueness rule (unlike POST /accounts, above) — an
+    // edit could silently reassign an active account to a UPI another
+    // trader already owns, backstopped only by the Mongo unique index
+    // itself, which fails as a raw, leaked E11000 error rather than a
+    // real rejection message. Only check when the value actually changes.
+    if (patch.upiId) {
+      const current = await Account.findOne({ _id: req.params.accountId, ...resolveTraderFilter(req) }).select('upiId');
+      if (!current) {
+        return res.status(404).json({ success: false, message: 'Account not found' });
+      }
+      if (patch.upiId !== current.upiId) {
+        try {
+          await assertUpiAvailable(patch.upiId, { excludeId: req.params.accountId });
+        } catch (err) {
+          if (err instanceof UpiTakenError) {
+            return res.status(err.status).json({ success: false, message: err.message });
+          }
+          throw err;
+        }
+      }
+    }
+
     const account = await Account.findOneAndUpdate(
       { _id: req.params.accountId, ...resolveTraderFilter(req) },
       patch,
@@ -221,6 +244,12 @@ router.patch('/accounts/:accountId', verifyServiceOrAdmin, async (req, res, next
 
     return res.json({ success: true, data: account });
   } catch (err) {
+    // Defense in depth against the same race POST /accounts already guards
+    // (app-level check passes, then a concurrent write collides at the DB
+    // level) — same clean message instead of a leaked Mongo error string.
+    if (err.code === 11000 && err.keyPattern?.upiId) {
+      return res.status(409).json({ success: false, message: 'This UPI ID is already registered on the platform' });
+    }
     return next(err);
   }
 });
