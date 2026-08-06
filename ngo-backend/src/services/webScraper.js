@@ -405,7 +405,7 @@ async function fetchAndSaveTransactions(account, page, io) {
       if (bizOrderId) {
         const exists = await Transaction.findOne({
           txnId: bizOrderId,
-          ngoId: account.ngoId
+          traderId: account.traderId ?? null
         });
         if (exists) continue;
       }
@@ -444,7 +444,7 @@ async function fetchAndSaveTransactions(account, page, io) {
         console.log('Detail API error:', e.message);
       }
 
-      const txn = await Transaction.create({
+      const savedTxn = await Transaction.create({
         traderId: account.traderId ?? null,
         accountId: account._id,
         platform: account.platform,
@@ -459,7 +459,7 @@ async function fetchAndSaveTransactions(account, page, io) {
       });
 
       // Matching engine v2 — independent P2P order-settlement trigger.
-      matchingEngine.triggerOrderSettlementFromTransaction(txn, account).catch((e) => {
+      matchingEngine.triggerOrderSettlementFromTransaction(savedTxn, account).catch((e) => {
         console.error('triggerOrderSettlementFromTransaction failed:', e.message);
       });
 
