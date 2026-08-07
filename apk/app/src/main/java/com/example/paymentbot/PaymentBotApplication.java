@@ -11,6 +11,21 @@ import android.content.Context;
  * on MainActivity being alive. A plain static Application Context is the
  * standard, safe way to get one (unlike an Activity Context, it has no
  * lifecycle to leak).
+ *
+ * Also the install point for process-wide, must-run-before-anything-else
+ * pieces of item 3/4's offline-first + crash-reporting work, plus the
+ * auto-update daily safety net:
+ *   - CrashHandler.install() — as early as possible, so nothing that runs
+ *     before this (there's very little, but exception handlers should be
+ *     installed first regardless) can crash unrecorded.
+ *   - EventUploadWorker.schedulePeriodic() — arms the 15-minute safety-net
+ *     delivery job. Idempotent (ExistingPeriodicWorkPolicy.KEEP), so calling
+ *     it on every process start is correct, not just harmless.
+ *   - UpdateCheckWorker.schedulePeriodic() — arms the once-a-day version
+ *     check, same KEEP idempotency. MainActivity additionally fires
+ *     UpdateCheckWorker.checkNow() on every app open, so this periodic call
+ *     is specifically the safety net for a device that runs for days
+ *     without the app ever being opened.
  */
 public class PaymentBotApplication extends Application {
 
@@ -20,6 +35,9 @@ public class PaymentBotApplication extends Application {
     public void onCreate() {
         super.onCreate();
         appContext = getApplicationContext();
+        CrashHandler.install(this);
+        EventUploadWorker.schedulePeriodic(this);
+        UpdateCheckWorker.schedulePeriodic(this);
     }
 
     /** Never null once the process has started — Application.onCreate() always runs first. */

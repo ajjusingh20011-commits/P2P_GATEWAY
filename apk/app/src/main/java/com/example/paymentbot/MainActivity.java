@@ -131,6 +131,7 @@ public class MainActivity extends AppCompatActivity {
         startScreenshotService();
         startService(new Intent(this, HeartbeatService.class));
         loadPersistedLogsIfNeeded();
+        UpdateCheckWorker.checkNow(this);
 
         setContentView(buildUi());
         rebuildFeed();

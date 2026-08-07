@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto-update: exposes only context.getFilesDir()/updates/ (where
+     ApkDownloadWorker writes the downloaded .apk) to the FileProvider —
+     nothing else in internal storage is shared with the installer or any
+     other app that resolves this authority. -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="apk_updates" path="updates/"/>
+</paths>
