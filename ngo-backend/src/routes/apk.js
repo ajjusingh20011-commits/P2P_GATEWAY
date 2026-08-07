@@ -5,10 +5,12 @@ const DebitSMS = require('../models/DebitSMS');
 const OverlayCapture = require('../models/OverlayCapture');
 const OutgoingPayment = require('../models/OutgoingPayment');
 const Payout = require('../models/Payout');
+const CrashLog = require('../models/CrashLog');
 const scraperEngine = require('../services/scraperEngine');
 const matchingEngine = require('../services/matchingEngine');
 const { matchDebitWithOverlay } = require('../services/payoutVerifier');
-const { DEVICE_STATUS, RAW_EVENT_TYPE, CATEGORY } = require('../config/constants');
+const { DEVICE_STATUS, RAW_EVENT_TYPE, CATEGORY, ROLES } = require('../config/constants');
+const { verifyToken, requireRole } = require('../middleware/auth');
 const { verifyServiceOrAdmin, resolveTraderFilter, requireTraderId } = require('../middleware/serviceAuth');
 
 const router = express.Router();
@@ -382,6 +384,67 @@ router.post('/event', async (req, res, next) => {
 });
 
 /**
+ * POST /api/apk/crash
+ * Header: devicetoken
+ * Body: { stackTrace, deviceInfo, appVersion, occurredAt }
+ * Item 4 (APK reliability audit) — real crash visibility for the dev team.
+ * Not Firebase Crashlytics (that needs a real Firebase project this change
+ * can't create), this is the honest working equivalent: the APK's
+ * CrashHandler queues this the same offline-first way as a payment event
+ * (see EventQueue/EventUploadWorker on the app side), so a crash on a
+ * device with no signal still shows up here once it reconnects.
+ */
+router.post('/crash', async (req, res, next) => {
+  try {
+    const token = req.headers.devicetoken || req.headers['x-device-token'];
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'deviceToken header is required' });
+    }
+
+    const device = await Device.findOne({ deviceToken: token });
+    if (!device) {
+      return res.status(401).json({ success: false, message: 'Invalid deviceToken' });
+    }
+
+    const { stackTrace, deviceInfo, appVersion, occurredAt } = req.body;
+
+    const crash = await CrashLog.create({
+      deviceId: device.deviceId,
+      traderId: device.traderId,
+      stackTrace: stackTrace || '',
+      deviceInfo: deviceInfo || '',
+      appVersion: appVersion || '',
+      occurredAt: occurredAt || new Date().toISOString(),
+    });
+
+    console.error(
+      `[apk-crash] device=${device.deviceId} trader=${device.traderId} info=${deviceInfo}\n${stackTrace}`
+    );
+
+    return res.status(201).json({ success: true, id: crash._id.toString() });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * GET /api/apk/crashes — dev/ops review list. Auth: admin only (crash
+ * triage is a cross-trader operational concern, not a trader-panel
+ * feature) — reuses the plain human-JWT admin check already established
+ * for the legacy ngo.js routes, not verifyServiceOrAdmin's trader-service
+ * path, since there is no "this trader's own crashes" use case here.
+ */
+router.get('/crashes', verifyToken, requireRole(ROLES.ADMIN), async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const crashes = await CrashLog.find().sort({ createdAt: -1 }).limit(limit);
+    return res.json({ success: true, data: crashes });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
  * POST /api/apk/debit-sms — no auth (the APK posts this directly).
  * Body: { deviceId, type, sender, body, last4Digits, amount, utr, receivedAt,
  *         isTransactionalSender, isVerifiedBank }
@@ -639,6 +702,29 @@ router.get('/status/:deviceId', async (req, res, next) => {
   } catch (err) {
     return next(err);
   }
+});
+
+/**
+ * GET /api/apk/latest-version — no auth (the APK checks this itself, before
+ * necessarily having any other server-issued credential).
+ *
+ * There's no build pipeline in this repo that publishes a new APK and bumps
+ * this automatically — deploying a new build means BOTH uploading the new
+ * .apk to the existing /downloads/paymentbot.apk static path (nginx, not
+ * this Node process — see Smartphones.jsx's APK_DOWNLOAD_URL) AND setting
+ * APK_LATEST_VERSION_CODE/APK_LATEST_VERSION_NAME here to match that build's
+ * app/build.gradle.kts values. Defaults intentionally match the current
+ * committed versionCode/versionName exactly, so a fresh deploy of this
+ * endpoint's own code starts in "no update available" — it must never
+ * default to claiming a newer version exists than what's actually hosted.
+ */
+router.get('/latest-version', (req, res) => {
+  return res.json({
+    success: true,
+    versionCode: parseInt(process.env.APK_LATEST_VERSION_CODE || '1', 10),
+    versionName: process.env.APK_LATEST_VERSION_NAME || '1.0',
+    downloadUrl: process.env.APK_DOWNLOAD_URL || 'http://198.44.140.74/downloads/paymentbot.apk',
+  });
 });
 
 module.exports = router;
