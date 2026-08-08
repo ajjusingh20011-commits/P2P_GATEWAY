@@ -9,7 +9,9 @@
       "Read(//c/Users/pc/MaxPayDesign/src/APK/components/**)",
       "Bash(node --check /c/Users/pc/p2p-upi-gateway/frontend/trader/src/pages/Notifications.jsx)",
       "Bash(node -c /c/Users/pc/p2p-upi-gateway/ngo-backend/src/routes/ngo.js)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m 'Trader Notifications page redesign: new table layout with full data exposure *)",
+      "Bash(node test-notifications-data.js)"
     ]
   }
 }
