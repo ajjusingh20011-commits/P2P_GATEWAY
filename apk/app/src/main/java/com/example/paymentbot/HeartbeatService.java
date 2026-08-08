@@ -1,5 +1,6 @@
 package com.example.paymentbot;
 
+import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -7,6 +8,7 @@ import android.app.Service;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -15,6 +17,7 @@ import android.service.notification.NotificationListenerService;
 import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
 
 import org.json.JSONObject;
 import java.net.HttpURLConnection;
@@ -35,6 +38,16 @@ public class HeartbeatService extends Service {
   // redundant requests before the previous one has had a chance to land.
   private static final long REBIND_COOLDOWN_MS = 60000;
 
+  // Item 2 (this pass): SMS permission has no rebind equivalent — a runtime
+  // permission revocation (manual, or Android's unused-app auto-reset after
+  // ~3 months of no app open on API 30+) can only be fixed by the user
+  // re-granting it, Android won't let an app silently re-request a dangerous
+  // permission. So this just needs to (a) not spam a notification every 4s
+  // and (b) actually detect the revocation at all, which nothing did before.
+  private static final long SMS_PERMISSION_CHECK_INTERVAL_MS = 60000;
+  private static final int SMS_REPAIR_NOTIF_ID = 1003;
+  private long lastSmsPermissionCheckAt = 0L;
+
   @Override
   public void onCreate() {
     super.onCreate();
@@ -44,11 +57,67 @@ public class HeartbeatService extends Service {
       public void run() {
         sendHeartbeat();
         checkListenerHealth();
+        checkSmsPermissionHealth();
         handler.postDelayed(this, INTERVAL);
       }
     };
     handler.post(heartbeatRunnable);
     Log.d(TAG, "HeartbeatService started");
+  }
+
+  /**
+   * Item 2 — SMS permission auto-reset detection. Unlike the notification
+   * listener (which the OS can rebind on request), a revoked dangerous
+   * permission has no programmatic fix — READ_SMS/RECEIVE_SMS can only be
+   * re-granted by the user via a real permission dialog or Settings. This
+   * detects the revocation (previously nothing did — SMSReceiver would just
+   * silently stop being invoked by the OS with zero indication anywhere)
+   * and raises a persistent notification prompting the user to re-open the
+   * app and re-grant, instead of the device going dark with no explanation.
+   */
+  private void checkSmsPermissionHealth() {
+    long now = System.currentTimeMillis();
+    if (now - lastSmsPermissionCheckAt < SMS_PERMISSION_CHECK_INTERVAL_MS) {
+      return;
+    }
+    lastSmsPermissionCheckAt = now;
+    try {
+      boolean hasReceive = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS)
+              == PackageManager.PERMISSION_GRANTED;
+      boolean hasRead = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS)
+              == PackageManager.PERMISSION_GRANTED;
+      if (hasReceive && hasRead) {
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) {
+          nm.cancel(SMS_REPAIR_NOTIF_ID);
+        }
+        return;
+      }
+      Log.w(TAG, "SMS permission missing (receive=" + hasReceive + " read=" + hasRead
+              + ") — was granted at some point since this is a registered device; likely revoked "
+              + "manually or by Android's unused-app auto-reset");
+      showSmsPermissionNotification();
+    } catch (Exception e) {
+      Log.d(TAG, "checkSmsPermissionHealth failed: " + e.getMessage());
+    }
+  }
+
+  private void showSmsPermissionNotification() {
+    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+    if (nm == null) return;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      NotificationChannel channel = new NotificationChannel(
+              CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT);
+      nm.createNotificationChannel(channel);
+    }
+    Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("⚠ SMS permission needed")
+            .setContentText("MaxPay can no longer read bank SMS. Open the app to re-grant permission.")
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build();
+    nm.notify(SMS_REPAIR_NOTIF_ID, notification);
   }
 
   /**

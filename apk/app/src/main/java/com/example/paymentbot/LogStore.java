@@ -128,4 +128,14 @@ final class LogStore extends SQLiteOpenHelper {
     List<SMSData> loadAll() {
         return loadRecent(MAX_ROWS);
     }
+
+    /** Wipes the entire persisted history — backs the Logs tab's clear/trash
+     *  action. Call from a background thread, never the UI thread. */
+    void clearAll() {
+        try {
+            getWritableDatabase().delete(TABLE, null, null);
+        } catch (Exception e) {
+            Log.e(TAG, "LogStore.clearAll failed: " + e.getMessage());
+        }
+    }
 }

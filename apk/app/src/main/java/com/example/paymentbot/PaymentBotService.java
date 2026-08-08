@@ -2,16 +2,14 @@ package com.example.paymentbot;
 
 import android.accessibilityservice.AccessibilityService;
 import android.content.Intent;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 import org.json.JSONObject;
 
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -32,11 +30,25 @@ public class PaymentBotService extends AccessibilityService {
 
     // Every banking / UPI app the bot watches — drives the floating screenshot
     // button and (for UPI apps) the outgoing success-screen capture.
+    //
+    // Kept in sync with NotificationService.ALLOWED_PACKAGES (overlay
+    // investigation, item 2: this list had drifted 4 packages behind that
+    // one — the "for Business"/merchant variants below were watched for
+    // notifications but never triggered the overlay at all).
     private static final String[] PAYMENT_APPS = {
             "com.phonepe.app",
             "com.google.android.apps.nbu.paisa.user",
+            // Google Pay for Business — merchant/business variant.
+            "com.google.android.apps.nbu.paisa.merchant",
             "net.one97.paytm",
             "com.bharatpe.merchant",
+            // BharatPe for Business — verified against the Play Store listing
+            // (see the matching note in NotificationService.ALLOWED_PACKAGES).
+            "com.bharatpe.app",
+            // Paytm for Business — unverified, see NotificationService note.
+            "com.paytm.business",
+            // PhonePe Business — unverified, see NotificationService note.
+            "com.phonepe.app.business",
             "in.amazon.mShop.android.shopping",
             "com.freecharge.android",
             "com.airtelpeymentsbank",
@@ -48,7 +60,13 @@ public class PaymentBotService extends AccessibilityService {
             "com.snapwork.hdfc"
     };
 
-    // Subset used for the legacy inbound-payment capture path.
+    // Subset used for the legacy inbound-payment (non-success-screen) capture
+    // path. Deliberately NOT extended with the 4 business-variant packages
+    // above: notifications already cover inbound detection for those apps via
+    // NotificationService.ALLOWED_PACKAGES, and there's no verified evidence
+    // of what those apps' non-success inbound screens look like to justify
+    // screen-scraping them blindly (unlike the 4 entries below, which this
+    // capture path was actually built/tested against).
     private static final String[] WATCHED_PACKAGES = {
             "net.one97.paytm",
             "com.phonepe.app",
@@ -76,6 +94,55 @@ public class PaymentBotService extends AccessibilityService {
     private long lastCaptureTime = 0L;
     private String currentPaymentApp = "";
 
+    // ---------------------------------------------------------------------
+    // Overlay-readiness retry (overlay investigation, item 1)
+    // ---------------------------------------------------------------------
+    // startService() only schedules the target service's onCreate() to run —
+    // it does not block until that's done. The old code checked
+    // getInstance() immediately afterwards with no wait, so any time
+    // PaymentOverlayService/OverlayService weren't already alive (fresh
+    // reboot before the app was opened, or the OS had background-killed
+    // them — they carry no restart protection of their own, unlike
+    // KeepAliveService) the very first payment-app-open silently skipped
+    // showing the overlay: no error, no retry, nothing visible anywhere.
+    //
+    // Fixed with a short bounded retry instead of converting to
+    // bindService()/ServiceConnection: both services currently return null
+    // from onBind() (binding isn't supported at all today), and every
+    // caller here assumes synchronous static getInstance() access from a
+    // very hot path (onAccessibilityEvent fires many times per second) —
+    // moving to a real bound-service model would mean maintaining a
+    // persistent ServiceConnection per service plus queuing actions until
+    // onServiceConnected(), a much larger structural change for marginal
+    // benefit. Service.onCreate() for these two (no heavy I/O, just a
+    // WindowManager handle) normally completes in low single-digit
+    // milliseconds, so 5 attempts × 150ms (750ms max) is generous headroom
+    // and keeps the fix contained to this one file.
+    private final Handler overlayRetryHandler = new Handler(Looper.getMainLooper());
+    private static final int OVERLAY_RETRY_DELAY_MS = 150;
+    private static final int OVERLAY_RETRY_MAX_ATTEMPTS = 5;
+
+    /** @return true once the action ran (service was ready); false to retry. */
+    private interface ReadyAction {
+        boolean tryRun();
+    }
+
+    private void runWhenOverlayReady(ReadyAction action) {
+        runWhenOverlayReady(action, OVERLAY_RETRY_MAX_ATTEMPTS);
+    }
+
+    private void runWhenOverlayReady(final ReadyAction action, final int attemptsLeft) {
+        if (action.tryRun()) {
+            return;
+        }
+        if (attemptsLeft <= 0) {
+            Log.w(TAG, "Overlay service still not ready after retries — giving up for this event");
+            return;
+        }
+        overlayRetryHandler.postDelayed(
+                () -> runWhenOverlayReady(action, attemptsLeft - 1), OVERLAY_RETRY_DELAY_MS);
+    }
+
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event == null) {
@@ -102,17 +169,23 @@ public class PaymentBotService extends AccessibilityService {
             // floating screenshot button.
             if (!pkg.equals(currentPaymentApp)) {
                 currentPaymentApp = pkg;
+                final String appNameForBadge = getAppName(pkg);
 
                 startService(new Intent(this, PaymentOverlayService.class));
-                if (PaymentOverlayService.getInstance() != null) {
-                    PaymentOverlayService.getInstance().showBadge(getAppName(pkg));
-                }
+                runWhenOverlayReady(() -> {
+                    PaymentOverlayService svc = PaymentOverlayService.getInstance();
+                    if (svc == null) return false;
+                    svc.showBadge(appNameForBadge);
+                    return true;
+                });
 
                 startService(new Intent(this, OverlayService.class));
-                if (OverlayService.getInstance() != null
-                        && !OverlayService.getInstance().isVisible()) {
-                    OverlayService.getInstance().showFloatingButton();
-                }
+                runWhenOverlayReady(() -> {
+                    OverlayService svc = OverlayService.getInstance();
+                    if (svc == null) return false;
+                    if (!svc.isVisible()) svc.showFloatingButton();
+                    return true;
+                });
             }
 
             AccessibilityNodeInfo root = getRootInActiveWindow();
@@ -142,13 +215,24 @@ public class PaymentBotService extends AccessibilityService {
             }
         } else {
             // Left the payment app — hide the badge and the screenshot button.
+            // No retry here (unlike show, above): if the services aren't
+            // ready, nothing was ever shown in the first place, so there's
+            // genuinely nothing to hide — that's a correct no-op, not the
+            // same silent-fail bug. Logged at debug level purely for
+            // visibility while diagnosing the overlay-service lifecycle.
             if (!currentPaymentApp.isEmpty()) {
                 currentPaymentApp = "";
-                if (PaymentOverlayService.getInstance() != null) {
-                    PaymentOverlayService.getInstance().hideBadge();
+                PaymentOverlayService overlaySvc = PaymentOverlayService.getInstance();
+                if (overlaySvc != null) {
+                    overlaySvc.hideBadge();
+                } else {
+                    Log.d(TAG, "hideBadge skipped — PaymentOverlayService not running (nothing to hide)");
                 }
-                if (OverlayService.getInstance() != null) {
-                    OverlayService.getInstance().hideFloatingButton();
+                OverlayService floatSvc = OverlayService.getInstance();
+                if (floatSvc != null) {
+                    floatSvc.hideFloatingButton();
+                } else {
+                    Log.d(TAG, "hideFloatingButton skipped — OverlayService not running (nothing to hide)");
                 }
             }
         }
@@ -168,7 +252,16 @@ public class PaymentBotService extends AccessibilityService {
         boolean isDuplicate = utr != null && !utr.isEmpty() && utr.equals(lastCapturedUTR);
         boolean tooSoon = (now - lastCaptureTime) < 8000;
 
-        if (amount == null || amount.isEmpty() || isDuplicate || tooSoon) {
+        if (amount == null || amount.isEmpty()) {
+            // Item 5: this passed isSuccessScreen()'s keyword gate, so it's a
+            // real success screen — but if no amount extracted, that's an
+            // app/format our AMOUNT_PATTERN doesn't handle. Log for review
+            // (skip logging plain duplicate/debounce returns below — those
+            // aren't parse failures, they're working as intended).
+            ParseFailureLogger.log(this, "SCREEN", appName, screenText, "success_screen_no_amount_matched");
+            return;
+        }
+        if (isDuplicate || tooSoon) {
             return;
         }
 
@@ -181,16 +274,31 @@ public class PaymentBotService extends AccessibilityService {
         // AUTO capture and send — no user interaction.
         autoCaptureAndSend(appName, name, amount, last4, utr);
 
-        // Confirm to the NGO with a brief notification.
-        if (PaymentOverlayService.getInstance() != null) {
-            PaymentOverlayService.getInstance().showSuccessNotification(appName, name, amount, utr);
-        }
+        // Confirm to the NGO with a brief notification. Retried the same way
+        // as showBadge() above — by the time a success screen appears the
+        // service has almost always finished starting already (it was
+        // started when the app came to the foreground, seconds earlier),
+        // but the race is the same shape, so it gets the same fix.
+        final String fAppName = appName;
+        final String fName = name;
+        final String fAmount = amount;
+        final String fUtr = utr;
+        runWhenOverlayReady(() -> {
+            PaymentOverlayService svc = PaymentOverlayService.getInstance();
+            if (svc == null) return false;
+            svc.showSuccessNotification(fAppName, fName, fAmount, fUtr);
+            return true;
+        });
 
         MainActivity.addLog("💸 OUTGOING: Rs." + amount + " to " + name
                 + " via " + appName + " UTR:" + utr);
     }
 
-    /** Posts the auto-captured outgoing payment to the backend (background). */
+    /**
+     * Queues the auto-captured outgoing payment for delivery (item 3:
+     * Room-backed, survives offline/process death — this used to be a
+     * direct fire-and-forget POST that silently lost the event on failure).
+     */
     private void autoCaptureAndSend(String app, String recipientName,
                                     String amount, String last4, String utr) {
         final String deviceId = android.provider.Settings.Secure.getString(
@@ -202,44 +310,26 @@ public class PaymentBotService extends AccessibilityService {
         final String fApp = app != null ? app : "";
         final String fAmount = amount != null ? amount : "";
 
-        new Thread(() -> {
-            HttpURLConnection conn = null;
-            try {
-                JSONObject json = new JSONObject();
-                json.put("deviceId", deviceId == null ? "" : deviceId);
-                json.put("type", "OUTGOING");
-                json.put("app", fApp);
-                json.put("recipientName", fName);
-                json.put("recipientLast4", fLast4);
-                json.put("amount", fAmount);
-                json.put("utr", fUtr);
-                json.put("capturedAt", capturedAt);
-                json.put("capturedFrom", "SUCCESS_SCREEN");
-                json.put("autoCapture", true);
+        try {
+            JSONObject json = new JSONObject();
+            json.put("deviceId", deviceId == null ? "" : deviceId);
+            json.put("type", "OUTGOING");
+            json.put("app", fApp);
+            json.put("recipientName", fName);
+            json.put("recipientLast4", fLast4);
+            json.put("amount", fAmount);
+            json.put("utr", fUtr);
+            json.put("capturedAt", capturedAt);
+            json.put("capturedFrom", "SUCCESS_SCREEN");
+            json.put("autoCapture", true);
 
-                URL url = new URL(Config.EP_OUTGOING_PAYMENT);
-                conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json");
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(5000);
-                conn.setDoOutput(true);
-
-                byte[] out = json.toString().getBytes(StandardCharsets.UTF_8);
-                try (OutputStream os = conn.getOutputStream()) {
-                    os.write(out);
-                }
-
-                int code = conn.getResponseCode();
-                Log.d(TAG, "Auto capture sent: " + code);
-            } catch (Exception e) {
-                Log.e(TAG, "Auto capture error: " + e.getMessage());
-            } finally {
-                if (conn != null) {
-                    conn.disconnect();
-                }
-            }
-        }).start();
+            // /api/apk/outgoing-payment keys off the deviceId field in the
+            // JSON body (see ngo-backend/src/routes/apk.js) — no
+            // devicetoken header needed.
+            EventQueue.enqueue(this, "/api/apk/outgoing-payment", json.toString(), false);
+        } catch (Exception e) {
+            Log.e(TAG, "autoCaptureAndSend buildJson error: " + e.getMessage());
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -257,6 +347,10 @@ public class PaymentBotService extends AccessibilityService {
         PaymentData data = PaymentParser.parse(screenText, getAppName(pkg));
         data.setCapturedByScreen(true);
         if (data.getAmount().isEmpty()) {
+            // Item 5: looksLikePayment already gated this as payment-related
+            // text — a missing amount here is a screen layout/format our
+            // regexes don't handle yet, not routine noise.
+            ParseFailureLogger.log(this, "SCREEN", getAppName(pkg), screenText, "inbound_screen_no_amount_matched");
             return;
         }
 

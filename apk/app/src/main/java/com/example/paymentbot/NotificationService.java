@@ -9,11 +9,6 @@ import android.util.Log;
 
 import org.json.JSONObject;
 
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-
 /**
  * NotificationListenerService that captures notifications from EVERY app
  * (no package filtering), extracts their text, resolves a readable app name,
@@ -197,11 +192,22 @@ public class NotificationService extends NotificationListenerService {
 
             MainActivity.addSMS(data);
 
-            // Forward to the backend so it actually reaches the matching
-            // engine — addSMS() above is UI-only and never leaves the phone.
+            // Item 5: this notification already passed the allowed-app gate,
+            // so it's a real bank/UPI message — but if neither amount nor UTR
+            // extracted, that's a format our regexes don't handle yet. Log it
+            // locally (persistently) for review instead of silently dropping
+            // it — see ParseFailure.
             String amount = SMSReceiver.firstMatch(displayBody, SMSReceiver.AMOUNT_PATTERNS);
             String utr = SMSReceiver.firstMatch(displayBody, SMSReceiver.UTR_PATTERNS);
-            sendEventToServer(senderName, displayBody, amount, utr, timestamp);
+            if (amount.isEmpty() && utr.isEmpty()) {
+                ParseFailureLogger.log(this, "NOTIFICATION", senderName, displayBody, "no_amount_or_utr_matched");
+            }
+
+            // Forward to the backend so it actually reaches the matching
+            // engine — addSMS() above is UI-only and never leaves the phone.
+            // Item 3: queue-first, not a direct fire-and-forget POST — see
+            // EventQueue for why (this used to be lost outright if offline).
+            queueEvent(senderName, displayBody, amount, utr, timestamp);
 
         } catch (Exception e) {
             Log.e(TAG, "NotificationService error", e);
@@ -209,21 +215,18 @@ public class NotificationService extends NotificationListenerService {
     }
 
     /**
-     * POSTs this notification to POST /api/apk/event as a PAYMENT-category
-     * RawEvent — the one endpoint that actually feeds matchingEngine.checkMatch
-     * server-side (unlike /api/apk/debit-sms, which nothing currently reads).
-     * Requires the deviceToken issued at /register-device; skips silently
-     * (logs only) if the device hasn't obtained one yet.
+     * Builds the same POST /api/apk/event PAYMENT-category payload this
+     * always sent, but now hands it to {@link EventQueue} instead of opening
+     * the connection here directly — the event is durable (Room-backed) the
+     * instant this returns, regardless of whether the device is online.
      */
-    private void sendEventToServer(String sender, String body, String amount, String utr, long timestamp) {
+    private void queueEvent(String sender, String body, String amount, String utr, long timestamp) {
         final String deviceToken = RegistrationManager.getDeviceToken(this);
         if (TextUtils.isEmpty(deviceToken)) {
-            Log.w(TAG, "No deviceToken yet — skipping server post for this notification");
+            Log.w(TAG, "No deviceToken yet — skipping queue for this notification");
             return;
         }
-        final String serverUrl = RegistrationManager.getServerUrl(this);
 
-        final String payload;
         try {
             JSONObject json = new JSONObject();
             json.put("type", "NOTIFICATION");
@@ -233,39 +236,10 @@ public class NotificationService extends NotificationListenerService {
             json.put("amount", amount == null ? "" : amount);
             json.put("utr", utr == null ? "" : utr);
             json.put("utcTimestamp", TimeFormatter.toUTC(timestamp));
-            payload = json.toString();
+            EventQueue.enqueue(this, "/api/apk/event", json.toString(), true);
         } catch (Exception e) {
-            Log.e(TAG, "sendEventToServer buildJson error: " + e.getMessage());
-            return;
+            Log.e(TAG, "queueEvent buildJson error: " + e.getMessage());
         }
-
-        new Thread(() -> {
-            HttpURLConnection conn = null;
-            try {
-                URL url = new URL(serverUrl + "/api/apk/event");
-                conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json");
-                conn.setRequestProperty("devicetoken", deviceToken);
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-                conn.setDoOutput(true);
-
-                byte[] out = payload.getBytes(StandardCharsets.UTF_8);
-                try (OutputStream os = conn.getOutputStream()) {
-                    os.write(out);
-                }
-
-                int code = conn.getResponseCode();
-                Log.d(TAG, "Notification event posted to server, HTTP " + code);
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to post notification event: " + e.getMessage());
-            } finally {
-                if (conn != null) {
-                    conn.disconnect();
-                }
-            }
-        }).start();
     }
 
     @Override

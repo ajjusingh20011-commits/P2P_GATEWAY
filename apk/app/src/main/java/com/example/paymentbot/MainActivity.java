@@ -81,7 +81,14 @@ public class MainActivity extends AppCompatActivity {
     // this cap has no effect on data delivery — it just stops the static list
     // (and the on-screen card tree) from growing without bound and OOM-crashing
     // the long-lived process.
-    private static final int MAX_ENTRIES = 200;
+    //
+    // Log-storage audit, item 2: this is also the Logs tab's default on-screen
+    // view size. Full history beyond this is never lost — it's independently
+    // persisted in LogStore (5,000-row cap) and stays reachable via the
+    // Download/export buttons (buildLogTextAsync() reads LogStore.loadAll()
+    // directly, not this in-memory list) — only what's *displayed* by default
+    // is capped here.
+    private static final int MAX_ENTRIES = 100;
 
     private LinearLayout messageContainer;
     private TextView emptyView;
@@ -471,6 +478,46 @@ public class MainActivity extends AppCompatActivity {
         page.addView(settingsRow("App version", "1.0.0"));
         page.addView(settingsRow("Android ID", androidId == null ? "—" : androidId));
 
+        // Item 3/5 visibility: the offline-first queue and parse-failure log
+        // are otherwise invisible unless someone plugs in adb — this makes
+        // "is anything stuck undelivered right now" a glance, not a mystery.
+        TextView queueValue = new TextView(this);
+        queueValue.setText("…");
+        queueValue.setTextColor(TEXT_PRIMARY);
+        queueValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        queueValue.setPadding(0, dp(2), 0, dp(10));
+        LinearLayout queueRow = new LinearLayout(this);
+        queueRow.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams queueRowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        queueRowLp.topMargin = dp(14);
+        queueRow.setLayoutParams(queueRowLp);
+        TextView queueLabel = new TextView(this);
+        queueLabel.setText("Pending upload queue");
+        queueLabel.setTextColor(TEXT_HINT);
+        queueLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        queueRow.addView(queueLabel);
+        queueRow.addView(queueValue);
+        View queueDivider = new View(this);
+        queueDivider.setBackgroundColor(DIVIDER);
+        queueDivider.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+        queueRow.addView(queueDivider);
+        page.addView(queueRow);
+
+        new Thread(() -> {
+            try {
+                AppDatabase db = AppDatabase.get(this);
+                int pending = db.queuedEventDao().count();
+                int parseFailures = db.parseFailureDao().count();
+                String text = pending + " event" + (pending == 1 ? "" : "s") + " waiting to upload"
+                        + (parseFailures > 0 ? " · " + parseFailures + " unparsed format(s) logged" : "");
+                runOnUiThread(() -> queueValue.setText(text));
+            } catch (Exception e) {
+                runOnUiThread(() -> queueValue.setText("Unavailable"));
+            }
+        }).start();
+
         // Screen-recording consent (MediaProjection) is separate from the
         // "display over other apps" permission the home button handles —
         // still needed for the existing screenshot-capture engine to work.
@@ -767,9 +814,65 @@ public class MainActivity extends AppCompatActivity {
         page.setOrientation(LinearLayout.VERTICAL);
         page.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        page.addView(buildLogsHeader());
         page.addView(buildFeed(), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         return page;
+    }
+
+    /** Logs tab header: title + a trash-icon button (item 3) that clears the
+     *  on-screen log history and the underlying LogStore table. */
+    private View buildLogsHeader() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(20), dp(16), dp(12), dp(4));
+        row.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView title = new TextView(this);
+        title.setText("Logs");
+        title.setTextColor(TEXT_PRIMARY);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        title.setLayoutParams(titleLp);
+        row.addView(title);
+
+        TextView trash = new TextView(this);
+        trash.setText("🗑");
+        trash.setTextSize(20);
+        trash.setPadding(dp(10), dp(8), dp(10), dp(8));
+        trash.setOnClickListener(v -> confirmClearLogs());
+        row.addView(trash);
+
+        return row;
+    }
+
+    /** Same ConfirmModal-style AlertDialog pattern as confirmLogout(). */
+    private void confirmClearLogs() {
+        new AlertDialog.Builder(this)
+                .setTitle("Clear all logs?")
+                .setMessage("This permanently deletes the on-screen log history from this device. "
+                        + "This can't be undone.")
+                .setNegativeButton("Cancel", (d, w) -> d.dismiss())
+                .setPositiveButton("Clear", (d, w) -> clearLogs())
+                .show();
+    }
+
+    /** Clears both the underlying LogStore table and the in-memory feed. */
+    private void clearLogs() {
+        new Thread(() -> {
+            LogStore.get(this).clearAll();
+            synchronized (allMessages) {
+                allMessages.clear();
+            }
+            runOnUiThread(() -> {
+                rebuildFeed();
+                Toast.makeText(this, "Logs cleared", Toast.LENGTH_SHORT).show();
+            });
+        }).start();
     }
 
     private View buildFeed() {

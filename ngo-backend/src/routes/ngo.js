@@ -294,7 +294,11 @@ router.get('/transactions', verifyServiceOrAdmin, async (req, res, next) => {
     }
 
     const [transactions, total] = await Promise.all([
-      Transaction.find(query).sort({ scrapedAt: -1 }).skip(skip).limit(limit),
+      Transaction.find(query)
+        .populate('rawEventId', ['type', 'body', 'deviceId', 'category'])
+        .sort({ scrapedAt: -1 })
+        .skip(skip)
+        .limit(limit),
       Transaction.countDocuments(query),
     ]);
 

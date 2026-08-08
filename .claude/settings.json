@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep -l \"RawEvent\\\\|QueuedEvent\\\\|NotificationLog\")",
+      "Bash(xargs grep -l \"RawEvent\")",
+      "Bash(find \"C:\\\\Users\\\\pc\\\\MaxPayDesign\\\\src\\\\APK\" -type f -name \"*.tsx\" -o -name \"*.ts\" -o -name \"*.jsx\" -o -name \"*.js\" | head -20)",
+      "Read(//c/Users/pc/MaxPayDesign/src/APK/**)",
+      "Read(//c/Users/pc/MaxPayDesign/src/APK/pages/**)",
+      "Read(//c/Users/pc/MaxPayDesign/src/APK/components/**)",
+      "Bash(node --check /c/Users/pc/p2p-upi-gateway/frontend/trader/src/pages/Notifications.jsx)",
+      "Bash(node -c /c/Users/pc/p2p-upi-gateway/ngo-backend/src/routes/ngo.js)",
+      "Bash(git add *)"
+    ]
+  }
+}

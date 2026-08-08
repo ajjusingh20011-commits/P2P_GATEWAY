@@ -10,10 +10,6 @@ import android.util.Log;
 
 import org.json.JSONObject;
 
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -32,8 +28,10 @@ public class SMSReceiver extends BroadcastReceiver {
     private static final String TAG = "PaymentBot";
     private static final String SMS_RECEIVED = "android.provider.Telephony.SMS_RECEIVED";
 
-    // Backend endpoint for verified debit alerts (see Config for the base URL).
-    private static final String DEBIT_ENDPOINT = Config.EP_DEBIT_SMS;
+    // Path relative to the server base URL — see EventQueue/EventUploadWorker,
+    // which resolve the base URL fresh on every delivery attempt rather than
+    // baking it in at capture time.
+    private static final String DEBIT_ENDPOINT_PATH = "/api/apk/debit-sms";
 
     // Legitimate transactional bank sender IDs, e.g. AX-HDFCBK-T, VM-SBIPSG-T.
     private static final Pattern TRANSACTIONAL_SENDER = Pattern.compile("^[A-Z]{2}-[A-Z]+-T$");
@@ -177,14 +175,24 @@ public class SMSReceiver extends BroadcastReceiver {
         Log.d(TAG, "DEBIT detected " + (verifiedSender ? "[verified]" : "[UNVERIFIED]")
                 + " " + debit);
 
+        // Item 5: a confirmed debit SMS with no extractable amount is a real
+        // format gap (balance/UTR can legitimately be absent, amount can't
+        // for a genuine debit alert) — log it for review instead of just
+        // silently sending an empty amount field.
+        if (verifiedSender && (amount == null || amount.isEmpty())) {
+            ParseFailureLogger.log(context, "SMS", sender, body, "debit_sms_no_amount_matched");
+        }
+
         // FEATURE 6 — show as a red DEBIT card in the feed.
         SMSData card = new SMSData("BANK DEBIT: " + sender, body, timestamp);
         card.source = "SMS";
         MainActivity.addSMS(card);
 
         // FEATURE 5 — forward verified bank debits to the backend.
+        // Item 3: queue-first (Room-backed), not a direct fire-and-forget
+        // POST — see EventQueue.
         if (verifiedSender) {
-            sendDebitToServer(context, debit);
+            queueDebit(context, debit);
         }
     }
 
@@ -276,40 +284,15 @@ public class SMSReceiver extends BroadcastReceiver {
     // ---------------------------------------------------------------------
     // Networking (FEATURE 5)
     // ---------------------------------------------------------------------
-    private void sendDebitToServer(Context context, final DebitSMSData debit) {
+    private void queueDebit(Context context, final DebitSMSData debit) {
         final String deviceId = getAndroidId(context);
         final String payload = buildJson(deviceId, debit);
         if (payload == null) {
             return;
         }
-
-        // Network on a background thread; broadcast receivers must not block.
-        new Thread(() -> {
-            HttpURLConnection conn = null;
-            try {
-                URL url = new URL(DEBIT_ENDPOINT);
-                conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-                conn.setDoOutput(true);
-
-                byte[] out = payload.getBytes(StandardCharsets.UTF_8);
-                try (OutputStream os = conn.getOutputStream()) {
-                    os.write(out);
-                }
-
-                int code = conn.getResponseCode();
-                Log.d(TAG, "Debit SMS posted to server, HTTP " + code);
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to post debit SMS: " + e.getMessage());
-            } finally {
-                if (conn != null) {
-                    conn.disconnect();
-                }
-            }
-        }).start();
+        // /api/apk/debit-sms keys off the deviceId field in the JSON body
+        // (see ngo-backend/src/routes/apk.js) — no devicetoken header needed.
+        EventQueue.enqueue(context, DEBIT_ENDPOINT_PATH, payload, false);
     }
 
     private static String buildJson(String deviceId, DebitSMSData debit) {

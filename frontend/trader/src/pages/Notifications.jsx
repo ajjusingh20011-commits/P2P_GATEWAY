@@ -1,34 +1,62 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { BadgeCheck } from 'lucide-react';
-import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, EmptyState, LoadingState } from '../components/ui';
+import { Info } from 'lucide-react';
+import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, EmptyState, LoadingState, BankBadge } from '../components/ui';
 import { IconRefresh, IconBell, IconWarning } from '../components/icons';
 import { useApi } from '../hooks/useApi';
-import { getTransactions, getNgoSocketToken, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
+import { getTransactions, getNgoSocketToken, NGO_SOCKET_ORIGIN, getDevices } from '../lib/ngoApi';
 import { notifications, ACCOUNT_TYPES } from '../utils/mock';
 
 const PER_PAGE = 8;
 
-// Map an ngo-backend Transaction doc (see ngo-backend/src/models/Transaction.js)
-// onto the row shape this page renders. `bank` stays unused — nothing populates
-// a receiving-account identity on these rows today; `utr` (the bank/UPI
-// reference, e.g. an RRN) is the most useful "Transaction ID" available.
-function apiToRow(n) {
+// Map Transaction + rawEventId (populated) to row shape for table rendering.
+function apiToRow(txn, deviceMap) {
+  const rawEvent = txn.rawEventId; // Now populated with type, body, deviceId, category
+  const isApk = !!rawEvent;
+
+  // Determine capture type
+  let captureType = 'Web scraper';
+  if (rawEvent) {
+    const typeMap = { SMS: 'SMS', NOTIFICATION: 'Notification', SCREEN: 'Screen' };
+    captureType = typeMap[rawEvent.type] || 'Unknown';
+  }
+
+  // Determine source: device name for APK, "web" for scraper
+  let source = 'web';
+  if (rawEvent && rawEvent.deviceId && deviceMap) {
+    const device = deviceMap[rawEvent.deviceId];
+    source = device?.deviceName || rawEvent.deviceId;
+  }
+
+  // Full original captured text: RawEvent.body for APK, reconstructed for scraper
+  let originalText = '';
+  if (rawEvent && rawEvent.body) {
+    originalText = rawEvent.body;
+  } else if (!isApk) {
+    // Web scraper: reconstruct from parsed fields
+    originalText = `Payment from ${txn.payerName || 'Unknown'}${txn.payerUpiId ? ` (${txn.payerUpiId})` : ''}`;
+  }
+
   return {
-    id: n._id,
-    notificationId: n.txnId || n._id,
-    time: n.scrapedAt || n.createdAt || null,
-    amount: n.amount,
+    id: txn._id,
+    notificationId: txn.txnId || txn._id,
+    time: txn.scrapedAt || txn.createdAt || null,
+    amount: txn.amount,
     currency: 'INR',
-    method: n.platform,
-    transactionId: n.utr || '—',
-    description: n.payerName
-      ? `Payment from ${n.payerName}${n.payerUpiId ? ` (${n.payerUpiId})` : ''}`
-      : 'Payment received',
+    method: txn.platform,
+    methodBadgeColor: ACCOUNT_TYPES[txn.platform]?.color || 'default',
+    captureType,
+    source,
+    originalText,
+    transactionId: txn.utr || '—',
+    // Linked if matched=true (matched to an order), Process if false
+    linkedStatus: txn.matched ? 'linked' : 'process',
+    isLinked: txn.matched,
+    realId: txn.utr || txn.txnId || txn._id,
   };
 }
 
-// Normalize a mock notification (instant value + fallback) to the same shape.
+// Normalize a mock notification to the same shape.
 function mockToRow(n) {
   return {
     id: n.id,
@@ -37,21 +65,26 @@ function mockToRow(n) {
     amount: n.amount,
     currency: n.currency,
     method: n.method,
+    methodBadgeColor: ACCOUNT_TYPES[n.method]?.color || 'default',
+    captureType: 'Notification',
+    source: 'mobile-device',
+    originalText: n.description,
     transactionId: n.transactionId,
-    description: n.description,
+    linkedStatus: 'linked',
+    isLinked: true,
+    realId: n.transactionId,
   };
 }
 
 function fmtTime(value) {
-  if (!value) return '—';
+  if (!value) return { time: '—', date: '' };
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '—';
-  const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
-  if (diffMin < 1) return 'just now';
-  if (diffMin < 60) return `${diffMin} min ago`;
-  const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24) return `${diffH}h ago`;
-  return d.toLocaleString();
+  if (Number.isNaN(d.getTime())) return { time: '—', date: '' };
+
+  const timeStr = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  const dateStr = d.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+  return { time: timeStr, date: dateStr };
 }
 
 const METHOD_OPTIONS = [
@@ -60,34 +93,47 @@ const METHOD_OPTIONS = [
 ];
 
 export default function Notifications() {
-  const [filters, setFilters] = useState({ notificationId: '', amount: '', currency: '', method: 'all', transactionId: '' });
+  const [filters, setFilters] = useState({ notificationId: '', amount: '', method: 'all' });
   const [page, setPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
+  const [infoTooltip, setInfoTooltip] = useState(null); // { type: 'notif' | 'status', value: string }
 
-  // Real notifications overlay the mock; mock stays as instant value + fallback.
-  const { data: rows, loading, error, refetch } = useApi(
-    () => getTransactions().then((list) => (list || []).map(apiToRow)),
-    { fallback: notifications.map(mockToRow) }
+  // Fetch both transactions AND devices for name lookups
+  const { data: transactions, loading: txnLoading, error, refetch } = useApi(
+    () => getTransactions().then((list) => list || []),
+    { fallback: [] }
   );
+
+  const { data: devices } = useApi(
+    () => getDevices().then((list) => list || []),
+    { fallback: [] }
+  );
+
+  // Build deviceMap: deviceId → Device object for quick lookup
+  const deviceMap = useMemo(() => {
+    const map = {};
+    devices.forEach((d) => {
+      map[d.id] = d;
+    });
+    return map;
+  }, [devices]);
+
+  // Transform transactions to row format using populated rawEventId
+  const rows = useMemo(() => {
+    return transactions.map((txn) => apiToRow(txn, deviceMap));
+  }, [transactions, deviceMap]);
 
   const set = (k) => (v) => {
     setFilters((f) => ({ ...f, [k]: v }));
     setPage(1);
   };
 
-  // The reference's Notifications page is a plain activity feed with no
-  // search — this trader panel's real notification volume can grow large
-  // enough that finding a specific past payment matters operationally, so
-  // filtering/pagination (already real, already fixed) stay as genuine
-  // extra capability layered on top of the reference's simpler layout,
-  // same call made for Dashboard's extra sections.
+  // Filter rows
   const filtered = useMemo(() => {
     return rows.filter((n) => {
       if (filters.notificationId && !String(n.notificationId).toLowerCase().includes(filters.notificationId.toLowerCase())) return false;
       if (filters.amount && !String(n.amount).includes(filters.amount.trim())) return false;
-      if (filters.currency && !String(n.currency).toLowerCase().includes(filters.currency.toLowerCase())) return false;
       if (filters.method !== 'all' && n.method !== filters.method) return false;
-      if (filters.transactionId && !String(n.transactionId).toLowerCase().includes(filters.transactionId.toLowerCase())) return false;
       return true;
     });
   }, [rows, filters]);
@@ -99,18 +145,11 @@ export default function Notifications() {
     refetch();
   };
 
-  // Stop the spin once the real refetch settles (success or error), not on a fixed timer.
   useEffect(() => {
-    if (!loading) setRefreshing(false);
-  }, [loading]);
+    if (!txnLoading) setRefreshing(false);
+  }, [txnLoading]);
 
-  // Live refresh — ngo-backend's scraper emits 'new-transactions' to this
-  // trader's own socket room the instant it saves a newly-scraped
-  // transaction (see ngo-backend/src/services/webScraper.js), which is
-  // exactly the event that grows this page's list. Joins via a verified
-  // service token (getNgoSocketToken) — ngo-backend places the socket in
-  // this real trader's room server-side, no client-supplied ngoId, no race
-  // on a lazily-cached value like the old shared-login version had.
+  // Live socket refresh
   const notifSocketRef = useRef(null);
   useEffect(() => {
     if (notifSocketRef.current) return undefined;
@@ -124,7 +163,7 @@ export default function Notifications() {
     }).catch((e) => console.error('Could not start notifications socket:', e.message));
 
     return () => { cancelled = true; };
-  }, []);
+  }, [refetch]);
   useEffect(() => () => notifSocketRef.current?.disconnect(), []);
 
   return (
@@ -132,10 +171,10 @@ export default function Notifications() {
       <PageHeader
         eyebrow="ACTIVITY CENTER"
         title="Notifications"
-        info="Payment detection, payout and account-health events."
+        info="Captured payments, SMS and notification events."
         actions={
           <>
-            {loading && <span style={{ color: 'var(--muted)', fontSize: 12 }}>Loading…</span>}
+            {txnLoading && <span style={{ color: 'var(--muted)', fontSize: 12 }}>Loading…</span>}
             <Button variant="ghost" onClick={refresh}>
               <IconRefresh className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
               Refresh
@@ -145,22 +184,17 @@ export default function Notifications() {
       />
 
       <Card className="mb-4 p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-          <SearchInput value={filters.notificationId} onChange={set('notificationId')} placeholder="Notification ID" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <SearchInput value={filters.notificationId} onChange={set('notificationId')} placeholder="Search by Notification ID" />
           <SearchInput value={filters.amount} onChange={set('amount')} placeholder="Amount" />
-          <SearchInput value={filters.currency} onChange={set('currency')} placeholder="Currency" />
           <Select value={filters.method} onChange={set('method')} options={METHOD_OPTIONS} />
-          <SearchInput value={filters.transactionId} onChange={set('transactionId')} placeholder="Transaction ID" />
         </div>
       </Card>
 
-      {/* Flush card of activity-feed rows (reference's exact "note" pattern) —
-          each row carries every real field the old table showed (amount,
-          method, currency, transaction id, notification id), just laid out
-          as icon + title + description + timestamp instead of table columns. */}
+      {/* New table-based layout */}
       <Card style={{ padding: 0, overflow: 'hidden' }}>
         {pageRows.length === 0 ? (
-          loading && rows.length === 0 ? (
+          txnLoading && rows.length === 0 ? (
             <LoadingState label="Loading notifications…" />
           ) : error ? (
             <EmptyState
@@ -177,32 +211,189 @@ export default function Notifications() {
             />
           )
         ) : (
-          pageRows.map((n) => {
-            const method = ACCOUNT_TYPES[n.method];
-            return (
-              <div
-                key={n.id}
-                className="tf-row-hover flex items-start gap-3"
-                style={{ padding: '17px 19px', borderBottom: '1px solid var(--cardborder)' }}
-              >
-                <span
-                  style={{ width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, background: 'rgba(34,197,94,.14)', color: '#22c55e' }}
+          <>
+            {/* Table header */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '40px 90px 80px 150px 1fr 100px',
+                gap: '12px',
+                padding: '12px 16px',
+                borderBottom: '1px solid var(--cardborder)',
+                backgroundColor: 'var(--surface2)',
+                fontSize: 11,
+                fontWeight: 600,
+                color: 'var(--muted)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+              }}
+            >
+              <div></div>
+              <div>Time</div>
+              <div style={{ textAlign: 'right' }}>Amount</div>
+              <div>Method</div>
+              <div>Description</div>
+              <div style={{ textAlign: 'center' }}>Status</div>
+            </div>
+
+            {/* Table rows */}
+            {pageRows.map((n) => {
+              const method = ACCOUNT_TYPES[n.method];
+              const { time: timeStr, date: dateStr } = fmtTime(n.time);
+
+              return (
+                <div
+                  key={n.id}
+                  className="tf-row-hover"
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '40px 90px 80px 150px 1fr 100px',
+                    gap: '12px',
+                    padding: '12px 16px',
+                    borderBottom: '1px solid var(--cardborder)',
+                    alignItems: 'start',
+                    fontSize: 13,
+                  }}
                 >
-                  <BadgeCheck size={18} />
-                </span>
-                <div className="min-w-0" style={{ flex: 1 }}>
-                  <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 700, margin: 0 }}>{n.description}</p>
-                  <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0' }}>
-                    ₹{Number(n.amount || 0).toLocaleString('en-IN')} {n.currency}
-                    {method && <> · <Badge color={method.color}>{method.label}</Badge></>}
-                    {n.transactionId !== '—' && <> · UTR <span className="font-mono">{n.transactionId}</span></>}
-                  </p>
-                  <small style={{ color: 'var(--subtle)', fontSize: 11 }}>{fmtTime(n.time)}</small>
+                  {/* 1. Info icon */}
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                    <button
+                      onClick={() => setInfoTooltip(infoTooltip?.type === 'notif' && infoTooltip?.value === n.notificationId ? null : { type: 'notif', value: n.notificationId })}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: 0,
+                        color: 'var(--muted)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        position: 'relative',
+                      }}
+                      title={`Notification ID: ${n.notificationId}`}
+                    >
+                      <Info size={16} />
+                      {infoTooltip?.type === 'notif' && infoTooltip?.value === n.notificationId && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            bottom: '100%',
+                            left: 0,
+                            background: 'var(--text)',
+                            color: 'var(--bg)',
+                            padding: '4px 8px',
+                            borderRadius: 4,
+                            whiteSpace: 'nowrap',
+                            fontSize: 11,
+                            marginBottom: 4,
+                            zIndex: 10,
+                          }}
+                        >
+                          {n.notificationId}
+                        </div>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* 2. Time (time + date) */}
+                  <div style={{ color: 'var(--text)', lineHeight: 1.4 }}>
+                    <div style={{ fontWeight: 600 }}>{timeStr}</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>{dateStr}</div>
+                  </div>
+
+                  {/* 3. Amount */}
+                  <div style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text)' }}>
+                    ₹{Number(n.amount || 0).toLocaleString('en-IN')}
+                  </div>
+
+                  {/* 4. Method (badge + linked account name) */}
+                  <div>
+                    <div style={{ marginBottom: 4 }}>
+                      {method ? (
+                        <div style={{ display: 'inline-block' }}>
+                          <BankBadge type={n.method} label={method.label} size={28} />
+                        </div>
+                      ) : (
+                        <Badge>{n.method}</Badge>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                      {n.source}
+                    </div>
+                  </div>
+
+                  {/* 5. Description (full original text + capture type/source) */}
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        color: 'var(--text)',
+                        wordBreak: 'break-word',
+                        whiteSpace: 'pre-wrap',
+                        marginBottom: 4,
+                        maxHeight: '4em',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {n.originalText || '—'}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--subtle)' }}>
+                      {n.captureType} · {n.source}
+                    </div>
+                  </div>
+
+                  {/* 6. Status (Linked/Process badge + info) */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                    <Badge
+                      color={n.isLinked ? 'success' : 'warning'}
+                      style={{ fontSize: 11 }}
+                    >
+                      {n.isLinked ? 'Linked' : 'Process'}
+                    </Badge>
+                    {n.isLinked && (
+                      <button
+                        onClick={() => setInfoTooltip(infoTooltip?.type === 'status' && infoTooltip?.value === n.realId ? null : { type: 'status', value: n.realId })}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          padding: 0,
+                          color: 'var(--muted)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          position: 'relative',
+                          fontSize: 12,
+                        }}
+                        title={`Real ID: ${n.realId}`}
+                      >
+                        <Info size={12} />
+                        {infoTooltip?.type === 'status' && infoTooltip?.value === n.realId && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              bottom: '100%',
+                              right: 0,
+                              background: 'var(--text)',
+                              color: 'var(--bg)',
+                              padding: '4px 8px',
+                              borderRadius: 4,
+                              whiteSpace: 'nowrap',
+                              fontSize: 10,
+                              marginBottom: 4,
+                              zIndex: 10,
+                            }}
+                          >
+                            {n.realId}
+                          </div>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <span className="font-mono" style={{ color: 'var(--subtle)', fontSize: 10, flexShrink: 0 }}>{n.notificationId}</span>
-              </div>
-            );
-          })
+              );
+            })}
+          </>
         )}
         <div style={{ borderTop: '1px solid var(--cardborder)' }}>
           <Pagination page={page} perPage={PER_PAGE} total={filtered.length} onPage={setPage} />
