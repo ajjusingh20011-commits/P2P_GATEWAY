@@ -21,12 +21,24 @@ function apiToRow(txn, deviceMap) {
     captureType = typeMap[rawEvent.type] || 'Unknown';
   }
 
-  // Determine source: device name for APK, "web" for scraper
-  let source = 'web';
+  // Determine device/source display name (for description subtitle)
+  let sourceDeviceName = 'web';
   if (rawEvent && rawEvent.deviceId && deviceMap) {
     const device = deviceMap[rawEvent.deviceId];
-    source = device?.deviceName || rawEvent.deviceId;
+    sourceDeviceName = device?.deviceName || rawEvent.deviceId;
   }
+
+  // Linked account name (from Transaction.payerName)
+  let linkedAccount = txn.payerName || 'Unknown';
+
+  // Masked UPI for method column display
+  function maskUpi(upi = '') {
+    const [name, domain] = upi.split('@');
+    if (!domain) return upi;
+    const head = name.slice(0, 2);
+    return `${head}${'*'.repeat(Math.max(2, name.length - 2))}@${domain}`;
+  }
+  let maskedUpi = txn.payerUpiId ? maskUpi(txn.payerUpiId) : '—';
 
   // Full original captured text: RawEvent.body for APK, reconstructed for scraper
   let originalText = '';
@@ -46,7 +58,9 @@ function apiToRow(txn, deviceMap) {
     method: txn.platform,
     methodBadgeColor: ACCOUNT_TYPES[txn.platform]?.color || 'default',
     captureType,
-    source,
+    linkedAccount,
+    maskedUpi,
+    sourceDeviceName,
     originalText,
     transactionId: txn.utr || '—',
     // Linked if matched=true (matched to an order), Process if false
@@ -93,7 +107,7 @@ const METHOD_OPTIONS = [
 ];
 
 export default function Notifications() {
-  const [filters, setFilters] = useState({ notificationId: '', amount: '', method: 'all' });
+  const [filters, setFilters] = useState({ transactionId: '', amount: '', method: 'all', date: '', bankDetails: '' });
   const [page, setPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
   const [infoTooltip, setInfoTooltip] = useState(null); // { type: 'notif' | 'status', value: string }
@@ -109,11 +123,11 @@ export default function Notifications() {
     { fallback: [] }
   );
 
-  // Build deviceMap: deviceId → Device object for quick lookup
+  // Build deviceMap: deviceId (Android ID) → Device object for quick lookup
   const deviceMap = useMemo(() => {
     const map = {};
     devices.forEach((d) => {
-      map[d.id] = d;
+      map[d.deviceId] = d;
     });
     return map;
   }, [devices]);
@@ -131,9 +145,10 @@ export default function Notifications() {
   // Filter rows
   const filtered = useMemo(() => {
     return rows.filter((n) => {
-      if (filters.notificationId && !String(n.notificationId).toLowerCase().includes(filters.notificationId.toLowerCase())) return false;
+      if (filters.transactionId && !String(n.notificationId).toLowerCase().includes(filters.transactionId.toLowerCase())) return false;
       if (filters.amount && !String(n.amount).includes(filters.amount.trim())) return false;
       if (filters.method !== 'all' && n.method !== filters.method) return false;
+      // date and bankDetails filters are placeholders for now
       return true;
     });
   }, [rows, filters]);
@@ -184,10 +199,12 @@ export default function Notifications() {
       />
 
       <Card className="mb-4 p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <SearchInput value={filters.notificationId} onChange={set('notificationId')} placeholder="Search by Notification ID" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <SearchInput value={filters.date} onChange={set('date')} placeholder="Date" />
           <SearchInput value={filters.amount} onChange={set('amount')} placeholder="Amount" />
+          <SearchInput value={filters.bankDetails} onChange={set('bankDetails')} placeholder="My bank details" />
           <Select value={filters.method} onChange={set('method')} options={METHOD_OPTIONS} />
+          <SearchInput value={filters.transactionId} onChange={set('transactionId')} placeholder="Transaction ID" />
         </div>
       </Card>
 
@@ -228,7 +245,7 @@ export default function Notifications() {
                 letterSpacing: '0.5px',
               }}
             >
-              <div></div>
+              <div style={{ textAlign: 'center' }}>T.ID</div>
               <div>Time</div>
               <div style={{ textAlign: 'right' }}>Amount</div>
               <div>Method</div>
@@ -306,7 +323,7 @@ export default function Notifications() {
                     ₹{Number(n.amount || 0).toLocaleString('en-IN')}
                   </div>
 
-                  {/* 4. Method (badge + linked account name) */}
+                  {/* 4. Method (badge + linked account name · masked UPI) */}
                   <div>
                     <div style={{ marginBottom: 4 }}>
                       {method ? (
@@ -318,11 +335,11 @@ export default function Notifications() {
                       )}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                      {n.source}
+                      {n.linkedAccount} · {n.maskedUpi}
                     </div>
                   </div>
 
-                  {/* 5. Description (full original text + capture type/source) */}
+                  {/* 5. Description (full original text + capture type/device name) */}
                   <div style={{ minWidth: 0 }}>
                     <div
                       style={{
@@ -338,18 +355,25 @@ export default function Notifications() {
                       {n.originalText || '—'}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--subtle)' }}>
-                      {n.captureType} · {n.source}
+                      {n.captureType} · {n.sourceDeviceName}
                     </div>
                   </div>
 
                   {/* 6. Status (Linked/Process badge + info) */}
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                    <Badge
-                      color={n.isLinked ? 'success' : 'warning'}
-                      style={{ fontSize: 11 }}
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: '4px 12px',
+                        borderRadius: 4,
+                        backgroundColor: n.isLinked ? '#10b981' : '#f59e0b',
+                        color: '#fff',
+                        textAlign: 'center',
+                      }}
                     >
                       {n.isLinked ? 'Linked' : 'Process'}
-                    </Badge>
+                    </div>
                     {n.isLinked && (
                       <button
                         onClick={() => setInfoTooltip(infoTooltip?.type === 'status' && infoTooltip?.value === n.realId ? null : { type: 'status', value: n.realId })}

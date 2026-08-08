@@ -145,5 +145,5 @@ export async function deleteDevice(deviceId) {
 // Smartphones page's online dot, computed fresh server-side each call.
 export async function getDeviceLiveness(deviceId) {
   const devices = await getDevices();
-  return devices.find((d) => d.id === deviceId) || null;
+  return devices.find((d) => d.deviceId === deviceId) || null;
 }

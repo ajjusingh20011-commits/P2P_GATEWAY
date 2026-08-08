@@ -171,6 +171,7 @@ router.get(
         success: true,
         devices: devices.map((d) => ({
           id: d._id.toString(),
+          deviceId: d.deviceId,
           deviceName: d.deviceName || d.deviceModel || '',
           deviceModel: d.deviceName ? d.deviceModel || '' : '',
           status: d.status,
