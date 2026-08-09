@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, Modal, Field, Input, InlineLoader } from '../components/ui';
 import AdminIdPopover from '../components/AdminIdPopover';
 import ConfirmModal from '../components/ConfirmModal';
-import { IconPlus, IconPhone } from '../components/icons';
+import { IconPlus } from '../components/icons';
 import { inr, usdt, pct } from '../utils/mock';
 import { useApi } from '../hooks/useApi';
 import { adminApi } from '../services/api';
@@ -74,21 +75,6 @@ async function fetchAllTraders() {
     rows.push(...(res.traders || []));
   }
   return rows;
-}
-
-// A shared, real recent-orders window (like Dashboard/Attention use) — feeds
-// both the per-row "active orders" count and each trader's detail-modal
-// transaction history, replacing the old always-empty mock `orders` import.
-async function fetchRecentOrders(maxPages = 5) {
-  const first = await adminApi.listOrders({ page: 1, limit: 100 });
-  const all = [...(first.orders || [])];
-  const total = first.pagination?.total ?? all.length;
-  const pages = Math.min(maxPages, Math.ceil(total / 100));
-  for (let p = 2; p <= pages; p++) {
-    const res = await adminApi.listOrders({ page: p, limit: 100 });
-    all.push(...(res.orders || []));
-  }
-  return all;
 }
 
 const PER_PAGE = 12;
@@ -194,100 +180,6 @@ function RowMenu({ trader, onView, onEdit, onBalance, onCommission, onSuspendReq
         document.body
       )}
     </div>
-  );
-}
-
-// Real detail modal: wallet/commission/pay-in capacity from the trader row
-// itself, real linked smartphones (cross-referenced from adminApi.
-// listSmartphones() by trader_id) and real recent transactions (from the
-// shared recent-orders window, filtered by trader). No Bank Accounts
-// section (no admin endpoint lists a trader's payment accounts), no
-// Earnings Breakdown (was 100% fake), no Risk level (no such concept in
-// the backend at all).
-function TraderModal({ trader, smartphones, orders, ordersLoading, onClose, onAddBalance, onSuspendRequest }) {
-  if (!trader) return null;
-  const devices = smartphones.filter((s) => s.trader_id === trader.id || s.trader?.id === trader.id);
-  const history = orders.filter((o) => o.trader?.id === trader.id).slice(0, 6);
-  const activeOrders = orders.filter((o) => o.trader?.id === trader.id && ['claimed_paid', 'under_review'].includes(o.status)).length;
-
-  return (
-    <Modal
-      open={!!trader}
-      onClose={onClose}
-      size="xl"
-      title={trader.name}
-      subtitle={`Trader #${trader.id} · ${trader.email}`}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Close</Button>
-          <Button variant="ghost" onClick={() => onAddBalance(trader)}>Add balance</Button>
-          {trader.status === 'active'
-            ? <Button variant="danger" onClick={() => onSuspendRequest(trader, true)}>Suspend trader</Button>
-            : <Button variant="success" onClick={() => onSuspendRequest(trader, false)}>Reactivate trader</Button>}
-        </>
-      }
-    >
-      <div className="space-y-6">
-        <section>
-          <h3 className="mb-3 text-sm font-semibold text-[var(--text)]">Overview</h3>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Field label="Status"><Badge color={trader.status === 'active' ? 'green' : 'red'}>{trader.status}</Badge></Field>
-            <Field label="Presence"><Badge color={trader.online ? 'green' : 'gray'}>{trader.online ? 'Online' : 'Offline'}</Badge></Field>
-            <Field label="Wallet balance">{usdt(trader.balanceUsdt)}</Field>
-            <Field label="Trader margin">{pct(trader.traderMargin)}</Field>
-            <Field label="Payout commission">{pct(trader.payoutCommission)}</Field>
-            <Field label="Deposit types"><DepositTypeBadges types={trader.depositTypes} /></Field>
-            <Field label="Pay-in capacity">{inr(trader.todayVolumeInr)} / {inr(trader.dailyLimit)}</Field>
-            <Field label="Active orders">{ordersLoading ? '…' : activeOrders}</Field>
-          </div>
-        </section>
-
-        <section>
-          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
-            <IconPhone className="h-4 w-4 text-[var(--muted)]" /> Linked Smartphones ({devices.length})
-          </h3>
-          <div className="space-y-2">
-            {devices.length === 0 && <p className="text-sm text-[var(--muted)]">No devices linked.</p>}
-            {devices.map((p) => (
-              <div key={p.id} className="flex items-center justify-between rounded-lg border border-[var(--cardborder)] bg-[var(--hover)] px-3 py-2.5">
-                <div className="flex items-center gap-2">
-                  <span className={`h-2 w-2 rounded-full ${p.is_online ? 'bg-emerald-500' : 'bg-[var(--muted)]'}`} />
-                  <span className="text-sm text-[var(--text)]">{p.device_id || `Device #${p.id}`}</span>
-                  {p.connection_type && <span className="text-xs text-[var(--muted)]">· {p.connection_type}</span>}
-                </div>
-                <Badge color={p.is_online ? 'green' : 'gray'}>{p.is_online ? 'online' : 'offline'}</Badge>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section>
-          <h3 className="mb-3 text-sm font-semibold text-[var(--text)]">Recent Transactions</h3>
-          <div className="overflow-hidden rounded-lg border border-[var(--cardborder)]">
-            <table className="w-full text-sm">
-              <thead className="bg-[var(--hover)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
-                <tr><th className="px-3 py-2">Order</th><th className="px-3 py-2">Merchant</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Status</th></tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--cardborder)]">
-                {ordersLoading && <tr><td colSpan={4} className="px-3 py-4 text-center text-[var(--muted)]">Loading…</td></tr>}
-                {!ordersLoading && history.length === 0 && (
-                  <tr><td colSpan={4} className="px-3 py-4 text-center text-[var(--muted)]">No recent transactions in the fetched window</td></tr>
-                )}
-                {history.map((o) => (
-                  <tr key={o.id} className="text-[var(--text)]">
-                    <td className="px-3 py-2 font-mono text-xs text-[var(--muted)]">#{o.id}</td>
-                    <td className="px-3 py-2">{o.merchant?.business_name || '—'}</td>
-                    <td className="px-3 py-2">{inr(o.amount_inr)}</td>
-                    <td className="px-3 py-2 text-[var(--muted)]">{o.status}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {!ordersLoading && <p className="mt-1.5 text-xs text-[var(--muted)]">From the {orders.length.toLocaleString()} most recently fetched platform-wide orders, not this trader's full history.</p>}
-        </section>
-      </div>
-    </Modal>
   );
 }
 
@@ -467,7 +359,6 @@ export default function Traders() {
   const [list, setList] = useState([]);
   const [filters, setFilters] = useState({ status: 'all', online: 'all', q: '' });
   const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [draft, setDraft] = useState({ full_name: '', email: '', password: '', commission_rate: '4.00', payout_commission: '2.00', initial_balance_usdt: '0', daily_limit: '500000', telegram_chat_id: '', deposit_types: ['FTD', 'STD'] });
   const [created, setCreated] = useState(null);
@@ -477,10 +368,7 @@ export default function Traders() {
   const [confirming, setConfirming] = useState(null); // { trader, next }
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-
-  const [smartphones, setSmartphones] = useState([]);
-  const [orders, setOrders] = useState([]);
-  const [ordersLoading, setOrdersLoading] = useState(true);
+  const navigate = useNavigate();
 
   const load = async () => {
     setLoading(true);
@@ -494,14 +382,6 @@ export default function Traders() {
     }
   };
   useEffect(() => { load(); }, []);
-
-  // Real cross-reference data for the detail modal — fetched once, reused
-  // across every trader (same "shared window" pattern as Dashboard).
-  useEffect(() => {
-    adminApi.listSmartphones().then((res) => setSmartphones(res.smartphones || [])).catch(() => {});
-    setOrdersLoading(true);
-    fetchRecentOrders().then(setOrders).catch(() => setOrders([])).finally(() => setOrdersLoading(false));
-  }, []);
 
   const set = (k) => (v) => { setFilters((f) => ({ ...f, [k]: v })); setPage(1); };
 
@@ -521,7 +401,6 @@ export default function Traders() {
       toast(err.response?.data?.message || 'Failed to update trader status', 'error');
     } finally {
       setConfirming(null);
-      setSelected(null);
     }
   };
 
@@ -548,7 +427,6 @@ export default function Traders() {
   }, [list, filters]);
 
   const pageRows = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
-  const selectedLive = selected ? list.find((t) => t.id === selected.id) : null;
 
   const resetDraft = () => setDraft({ full_name: '', email: '', password: '', commission_rate: '4.00', payout_commission: '2.00', initial_balance_usdt: '0', daily_limit: '500000', telegram_chat_id: '', deposit_types: ['FTD', 'STD'] });
 
@@ -614,7 +492,7 @@ export default function Traders() {
             </thead>
             <tbody className="divide-y divide-[var(--cardborder)]">
               {pageRows.map((t) => (
-                <tr key={t.id} className="cursor-pointer text-[var(--text)] hover:bg-[var(--hover)]" onClick={() => setSelected(t)}>
+                <tr key={t.id} className="cursor-pointer text-[var(--text)] hover:bg-[var(--hover)]" onClick={() => navigate(`/traders/${t.id}`)}>
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <AdminIdPopover rows={[{ label: 'Trader ID', value: t.id }, { label: 'Email', value: t.email }]} />
                   </td>
@@ -641,7 +519,7 @@ export default function Traders() {
                     </button>
                   </td>
                   <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                    <RowMenu trader={t} onView={setSelected} onEdit={setEditFor} onBalance={setBalanceFor} onCommission={setCommissionFor} onSuspendRequest={requestSuspend} />
+                    <RowMenu trader={t} onView={(tr) => navigate(`/traders/${tr.id}`)} onEdit={setEditFor} onBalance={setBalanceFor} onCommission={setCommissionFor} onSuspendRequest={requestSuspend} />
                   </td>
                 </tr>
               ))}
@@ -656,15 +534,6 @@ export default function Traders() {
         </div>
       </Card>
 
-      <TraderModal
-        trader={selectedLive}
-        smartphones={smartphones}
-        orders={orders}
-        ordersLoading={ordersLoading}
-        onClose={() => setSelected(null)}
-        onAddBalance={(t) => { setSelected(null); setBalanceFor(t); }}
-        onSuspendRequest={requestSuspend}
-      />
       <BalanceModal trader={balanceFor} onClose={() => setBalanceFor(null)} onSaved={load} />
       <EditTraderModal trader={editFor} onClose={() => setEditFor(null)} onSaved={load} />
       <EditCommissionModal trader={commissionFor} onClose={() => setCommissionFor(null)} onSaved={load} />

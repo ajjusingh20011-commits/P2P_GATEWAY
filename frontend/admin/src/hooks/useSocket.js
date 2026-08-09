@@ -64,6 +64,13 @@ export function useSocket() {
       emitUpdate('disputed', p);
     });
 
+    // Real order-lifecycle events the Live Tracker (Phase 7) patches rows
+    // from — re-broadcast only (no toast; that page renders its own
+    // subtle in-row highlight instead of a toast per update).
+    ['order:claimed_paid', 'order:updated', 'order:rejected', 'order:assigned', 'order:stale_review', 'order:flagged', 'order:success', 'order:completed'].forEach((event) => {
+      socket.on(event, (p) => emitUpdate(event.split(':')[1], p));
+    });
+
     socket.on('trader:online', (p) => {
       const who = p?.name || p?.trader_id || p?.id || '';
       if (who) toast(`Trader ${who} online`, 'info');

@@ -21,6 +21,10 @@ export const pct = (n) => `${Number(n).toFixed(1)}%`;
 export const compact = (n) =>
   Number(n).toLocaleString('en-IN', { notation: 'compact', maximumFractionDigits: 1 });
 
+// Lakh/Crore compact INR — "₹7.35L", "₹1.2Cr" (Trader Detail's top summary).
+export const compactInr = (n) =>
+  '₹' + Number(n || 0).toLocaleString('en-IN', { notation: 'compact', maximumFractionDigits: 2 });
+
 export const maskUpi = (upi = '') => {
   const [name, domain] = upi.split('@');
   if (!domain) return upi;

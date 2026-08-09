@@ -18,6 +18,8 @@ import {
   IconGauge,
   IconAlertOctagon,
   IconUserShield,
+  IconMatching,
+  IconLiveTracker,
 } from './icons';
 
 // One continuous flat list — no category headings (OVERVIEW/OPERATIONS/...),
@@ -31,6 +33,8 @@ const NAV = [
   { to: '/orders', label: 'Pay-in', icon: IconOrders, badge: 'orders' },
   { to: '/payouts', label: 'Payout', icon: IconPayouts, badge: 'payouts' },
   { to: '/disputes', label: 'Disputes', icon: IconDisputes, badge: 'disputes' },
+  { to: '/matching', label: 'Matching Engine', icon: IconMatching },
+  { to: '/live-tracker', label: 'Live Tracker', icon: IconLiveTracker },
   { to: '/routing', label: 'Routing', icon: IconRoute, preview: true },
   { to: '/traders', label: 'Traders', icon: IconTraders },
   { to: '/capacity', label: 'Capacity', icon: IconGauge, preview: true },

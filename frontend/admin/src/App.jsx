@@ -6,11 +6,15 @@ import Admin from './pages/Admin.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Attention from './pages/Attention.jsx';
 import Traders from './pages/Traders.jsx';
+import TraderDetail from './pages/TraderDetail.jsx';
 import Merchants from './pages/Merchants.jsx';
+import MerchantDetail from './pages/MerchantDetail.jsx';
 import Orders from './pages/Orders.jsx';
 import Payments from './pages/Payments.jsx';
 import Payouts from './pages/Payouts.jsx';
 import Disputes from './pages/Disputes.jsx';
+import MatchingEngine from './pages/MatchingEngine.jsx';
+import LiveTracker from './pages/LiveTracker.jsx';
 import Smartphones from './pages/Smartphones.jsx';
 import Settlement from './pages/Settlement.jsx';
 import Settings from './pages/Settings.jsx';
@@ -37,11 +41,15 @@ export default function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/attention" element={<Attention />} />
             <Route path="/traders" element={<Traders />} />
+            <Route path="/traders/:id" element={<TraderDetail />} />
             <Route path="/merchants" element={<Merchants />} />
+            <Route path="/merchants/:id" element={<MerchantDetail />} />
             <Route path="/orders" element={<Orders />} />
             <Route path="/payments" element={<Payments />} />
             <Route path="/payouts" element={<Payouts />} />
             <Route path="/disputes" element={<Disputes />} />
+            <Route path="/matching" element={<MatchingEngine />} />
+            <Route path="/live-tracker" element={<LiveTracker />} />
             <Route path="/smartphones" element={<Smartphones />} />
             <Route path="/settlement" element={<Settlement />} />
             <Route path="/routing" element={<Routing />} />

@@ -19,6 +19,10 @@ module.exports = (sequelize) => {
       Order.belongsTo(db.User, { foreignKey: 'reviewed_by', as: 'reviewer' });
       Order.hasMany(db.Transaction, { foreignKey: 'order_id', as: 'transactions' });
       Order.hasMany(db.Dispute, { foreignKey: 'order_id', as: 'disputes' });
+      // Reverse side of UtrDiscrepancyLog.belongsTo(Order) — was missing, so
+      // nothing could eager-load an order's discrepancy trail. Added for the
+      // admin Matching Engine view (Phase 4); doesn't change any write path.
+      Order.hasMany(db.UtrDiscrepancyLog, { foreignKey: 'order_id', as: 'discrepancyLogs' });
     }
   }
 

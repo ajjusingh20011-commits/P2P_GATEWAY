@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, Modal, Field, Input, InlineLoader } from '../components/ui';
 import AdminIdPopover from '../components/AdminIdPopover';
 import ConfirmModal from '../components/ConfirmModal';
-import { IconPlus, IconDots, IconKey, IconEye } from '../components/icons';
-import { inr, usdt, pct, maskKey } from '../utils/mock';
+import { IconPlus, IconDots } from '../components/icons';
+import { usdt, pct, maskKey } from '../utils/mock';
 import { adminApi } from '../services/api';
 import { toast } from '../components/toast';
 
@@ -47,18 +48,6 @@ async function fetchAllMerchants() {
   return rows;
 }
 
-async function fetchRecentOrders(maxPages = 5) {
-  const first = await adminApi.listOrders({ page: 1, limit: 100 });
-  const all = [...(first.orders || [])];
-  const total = first.pagination?.total ?? all.length;
-  const pages = Math.min(maxPages, Math.ceil(total / 100));
-  for (let p = 2; p <= pages; p++) {
-    const res = await adminApi.listOrders({ page: p, limit: 100 });
-    all.push(...(res.orders || []));
-  }
-  return all;
-}
-
 const PER_PAGE = 10;
 
 const STATUS_OPTIONS = [
@@ -66,26 +55,6 @@ const STATUS_OPTIONS = [
   { value: 'active', label: 'Active' },
   { value: 'suspended', label: 'Suspended' },
 ];
-
-function Secret({ label, value }) {
-  const [show, setShow] = useState(false);
-  return (
-    <div>
-      <p className="text-xs uppercase tracking-wide text-[var(--muted)]">{label}</p>
-      <div className="mt-1 flex items-center gap-2">
-        <code className="flex-1 truncate rounded bg-[var(--hover)] px-2 py-1.5 font-mono text-xs text-[var(--muted)]">
-          {show ? value : maskKey(value)}
-        </code>
-        <button onClick={() => setShow((v) => !v)} className="rounded p-1.5 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]" aria-label={show ? 'Hide' : 'Show'}>
-          <IconEye className="h-4 w-4" />
-        </button>
-        <button onClick={() => navigator.clipboard?.writeText(value)} className="rounded px-2 py-1 text-xs text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]">
-          Copy
-        </button>
-      </div>
-    </div>
-  );
-}
 
 // "Edit" and "Set commission" were dead menu items (fn: () => {}) with no
 // backend behind them at all — dropped, same rule already applied to
@@ -117,73 +86,6 @@ function RowMenu({ merchant, onView, onSuspendRequest }) {
         </>
       )}
     </div>
-  );
-}
-
-function MerchantModal({ merchant, orders, ordersLoading, onClose, onSuspendRequest }) {
-  if (!merchant) return null;
-  const history = orders.filter((o) => o.merchant?.id === merchant.id).slice(0, 6);
-  return (
-    <Modal
-      open={!!merchant}
-      onClose={onClose}
-      size="xl"
-      title={merchant.businessName}
-      subtitle={`Merchant #${merchant.id} · ${merchant.email}`}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Close</Button>
-          <Button variant="ghost" disabled title="No key-rotation endpoint exists in the backend yet">Regenerate key (Preview)</Button>
-          {merchant.status === 'active'
-            ? <Button variant="danger" onClick={() => onSuspendRequest(merchant, true)}>Deactivate merchant</Button>
-            : <Button variant="success" onClick={() => onSuspendRequest(merchant, false)}>Activate merchant</Button>}
-        </>
-      }
-    >
-      <div className="space-y-6">
-        <section>
-          <h3 className="mb-3 text-sm font-semibold text-[var(--text)]">Business Information</h3>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Field label="Status"><Badge color={merchant.status === 'active' ? 'green' : 'red'}>{merchant.status}</Badge></Field>
-            <Field label="Balance">{usdt(merchant.balanceUsdt)}</Field>
-            <Field label="PayIn fee">{pct(merchant.payinFeePercent)}</Field>
-            <Field label="Payout fee">{pct(merchant.payoutFeePercent)}</Field>
-          </div>
-        </section>
-
-        <section>
-          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-[var(--text)]"><IconKey className="h-4 w-4 text-[var(--muted)]" /> API Credentials</h3>
-          <div className="space-y-3 rounded-lg border border-[var(--cardborder)] bg-[var(--hover)] p-4">
-            <Secret label="API Key" value={merchant.apiKey} />
-            <Secret label="API Secret" value={merchant.apiSecret} />
-            <Field label="Webhook URL" mono>{merchant.webhookUrl || 'Not configured'}</Field>
-          </div>
-        </section>
-
-        <section>
-          <h3 className="mb-3 text-sm font-semibold text-[var(--text)]">Recent Transactions</h3>
-          <div className="overflow-hidden rounded-lg border border-[var(--cardborder)]">
-            <table className="w-full text-sm">
-              <thead className="bg-[var(--hover)] text-left text-xs uppercase tracking-wide text-[var(--muted)]">
-                <tr><th className="px-3 py-2">Order</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Status</th></tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--cardborder)]">
-                {ordersLoading && <tr><td colSpan={3} className="px-3 py-4 text-center text-[var(--muted)]">Loading…</td></tr>}
-                {!ordersLoading && history.length === 0 && <tr><td colSpan={3} className="px-3 py-4 text-center text-[var(--muted)]">No recent transactions in the fetched window</td></tr>}
-                {history.map((o) => (
-                  <tr key={o.id} className="text-[var(--text)]">
-                    <td className="px-3 py-2 font-mono text-xs text-[var(--muted)]">#{o.id}</td>
-                    <td className="px-3 py-2">{inr(o.amount_inr)}</td>
-                    <td className="px-3 py-2 text-[var(--muted)]">{o.status}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {!ordersLoading && <p className="mt-1.5 text-xs text-[var(--muted)]">From the {orders.length.toLocaleString()} most recently fetched platform-wide orders, not this merchant's full history.</p>}
-        </section>
-      </div>
-    </Modal>
   );
 }
 
@@ -235,16 +137,13 @@ export default function Merchants() {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({ status: 'all', q: '' });
   const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [draft, setDraft] = useState({ businessName: '', email: '', password: '', payin_fee_percent: '5.00', payout_fee_percent: '2.00', webhook_url: '', daily_limit_inr: '1000000' });
   const [saving, setSaving] = useState(false);
   const [created, setCreated] = useState(null);
   const [feesFor, setFeesFor] = useState(null);
   const [confirming, setConfirming] = useState(null); // { merchant, deactivate: bool }
-
-  const [orders, setOrders] = useState([]);
-  const [ordersLoading, setOrdersLoading] = useState(true);
+  const navigate = useNavigate();
 
   const load = async () => {
     setLoading(true);
@@ -258,11 +157,6 @@ export default function Merchants() {
     }
   };
   useEffect(() => { load(); }, []);
-
-  useEffect(() => {
-    setOrdersLoading(true);
-    fetchRecentOrders().then(setOrders).catch(() => setOrders([])).finally(() => setOrdersLoading(false));
-  }, []);
 
   const set = (k) => (v) => { setFilters((f) => ({ ...f, [k]: v })); setPage(1); };
 
@@ -288,7 +182,6 @@ export default function Merchants() {
       toast(err.response?.data?.message || 'Failed to update merchant status', 'error');
     } finally {
       setConfirming(null);
-      setSelected(null);
     }
   };
 
@@ -302,7 +195,6 @@ export default function Merchants() {
   }, [list, filters]);
 
   const pageRows = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
-  const selectedLive = selected ? list.find((m) => m.id === selected.id) : null;
 
   const addMerchant = async () => {
     if (!draft.businessName.trim() || !draft.email.trim() || !draft.password.trim()) {
@@ -365,7 +257,7 @@ export default function Merchants() {
             </thead>
             <tbody className="divide-y divide-[var(--cardborder)]">
               {pageRows.map((m) => (
-                <tr key={m.id} className="cursor-pointer text-[var(--text)] hover:bg-[var(--hover)]" onClick={() => setSelected(m)}>
+                <tr key={m.id} className="cursor-pointer text-[var(--text)] hover:bg-[var(--hover)]" onClick={() => navigate(`/merchants/${m.id}`)}>
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <AdminIdPopover rows={[{ label: 'Merchant ID', value: m.id }, { label: 'Email', value: m.email }]} />
                   </td>
@@ -382,7 +274,7 @@ export default function Merchants() {
                   <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-2">
                       <Button size="sm" variant="ghost" onClick={() => setFeesFor(m)}>Edit Fees</Button>
-                      <RowMenu merchant={m} onView={setSelected} onSuspendRequest={requestSuspend} />
+                      <RowMenu merchant={m} onView={(mm) => navigate(`/merchants/${mm.id}`)} onSuspendRequest={requestSuspend} />
                     </div>
                   </td>
                 </tr>
@@ -398,7 +290,6 @@ export default function Merchants() {
         </div>
       </Card>
 
-      <MerchantModal merchant={selectedLive} orders={orders} ordersLoading={ordersLoading} onClose={() => setSelected(null)} onSuspendRequest={requestSuspend} />
       <EditFeesModal merchant={feesFor} onClose={() => setFeesFor(null)} onSaved={load} />
 
       <ConfirmModal

@@ -18,6 +18,10 @@ router.get('/dashboard', adminController.dashboard);
 router.get('/traders', adminController.listTraders);
 router.post('/traders', adminController.createTrader);
 router.post('/traders/create', adminController.createTraderFull);
+// Trader Detail (Phase 5) — registered before the generic PUT /:id.
+router.get('/traders/:id', adminController.getTraderDetail);
+router.get('/traders/:id/balance-logs', adminController.getTraderBalanceLogs);
+router.get('/traders/:id/activity', adminController.getTraderActivity);
 router.put('/traders/:id', adminController.updateTrader);
 router.put('/traders/:id/balance', adminController.updateTraderBalance);
 router.put('/traders/:id/commission', adminController.updateTraderCommission);
@@ -28,6 +32,9 @@ router.delete('/traders/:id', adminController.deleteTrader);
 router.get('/merchants', adminController.listMerchants);
 router.post('/merchants', adminController.createMerchant);
 router.post('/merchants/create', adminController.createMerchantFull);
+// Merchant Detail (Phase 6) — registered before the generic PUT /:id.
+router.get('/merchants/:id', adminController.getMerchantDetail);
+router.get('/merchants/:id/activity', adminController.getMerchantActivity);
 router.put('/merchants/:id', adminController.updateMerchant);
 router.put('/merchants/:id/fees', adminController.updateMerchantFees);
 
@@ -44,6 +51,13 @@ router.put('/settings', adminController.updateSettings);
 
 router.get('/disputes', adminController.listDisputes);
 router.put('/disputes/:id/resolve', adminController.resolveDispute);
+
+// Matching Engine — read-only view of how orders were settled (Phase 4).
+router.get('/matching', adminController.listMatching);
+router.get('/matching/:id', adminController.getMatchingDetail);
+
+// Live Tracker — real-time order lifecycle stream (Phase 7).
+router.get('/live-tracker', adminController.listLiveTracker);
 
 router.get('/settlements', adminController.listSettlements);
 router.post('/settlements/trigger', adminController.triggerSettlement);

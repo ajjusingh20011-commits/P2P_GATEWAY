@@ -277,9 +277,11 @@ async function problem(traderId, id, { reason } = {}) {
 
 /* --------------------------------- admin ---------------------------------- */
 
-async function listForAdmin({ status } = {}) {
+async function listForAdmin({ status, merchant_id } = {}) {
   const where = {};
   if (status) where.status = status;
+  // Merchant-scoped view (Merchant Detail's Payouts tab — Phase 6).
+  if (merchant_id) where.merchant_id = merchant_id;
   return db.PayoutRequest.findAll({
     where,
     include: [

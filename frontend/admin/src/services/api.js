@@ -5,23 +5,6 @@ export const PANEL_ROLE = 'admin';
 
 const BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api';
 
-// ---------------------------------------------------------------------------
-// OFFLINE / MOCK helpers
-// The panel can run before the backend exists. AuthContext falls back to a
-// mock login on network errors; these constants back that flow.
-// ---------------------------------------------------------------------------
-export const MOCK_USER = {
-  id: 1,
-  email: 'admin@p2p.com',
-  name: 'Platform Admin',
-  role: 'admin',
-};
-
-export const MOCK_TOKENS = {
-  accessToken: 'mock.access.token',
-  refreshToken: 'mock.refresh.token',
-};
-
 const api = axios.create({
   baseURL: BASE,
   headers: { 'Content-Type': 'application/json' },
@@ -60,6 +43,10 @@ export const authApi = {
     api.post('/auth/login', { email, password, role: PANEL_ROLE }).then(unwrap),
   logout: (refreshToken) => api.post('/auth/logout', { refreshToken }).then(unwrap),
   me: () => api.get('/auth/me').then(unwrap),
+  // Two-factor authentication — same backend routes trader/merchant use
+  // (backend/src/routes/authRoutes.js is role-agnostic).
+  twoFAValidate: (temp_token, totp_code) =>
+    api.post('/auth/2fa/validate', { temp_token, totp_code }).then(unwrap),
 };
 
 export const adminApi = {
@@ -95,6 +82,24 @@ export const adminApi = {
   listDisputes: (params) => api.get('/admin/disputes', { params }).then(unwrap),
   resolveDispute: (id, payload) =>
     api.put(`/admin/disputes/${id}/resolve`, payload).then(unwrap),
+
+  // Matching Engine — read-only (Phase 4).
+  listMatching: (params) => api.get('/admin/matching', { params }).then(unwrap),
+  getMatchingDetail: (id) => api.get(`/admin/matching/${id}`).then(unwrap),
+
+  // Trader Detail — read-only (Phase 5). Mutations reuse updateTraderBalance
+  // / updateTraderCommission / suspendTrader already defined above.
+  getTraderDetail: (id) => api.get(`/admin/traders/${id}`).then(unwrap),
+  getTraderBalanceLogs: (id, params) => api.get(`/admin/traders/${id}/balance-logs`, { params }).then(unwrap),
+  getTraderActivity: (id, params) => api.get(`/admin/traders/${id}/activity`, { params }).then(unwrap),
+
+  // Merchant Detail — read-only (Phase 6). Mutations reuse updateMerchant /
+  // updateMerchantFees already defined above.
+  getMerchantDetail: (id) => api.get(`/admin/merchants/${id}`).then(unwrap),
+  getMerchantActivity: (id, params) => api.get(`/admin/merchants/${id}/activity`, { params }).then(unwrap),
+
+  // Live Tracker — real-time order lifecycle stream (Phase 7).
+  listLiveTracker: (params) => api.get('/admin/live-tracker', { params }).then(unwrap),
 
   // Payout requests ("Buy USDT") — admin settlement/moderation.
   listPayoutRequests: (params) => api.get('/admin/payout-requests', { params }).then(unwrap),

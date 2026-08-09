@@ -116,3 +116,9 @@ export const IconAlertOctagon = (p) => (
 export const IconUserShield = (p) => (
   <svg {...base} {...p}><path d="M9 20a6 6 0 0 1 6-6" /><circle cx="8" cy="8" r="4" /><path d="M17 12l4 1.5v3c0 2.5-1.7 4-4 5-2.3-1-4-2.5-4-5v-3z" /></svg>
 );
+export const IconMatching = (p) => (
+  <svg {...base} {...p}><path d="M8 3L4 7l4 4" /><path d="M4 7h10a4 4 0 0 1 4 4v1" /><path d="M16 21l4-4-4-4" /><path d="M20 17H10a4 4 0 0 1-4-4v-1" /></svg>
+);
+export const IconLiveTracker = (p) => (
+  <svg {...base} {...p}><circle cx="12" cy="12" r="3" /><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" /></svg>
+);

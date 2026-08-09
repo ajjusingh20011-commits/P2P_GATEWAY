@@ -143,7 +143,7 @@ const traderProblem = asyncHandler(async (req, res) => {
 
 const adminList = asyncHandler(async (req, res) => {
   const [rows, counts] = await Promise.all([
-    payoutService.listForAdmin({ status: req.query.status }),
+    payoutService.listForAdmin({ status: req.query.status, merchant_id: req.query.merchant_id }),
     payoutService.adminCounts(),
   ]);
   return ok(res, { payout_requests: rows, counts });
