@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { authApi, MOCK_USER, MOCK_TOKENS } from '../services/api';
+import { authApi } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -7,13 +7,6 @@ function persistSession(user, tokens) {
   localStorage.setItem('accessToken', tokens.accessToken);
   localStorage.setItem('refreshToken', tokens.refreshToken);
   localStorage.setItem('user', JSON.stringify(user));
-}
-
-// Offline fallback used only when the backend is unreachable (network error).
-function mockSession(email) {
-  const u = { ...MOCK_USER, email: email?.trim() || MOCK_USER.email };
-  persistSession(u, MOCK_TOKENS);
-  return u;
 }
 
 export function AuthProvider({ children }) {
@@ -34,29 +27,18 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
-  // Authenticate against the backend as a merchant. On a network error (the
-  // backend is unreachable) fall back to the offline mock login; on a response
-  // error (e.g. 401 bad credentials) rethrow so the UI can show the message.
+  // Authenticate against the backend as a merchant.
   const login = async (email, password) => {
-    try {
-      const res = await authApi.login(email, password);
-      const data = res.data.data;
-      // Account has 2FA enabled — defer session until the code is validated.
-      if (data.requires_2fa) {
-        return { requires2fa: true, tempToken: data.temp_token };
-      }
-      const { user: u, accessToken, refreshToken } = data;
-      persistSession(u, { accessToken, refreshToken });
-      setUser(u);
-      return u;
-    } catch (err) {
-      if (!err.response) {
-        const u = mockSession(email);
-        setUser(u);
-        return u;
-      }
-      throw err;
+    const res = await authApi.login(email, password);
+    const data = res.data.data;
+    // Account has 2FA enabled — defer session until the code is validated.
+    if (data.requires_2fa) {
+      return { requires2fa: true, tempToken: data.temp_token };
     }
+    const { user: u, accessToken, refreshToken } = data;
+    persistSession(u, { accessToken, refreshToken });
+    setUser(u);
+    return u;
   };
 
   // Step 2 of a 2FA login: exchange the temp token + TOTP code for a session.

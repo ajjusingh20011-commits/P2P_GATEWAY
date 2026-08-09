@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { authApi, MOCK_USER, MOCK_TOKENS } from '../services/api';
+import { authApi } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -14,7 +14,9 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   // Rehydrate the session on load. If a token exists, confirm it via /auth/me;
-  // on failure fall back to any stored user (offline / mock mode).
+  // on failure (e.g. a transient network error) fall back to the previously
+  // stored real user rather than forcing a re-login — a genuinely invalid/
+  // expired token still gets caught by the response interceptor's 401 handler.
   useEffect(() => {
     const token = localStorage.getItem('accessToken');
     const stored = localStorage.getItem('user');
@@ -53,27 +55,27 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = async (email, password) => {
-    try {
-      const data = await authApi.login(email, password);
-      persistSession({
-        user: data.user,
-        accessToken: data.accessToken,
-        refreshToken: data.refreshToken,
-      });
-      setUser(data.user);
-      return data.user;
-    } catch (err) {
-      // Network error (backend down) → fall back to a mock login so the panel
-      // remains usable offline. A real response error (e.g. 401) is rethrown so
-      // the login form can display it.
-      if (!err.response) {
-        const u = { ...MOCK_USER };
-        persistSession({ user: u, ...MOCK_TOKENS });
-        setUser(u);
-        return u;
-      }
-      throw err;
+    const data = await authApi.login(email, password);
+    // Step 1 of a 2FA login: server withholds tokens until the TOTP code is
+    // validated. Signal the Login page to render the code-entry step.
+    if (data.requires_2fa) {
+      return { requires2fa: true, tempToken: data.temp_token };
     }
+    persistSession({
+      user: data.user,
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+    });
+    setUser(data.user);
+    return data.user;
+  };
+
+  // Step 2 of a 2FA login: exchange the temp token + TOTP code for a session.
+  const validate2fa = async (tempToken, code) => {
+    const data = await authApi.twoFAValidate(tempToken, code);
+    persistSession({ user: data.user, accessToken: data.accessToken, refreshToken: data.refreshToken });
+    setUser(data.user);
+    return data.user;
   };
 
   const logout = async () => {
@@ -88,7 +90,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, loading, login, validate2fa, logout, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );
