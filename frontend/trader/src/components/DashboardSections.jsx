@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Coins, Smartphone, Clock3, ChevronRight, CheckCircle2, ArrowRight, MoreHorizontal, TrendingUp, ShieldCheck } from 'lucide-react';
 import { traderApi } from '../services/api';
@@ -280,8 +280,7 @@ export function SuccessRateStatCard() {
 
 // ---- Transaction activity (REAL data: confirmed orders = pay-in, completed
 // payout requests = payout) — bucketed client-side, never randomly generated.
-// A trader with more history than the fetch below just shows the most recent
-// slice; nothing is backfilled or estimated to fill empty buckets. -------
+// Nothing is backfilled or estimated to fill empty buckets. --------------
 const TXN_RANGES = [
   { value: '1H', label: '1H' },
   { value: '1D', label: '1D' },
@@ -292,6 +291,15 @@ const TXN_METRICS = [
   { value: 'volume', label: 'Volume' },
   { value: 'count', label: 'Count' },
 ];
+
+// How far back each range reaches — mirrors bucketConfig's buckets × stepMs.
+// Used to decide how many pages of history the chart actually needs.
+const RANGE_MS = {
+  '1H': 6 * 10 * 60000,
+  '1D': 24 * 3600000,
+  '7D': 7 * 86400000,
+  '30D': 30 * 86400000,
+};
 
 function bucketConfig(range) {
   if (range === '1H') return { buckets: 6, stepMs: 10 * 60000, fmt: (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) };
@@ -330,18 +338,70 @@ export function TransactionActivityChart() {
   const [payoutReqs, setPayoutReqs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [hovered, setHovered] = useState(null);
+  // Real-time cursor position (relative to the chart area) so the tooltip
+  // follows the mouse instead of snapping to a fixed spot above the chart —
+  // previously `bottom: 100%` on .tf-chart-tooltip always anchored it to the
+  // TOP of the whole 200px chart area, regardless of where in a (possibly
+  // short) bar the cursor actually was.
+  const chartAreaRef = useRef(null);
+  const [cursor, setCursor] = useState(null); // { x, y, width } relative to chartAreaRef
 
-  const load = () => {
-    Promise.allSettled([
-      traderApi.orders('success', { limit: 500 }),
-      traderApi.payoutRequests('settlement_completed'),
-    ]).then(([oRes, pRes]) => {
-      setOrders(oRes.status === 'fulfilled' ? (oRes.value.data?.data?.orders || []) : []);
-      setPayoutReqs(pRes.status === 'fulfilled' ? (pRes.value.data?.data?.payout_requests || []) : []);
-    }).finally(() => setLoading(false));
-  };
+  // This asked for `limit: 500`, but utils/http.js's pagination() silently
+  // clamps limit to maxLimit=100 — so the chart was quietly built from at most
+  // the 100 most recent settled orders and under-counted every bucket for any
+  // trader busier than that, with no error to notice.
+  //
+  // Raising maxLimit would have been the smaller edit, but it's the wrong bound:
+  // maxLimit guards every list endpoint, and a count-based cap is the wrong
+  // shape regardless of the number picked — this chart doesn't want "the newest
+  // N orders", it wants "orders inside the selected range" and throws the rest
+  // away (see buildActivitySeries). So fetch exactly that, by paging within the
+  // real cap and stopping as soon as we're past the window. Because rows come
+  // back created_at DESC, that early exit usually lands on the first page.
+  const load = useCallback(async () => {
+    const windowMs = RANGE_MS[range] ?? RANGE_MS['30D'];
+    const rangeStart = Date.now() - windowMs;
+    const PAGE = 100;      // utils/http.js pagination() maxLimit
+    const MAX_PAGES = 25;  // hard stop so a pathological history can't spin
 
-  useEffect(() => { load(); }, []);
+    const collected = [];
+    let pagesFetched = 0;
+    try {
+      for (let p = 1; p <= MAX_PAGES; p += 1) {
+        const res = await traderApi.orders('success', { page: p, limit: PAGE });
+        const batch = res.data?.data?.orders || [];
+        const total = res.data?.data?.pagination?.total;
+        collected.push(...batch);
+        pagesFetched = p;
+
+        if (batch.length < PAGE) break;
+        if (total != null && collected.length >= total) break;
+        // Sorted newest-first: once a page ends before the window starts,
+        // every remaining page is older still and contributes nothing.
+        const oldest = batch[batch.length - 1]?.created_at;
+        if (oldest && new Date(oldest).getTime() < rangeStart) break;
+      }
+      setOrders(collected);
+      if (pagesFetched === MAX_PAGES) {
+        // Never silently truncate: say so rather than drawing a short chart.
+        console.warn(`TransactionActivityChart: stopped at ${MAX_PAGES} pages (${collected.length} orders); the ${range} window may be incomplete.`);
+      }
+    } catch {
+      setOrders([]);
+    }
+
+    try {
+      const pRes = await traderApi.payoutRequests('settlement_completed');
+      setPayoutReqs(pRes.data?.data?.payout_requests || []);
+    } catch {
+      setPayoutReqs([]);
+    }
+    setLoading(false);
+  }, [range]);
+
+  // `load` now depends on `range` (a wider window may need more pages), so both
+  // the initial fetch and the live-refresh listeners have to follow it.
+  useEffect(() => { load(); }, [load]);
   useEffect(() => {
     window.addEventListener('order:new', load);
     window.addEventListener('order:update', load);
@@ -349,7 +409,7 @@ export function TransactionActivityChart() {
       window.removeEventListener('order:new', load);
       window.removeEventListener('order:update', load);
     };
-  }, []);
+  }, [load]);
 
   const data = useMemo(() => buildActivitySeries(orders, payoutReqs, range), [orders, payoutReqs, range]);
   const isVolume = metric === 'volume';
@@ -379,21 +439,32 @@ export function TransactionActivityChart() {
           <p style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', padding: '40px 0' }}>No transactions in this range yet.</p>
         ) : (
           <>
-            <div style={{ position: 'relative' }}>
-              {hovered != null && (() => {
+            <div
+              ref={chartAreaRef}
+              style={{ position: 'relative' }}
+              onMouseMove={(e) => {
+                const rect = chartAreaRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                setCursor({ x: e.clientX - rect.left, y: e.clientY - rect.top, width: rect.width });
+              }}
+              onMouseLeave={() => { setHovered(null); setCursor(null); }}
+            >
+              {hovered != null && cursor && (() => {
                 const p = data[hovered];
                 const inVal = isVolume ? p.payInVolume : p.payInCount;
                 const outVal = isVolume ? p.payoutVolume : p.payoutCount;
                 const fmt = (v) => (isVolume ? inr(v) : v.toLocaleString());
-                // Center over the hovered bar group; anchor to an edge at
-                // the first/last group instead of centering, so the fixed-
-                // width tooltip never spills past the chart's own edges.
-                const pct = ((hovered + 0.5) / data.length) * 100;
-                const posStyle = hovered === 0
-                  ? { left: 0 }
-                  : hovered === data.length - 1
-                    ? { right: 0 }
-                    : { left: `${pct}%`, transform: 'translateX(-50%)' };
+                // Follow the actual cursor: horizontal position tracks the
+                // mouse (clamped so the fixed-width tooltip never spills past
+                // the chart's own edges), vertical position sits just above
+                // the cursor instead of a fixed spot at the top of the chart.
+                const HALF_WIDTH = 74;
+                const clampedX = Math.min(Math.max(cursor.x, HALF_WIDTH), Math.max(cursor.width - HALF_WIDTH, HALF_WIDTH));
+                const posStyle = {
+                  left: clampedX,
+                  top: Math.max(cursor.y - 14, 0),
+                  transform: 'translate(-50%, -100%)',
+                };
                 return (
                   <div className="tf-chart-tooltip" style={posStyle}>
                     <p className="tf-chart-tooltip-label">{p.label}</p>
@@ -419,7 +490,6 @@ export function TransactionActivityChart() {
                       className="tf-chart-group"
                       key={i}
                       onMouseEnter={() => setHovered(i)}
-                      onMouseLeave={() => setHovered((h) => (h === i ? null : h))}
                     >
                       <div
                         className="tf-chart-bar"

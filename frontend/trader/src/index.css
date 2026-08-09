@@ -359,10 +359,13 @@
    chart tooltip convention, independent of the panel's own light/dark
    toggle) so bar values stay legible on either theme. */
 .tf-chart-tooltip {
-  position: absolute; bottom: 100%; margin-bottom: 10px; z-index: 5; pointer-events: none;
+  position: absolute; z-index: 5; pointer-events: none;
   min-width: 132px; padding: 10px 12px; border-radius: 10px;
   background: rgba(17,24,39,.96); border: 1px solid rgba(255,255,255,.08);
   box-shadow: 0 10px 28px rgba(0,0,0,.35); backdrop-filter: blur(8px);
+  /* top/left are set inline per mouse position — a short transition keeps
+     the follow smooth instead of snapping between mousemove samples. */
+  transition: left .06s linear, top .06s linear;
 }
 .tf-chart-tooltip-label { margin: 0 0 6px; font-size: 11px; color: rgba(255,255,255,.55); }
 .tf-chart-tooltip-row { display: flex; align-items: center; gap: 7px; padding: 2px 0; font-size: 12px; }
@@ -389,10 +392,28 @@
 .tradeFilterCard { padding: 14px; margin-bottom: 14px; }
 .tradeFilters { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)) minmax(150px, .8fr) auto; gap: 9px; align-items: center; }
 
-.tradeLedger { padding: 0; overflow: hidden; }
+/* overflow-x: auto (not hidden) — a fixed-width 8-column row can genuinely
+   need more than the viewport at 1440px; scrolling the table beats silently
+   clipping columns off the right edge (which is exactly what "hidden" did
+   to the Exchange Rate/Client columns before). */
+.tradeLedger { padding: 0; overflow-x: auto; }
 .tradeLedgerHead, .tradeLedgerRow {
   display: grid;
-  grid-template-columns: 38px minmax(120px, 1.05fr) minmax(105px, .8fr) minmax(90px, .65fr) minmax(95px, .72fr) minmax(95px, .75fr) minmax(110px, .8fr) 88px 88px minmax(150px, 1fr);
+  /* table-layout:fixed equivalent — explicit percentage widths (not fr/auto-
+     expanding) so columns don't grow to swallow whatever's spare, with a
+     px floor per column (via minmax) as the one thing allowed to force the
+     horizontal scroll above instead of crushing a column unreadably thin.
+     8 real columns per the approved order: T.ID | Method/Account | Amount |
+     My rate | Exchange Rate | Created/Closed | Client | Status. */
+  grid-template-columns:
+    minmax(38px, 4%)
+    minmax(200px, 22%)
+    minmax(110px, 11%)
+    minmax(100px, 10%)
+    minmax(100px, 10%)
+    minmax(140px, 14%)
+    minmax(80px, 8%)
+    minmax(215px, 21%);
   gap: 9px;
   align-items: center;
 }
@@ -408,36 +429,70 @@
 .tradeLedgerRow { padding: 12px 13px; border-top: 1px solid var(--line2); min-height: 74px; }
 .tradeLedgerRow:hover { background: var(--hover); }
 .tradeInfo { border: 0; background: transparent; color: var(--subtle); cursor: pointer; padding: 0; }
+
+/* IdReveal — the single info-icon-reveals-an-ID pattern (see components/IdReveal.jsx).
+   Hover opens it (icon bolds), click is the touch fallback. Dark rounded
+   card, always dark regardless of the panel's own theme (same fixed-dark
+   convention as .tf-chart-tooltip) — a label line, then the ID in a
+   slightly-lighter inset row with a copy icon on the right. Panel renders
+   through a portal (position: fixed, top/left set inline from the trigger's
+   real bounding rect) so it escapes the table cards' `overflow: hidden`
+   instead of being clipped on rows near that container's edge. */
+.idReveal { position: relative; display: inline-flex; align-items: center; }
+.idRevealTrigger {
+  background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+  color: var(--muted); display: flex; align-items: center; justify-content: center;
+  transition: color .12s ease;
+}
+.idReveal:hover .idRevealTrigger, .idRevealTrigger:focus-visible { color: var(--text); }
+.idRevealPanel {
+  z-index: 200; min-width: 200px;
+  background: rgba(17,24,39,.97); border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px; padding: 10px 10px 9px; box-shadow: 0 10px 26px rgba(0,0,0,.35);
+  backdrop-filter: blur(8px);
+}
+.idRevealLabel { margin: 0 0 6px 2px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: rgba(255,255,255,.5); }
+.idRevealInset {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: rgba(255,255,255,.08); border-radius: 7px; padding: 7px 9px;
+}
+.idRevealValue { font-size: 12.5px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; word-break: break-all; }
+.idRevealCopy {
+  flex-shrink: 0; background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+  color: rgba(255,255,255,.65); display: flex; align-items: center; justify-content: center; transition: color .12s ease;
+}
+.idRevealCopy:hover { color: #fff; }
 .tradeProvider { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .tradeProvider strong, .tradeProvider small,
 .tradeAmount strong, .tradeAmount span,
 .rateCell strong, .rateCell span,
 .personCell strong, .personCell span,
 .dateCell strong, .dateCell span { display: block; }
-.tradeProvider strong { font-size: 11px; color: var(--text); }
+/* Method/Account's UPI ID is the prominent bold line — real data can run
+   long, so it truncates with an ellipsis rather than wrapping/breaking the
+   row height; the native title= on the element (set in Trades.jsx) surfaces
+   the full value on hover when it's cut off. */
+.tradeProvider strong { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .tradeProvider small, .tradeAmount span, .rateCell span, .personCell span, .dateCell span { font-size: 10px; color: var(--muted); margin-top: 3px; }
+.tradeProvider small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .tradeAmount strong, .rateCell strong, .personCell strong, .dateCell strong { font-size: 12px; color: var(--text); }
 .tradeAmount strong small { display: inline; font-size: 10px; color: var(--muted); font-weight: 500; }
 .resolutionCell { display: flex; align-items: center; gap: 8px; justify-content: flex-start; }
-.autoClose, .manualReview, .canceledState, .manualConfirmed {
+.needsAction, .terminalState {
   display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 650;
+  white-space: nowrap; flex-shrink: 0; /* never wrap mid-word or get squeezed out by the action button */
 }
-.autoClose { color: #22c55e; }
-.manualReview { color: #b45309; }
-.canceledState { color: #ef4444; }
-.manualConfirmed { color: #22c55e; }
-.confirmTrade {
-  height: 30px; border: 0; background: #22c55e; color: #fff; border-radius: 8px;
+.needsAction { color: #b45309; } /* under_review — the trader can act right now */
+.terminalState { color: #ef4444; } /* cancelled/failed — real status word, red; recoverable via Reopen */
+.confirmTrade, .reopenTrade {
+  height: 30px; border: 0; color: #fff; border-radius: 8px;
   padding: 0 10px; font-size: 11px; font-weight: 700; cursor: pointer; flex-shrink: 0;
 }
+.confirmTrade { background: #22c55e; } /* real trader-confirm — settles the order now */
+.reopenTrade { background: #f59e0b; } /* real reopen-for-review — needs a UTR first, not an instant settle */
 .confirmTrade:disabled { opacity: .6; cursor: default; }
 
 .tradePagination { border-top: 1px solid var(--cardborder); }
-
-@media (max-width: 1250px) {
-  .tradeLedgerHead, .tradeLedgerRow { min-width: 1300px; }
-  .tradeLedger { overflow-x: auto; }
-}
 
 /* ============================================================================
    Buy USDT — reference's summary3 / flush+tabs / payout row.

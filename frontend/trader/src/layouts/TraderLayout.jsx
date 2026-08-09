@@ -78,6 +78,18 @@ export default function TraderLayout() {
 
   useEffect(() => { refreshProfile(); }, [refreshProfile]);
 
+  // Keep the sidebar balance live: the socket effect below already re-dispatches
+  // every settlement/cancellation/payout event as a window 'order:update' event
+  // (the same one Dashboard.jsx listens to for its own numbers) — but nothing
+  // here ever listened for it, so a real trader-confirm settlement moved the
+  // trader's actual balance_usdt in the DB immediately while the sidebar figure
+  // sat stale until the next navigation or reload. This re-fetches it the same
+  // way toggleOnline already does after a state change.
+  useEffect(() => {
+    window.addEventListener('order:update', refreshProfile);
+    return () => window.removeEventListener('order:update', refreshProfile);
+  }, [refreshProfile]);
+
   // Sidebar "Buy USDT" badge — real awaiting-processing pool count (same
   // `counts.awaiting_processing` field BuyUsdt.jsx's own tabs already read).
   // Polled independently on a slower cadence since a nav badge doesn't need
@@ -253,8 +265,10 @@ export default function TraderLayout() {
           </div>
         </header>
 
-        {/* Routed page */}
-        <main className="tf-scroll flex-1 overflow-y-auto" style={{ padding: '24px 24px 40px' }}>
+        {/* Routed page — left/right tightened from 24px: that gutter, not
+            anything inside the table cards, was the real source of wasted
+            width forcing early horizontal scroll on wide tables. */}
+        <main className="tf-scroll flex-1 overflow-y-auto" style={{ padding: '24px 16px 40px' }}>
           <Outlet context={{ online, setOnline: toggleOnline, connected, theme, setTheme }} />
         </main>
       </div>
