@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Clock3, Hand, CheckCircle2, X, AlertTriangle, Copy, Check, HelpCircle, Bot, Download, RotateCcw } from 'lucide-react';
+import { Clock3, Hand, CheckCircle2, X, AlertTriangle, Download, RotateCcw } from 'lucide-react';
+// HelpCircle no longer used directly here — the Info trigger now lives in IdReveal.
 import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, BankBadge, EmptyState, LoadingState, Modal } from '../components/ui';
+import IdReveal from '../components/IdReveal';
 import { useApi } from '../hooks/useApi';
 import { useSocket } from '../hooks/useSocket';
 import { traderApi } from '../services/api';
@@ -9,6 +11,20 @@ import ConfirmModal from '../components/ConfirmModal';
 import { trades, inr, usdt, ACCOUNT_TYPES } from '../utils/mock';
 
 const PER_PAGE = 25;
+
+// Hold a value still for `delay` ms after it stops changing. Used so the filter
+// bar's text inputs produce one request per pause in typing rather than one per
+// keystroke, now that filtering is a server round-trip instead of an in-memory
+// array filter. Compares by JSON so an object of fields can be passed directly.
+function useDebounced(value, delay = 300) {
+  const [settled, setSettled] = useState(value);
+  const serialized = JSON.stringify(value);
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(JSON.parse(serialized)), delay);
+    return () => clearTimeout(id);
+  }, [serialized, delay]);
+  return settled;
+}
 
 // Split a timestamp into two display lines: time (18:15) + date (04.07.2026),
 // in the viewer's local timezone (no trader tz is exposed by the API). Returns
@@ -25,14 +41,17 @@ function formatStamp(value) {
   };
 }
 
-// Reference's dateCell: two stacked lines, or a muted dash for missing values.
-function DateCell({ value }) {
-  const s = formatStamp(value);
-  if (!s) return <div className="dateCell"><strong style={{ color: 'var(--muted)' }}>—</strong></div>;
+// Reference's dateCell, applied to Created+Closed merged into one cell: two
+// stacked lines (created timestamp, then closed timestamp or a muted dash),
+// each combining time + date since there's no longer a second column to
+// carry the date separately.
+function CreatedClosedCell({ createdAt, closedAt }) {
+  const c = formatStamp(createdAt);
+  const cl = formatStamp(closedAt);
   return (
     <div className="dateCell">
-      <strong>{s.time}</strong>
-      <span>{s.date}</span>
+      <strong>{c ? `${c.time} · ${c.date}` : '—'}</strong>
+      <span>{cl ? `${cl.time} · ${cl.date}` : '—'}</span>
     </div>
   );
 }
@@ -41,10 +60,6 @@ function DateCell({ value }) {
 const CLOSED_STATUSES = new Set([
   'success', 'failed', 'rejected', 'cancelled', 'disputed',
 ]);
-
-// Automatic-detection engines (see smartMerge.confirmOrder's `engine` tag,
-// persisted via the confirm_engine column) vs. a human explicitly confirming.
-const AUTO_ENGINES = new Set(['apk_notification', 'scraper', 'sms', 'notification', 'screen_scraper']);
 
 // Map a backend order onto the shape this table renders. The API lacks a
 // client-identity field — shows `—`. No deposit_type (FTD/STD) field is read
@@ -71,7 +86,6 @@ function orderToRow(o) {
     closedAt: o.confirmed_at || (CLOSED_STATUSES.has(o.status) ? o.updated_at || null : null),
     status: o.status,
     confirmEngine: o.confirm_engine || null,
-    matchTier: o.match_tier,
     upiId: o.paymentDetail?.upi_id || '',
     accountName: o.paymentDetail?.account_name || '',
     accountType: o.paymentDetail?.account_type || '',
@@ -116,39 +130,36 @@ function mockToRow(t) {
     closedAt: t.closedAt,
     status: t.status,
     confirmEngine: null,
-    matchTier: null,
     upiId: t.bank?.upiId || '',
     accountName: t.bank?.accountName || '',
     accountType: t.bank?.type || '',
   };
 }
 
-// Reference's combined "Resolution" cell (status + action in one place)
-// mapped onto every real order status — the reference's own demo data only
-// ever shows 3 conceptual outcomes (auto/manual-review/canceled), but real
-// orders reach 9 distinct statuses, so pending/checkout_open/claimed_paid and
-// disputed get their own honest badge instead of being forced into one of
-// the reference's 3 slots.
-function Resolution({ t, busy, onConfirm, onReopen }) {
+// Status cell — icon + the REAL order.status word only (backend/src/models/
+// order.model.js STATUSES; the STATUS map above already carries the right
+// icon/color/real label per value — nothing invented here, so this no
+// longer distinguishes auto-matched vs. trader/admin-confirmed the way an
+// earlier pass did) + the real trader action where one actually exists:
+//
+//   under_review -> the trader can settle it right now with the real,
+//     already-built POST /orders/:id/trader-confirm (bare click).
+//   cancelled/failed -> real backend REOPENABLE_STATUSES; recoverable via
+//     POST /orders/:id/reopen-for-review, which requires a UTR and only
+//     re-opens the order into under_review — NOT the same action as
+//     trader-confirm (which 409s outside under_review), so it keeps its own
+//     "Reopen" button/flow rather than a "Confirm" that would just fail.
+//   everything else (success, rejected, disputed, pending, checkout_open,
+//     claimed_paid) -> no trader action from this column; just the real
+//     status word via the shared STATUS-map badge.
+function StatusCell({ t, busy, onConfirm, onReopen }) {
   if (t.status === 'under_review') {
     return (
       <div className="resolutionCell">
-        <span className="manualReview"><Hand size={17} />Manual review</span>
+        <span className="needsAction"><Hand size={16} />Under review</span>
         <button className="confirmTrade" disabled={busy} onClick={onConfirm}>
           {busy ? 'Confirming…' : 'Confirm'}
         </button>
-      </div>
-    );
-  }
-  if (t.status === 'success') {
-    const isAuto = t.matchTier != null || AUTO_ENGINES.has(t.confirmEngine);
-    if (isAuto) {
-      return <div className="resolutionCell"><span className="autoClose"><Bot size={18} />Auto-close</span></div>;
-    }
-    const by = t.confirmEngine === 'trader_manual' ? 'you' : t.confirmEngine === 'admin_manual' ? 'admin' : null;
-    return (
-      <div className="resolutionCell">
-        <span className="manualConfirmed"><CheckCircle2 size={17} />{by ? `Confirmed by ${by}` : 'Confirmed'}</span>
       </div>
     );
   }
@@ -159,15 +170,10 @@ function Resolution({ t, busy, onConfirm, onReopen }) {
   if (t.status === 'cancelled' || t.status === 'failed') {
     return (
       <div className="resolutionCell">
-        <span className="canceledState"><X size={17} />{STATUS[t.status].label}</span>
-        <button className="confirmTrade" style={{ background: 'var(--hover)', color: 'var(--text)' }} onClick={onReopen}>
-          Reopen for review
-        </button>
+        <span className="terminalState"><AlertTriangle size={16} />{STATUS[t.status].label}</span>
+        <button className="reopenTrade" onClick={onReopen}>Reopen</button>
       </div>
     );
-  }
-  if (t.status === 'rejected') {
-    return <div className="resolutionCell"><span className="canceledState"><X size={17} />{STATUS[t.status].label}</span></div>;
   }
   const s = STATUS[t.status] || { color: 'gray', label: t.status || '—', icon: null };
   const Icon = s.icon;
@@ -183,11 +189,49 @@ export default function Trades() {
   const [reopenUtr, setReopenUtr] = useState('');
   const [reopenBusy, setReopenBusy] = useState(false);
 
-  // Real orders overlay the mock; mock stays as instant value + fallback on error.
-  const { data: rows, loading } = useApi(
-    () => traderApi.orders().then((res) => (res.data.data.orders || []).map(orderToRow)),
-    { fallback: trades.map(mockToRow), deps: [refreshKey] }
+  // Filters are debounced before they reach the API so typing in a search box
+  // doesn't fire a request per keystroke. `status` and `page` are applied
+  // immediately — they come from discrete clicks, not typing.
+  const debouncedText = useDebounced(
+    { id: filters.id, amount: filters.amount, bank: filters.bank },
+    300
   );
+
+  // Real orders overlay the mock; mock stays as instant value + fallback on error.
+  //
+  // Paging and searching are both SERVER-side now. Previously this fetched one
+  // default-limit page (25 rows) and did all filtering + pagination in the
+  // browser, so the pagination control just re-sliced the same fixed batch and
+  // nothing older than a trader's 25 most recent orders could be found at all.
+  const { data: result, loading } = useApi(
+    () =>
+      traderApi
+        .orders(filters.status !== 'all' ? filters.status : undefined, {
+          page,
+          limit: PER_PAGE,
+          ...(debouncedText.id ? { id: debouncedText.id.trim() } : {}),
+          ...(debouncedText.amount ? { amount: debouncedText.amount.trim() } : {}),
+          ...(debouncedText.bank ? { bank: debouncedText.bank.trim() } : {}),
+        })
+        .then((res) => ({
+          rows: (res.data.data.orders || []).map(orderToRow),
+          total: res.data.data.pagination?.total ?? (res.data.data.orders || []).length,
+        })),
+    {
+      fallback: { rows: trades.map(mockToRow), total: trades.length },
+      deps: [refreshKey, page, filters.status, debouncedText.id, debouncedText.amount, debouncedText.bank],
+    }
+  );
+  const rows = result?.rows ?? [];
+  const total = result?.total ?? 0;
+
+  // Deleting/settling rows can shrink the result set under the current page
+  // (e.g. confirming the last under_review order while filtered to it). Fall
+  // back to the last page that still exists instead of showing a blank table.
+  const pageCount = Math.max(1, Math.ceil(total / PER_PAGE));
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
 
   // Real-time update on settlement — smartMerge.confirmOrder emits
   // 'order:confirmed' to the trader's room for every settlement path (auto
@@ -269,27 +313,63 @@ export default function Trades() {
   };
   const filtersActive = filters.id || filters.amount || filters.bank || filters.client || filters.status !== 'all';
 
-  const filtered = useMemo(() => {
-    return rows.filter((t) => {
-      if (filters.id && !String(t.id).includes(filters.id.trim())) return false;
-      if (filters.amount && !String(t.amountInr).includes(filters.amount.trim())) return false;
-      if (filters.bank && !`${t.accountName} ${t.upiId}`.toLowerCase().includes(filters.bank.toLowerCase())) return false;
-      if (filters.client && !String(t.client).toLowerCase().includes(filters.client.toLowerCase())) return false;
-      if (filters.status !== 'all' && t.status !== filters.status) return false;
-      return true;
-    });
-  }, [rows, filters]);
+  // id / amount / bank / status are all applied by the query now (see the
+  // useApi call above), so `rows` is already the correct page of the correct
+  // filtered set — no client-side re-filtering or re-slicing.
+  //
+  // `client` is the one exception and stays here: orderToRow hardcodes it to
+  // '—' because no order field carries a customer identity, so there is nothing
+  // for the server to match on. Keeping it local preserves its existing
+  // behaviour exactly rather than inventing a column to search.
+  const pageRows = useMemo(
+    () => (filters.client
+      ? rows.filter((t) => String(t.client).toLowerCase().includes(filters.client.toLowerCase()))
+      : rows),
+    [rows, filters.client]
+  );
 
-  const pageRows = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+  // Export every row matching the current filters, not just the page on screen.
+  // Now that the table only holds one server page, exporting `rows` would
+  // silently produce a 25-line file — so this walks the same filtered query to
+  // the end using the server's max page size.
+  const [exporting, setExporting] = useState(false);
+  const exportCsv = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const SERVER_MAX_LIMIT = 100; // utils/http.js pagination() caps limit here
+      const params = {
+        ...(debouncedText.id ? { id: debouncedText.id.trim() } : {}),
+        ...(debouncedText.amount ? { amount: debouncedText.amount.trim() } : {}),
+        ...(debouncedText.bank ? { bank: debouncedText.bank.trim() } : {}),
+      };
+      const status = filters.status !== 'all' ? filters.status : undefined;
 
-  const exportCsv = () => {
-    const blob = new Blob([toCsv(filtered, traderUsdt)], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'trades.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+      const all = [];
+      for (let p = 1; ; p += 1) {
+        const res = await traderApi.orders(status, { ...params, page: p, limit: SERVER_MAX_LIMIT });
+        const batch = (res.data.data.orders || []).map(orderToRow);
+        all.push(...batch);
+        const grandTotal = res.data.data.pagination?.total ?? all.length;
+        if (batch.length < SERVER_MAX_LIMIT || all.length >= grandTotal) break;
+      }
+
+      const out = filters.client
+        ? all.filter((t) => String(t.client).toLowerCase().includes(filters.client.toLowerCase()))
+        : all;
+
+      const blob = new Blob([toCsv(out, traderUsdt)], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'trades.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast(err.response?.data?.message || 'Could not export trades', 'error');
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -301,9 +381,9 @@ export default function Trades() {
         actions={
           <div className="flex items-center gap-2">
             {loading && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</span>}
-            <Button variant="ghost" onClick={exportCsv}>
+            <Button variant="ghost" onClick={exportCsv} disabled={exporting}>
               <Download size={16} />
-              Export CSV
+              {exporting ? 'Exporting…' : 'Export CSV'}
             </Button>
           </div>
         }
@@ -325,25 +405,26 @@ export default function Trades() {
 
       <Card className="tradeLedger">
         <div className="tradeLedgerHead">
-          <span>Info</span>
-          <span>Payment method</span>
+          <span>T.ID</span>
+          <span>Method / Account</span>
           <span>Amount</span>
           <span>My rate</span>
-          <span>Exchange rate</span>
-          <span>My bank</span>
+          <span>Exchange Rate</span>
+          <span>Created / Closed</span>
           <span>Client</span>
-          <span>Created</span>
-          <span>Closed</span>
-          <span>Resolution</span>
+          <span>Status</span>
         </div>
 
         {pageRows.length === 0 ? (
-          loading && rows.length === 0 ? (
+          loading ? (
             <LoadingState label="Loading trades…" />
           ) : (
+            // With filtering done server-side, an empty result no longer implies
+            // an empty history — it usually means the filters matched nothing.
+            // Branch on whether any filter is active, not on rows.length.
             <EmptyState
-              title={rows.length === 0 ? 'No trades yet' : 'No trades match your filters'}
-              message={rows.length === 0 ? 'Incoming orders routed to your payment details will show up here.' : undefined}
+              title={filtersActive ? 'No trades match your filters' : 'No trades yet'}
+              message={filtersActive ? undefined : 'Incoming orders routed to your payment details will show up here.'}
             />
           )
         ) : (
@@ -351,19 +432,19 @@ export default function Trades() {
             const type = ACCOUNT_TYPES[t.accountType];
             return (
               <div className="tradeLedgerRow" key={t.id}>
-                <button
-                  className="tradeInfo"
-                  title={t.id}
-                  onClick={() => { navigator.clipboard?.writeText(String(t.id)); toast('Trade ID copied', 'success'); }}
-                >
-                  <HelpCircle size={16} />
-                </button>
+                <IdReveal value={t.id} label="Transaction ID" size={16} />
 
+                {/* Method / Account — merged: the old separate Method + My Bank
+                    columns both showed the trader's own account, just different
+                    fields of it (platform label vs. UPI ID). One cell now: the
+                    real UPI ID is the prominent bold line (title= gives the full
+                    value on hover if the ellipsis truncates it), platform full
+                    name is the muted line underneath. */}
                 <div className="tradeProvider">
-                  <BankBadge type={t.accountType} label={type?.label || t.accountType} size={28} />
-                  <div>
-                    <strong>{type?.label || t.accountType || '—'}</strong>
-                    <small>UPI</small>
+                  <BankBadge type={t.accountType} label={type?.label || t.accountType} size={22} />
+                  <div style={{ minWidth: 0 }}>
+                    <strong title={t.upiId || undefined}>{t.upiId || '—'}</strong>
+                    <small>{type?.label || t.accountType || '—'}</small>
                   </div>
                 </div>
 
@@ -382,26 +463,23 @@ export default function Trades() {
                   <span>Base rate</span>
                 </div>
 
-                <div className="personCell">
-                  <strong>{t.accountName || '—'}</strong>
-                  <span>{t.upiId || '—'}</span>
-                </div>
+                <CreatedClosedCell createdAt={t.createdAt} closedAt={t.closedAt} />
 
                 <div className="personCell">
                   <strong>{t.client}</strong>
                 </div>
 
-                <DateCell value={t.createdAt} />
-                <DateCell value={t.closedAt} />
-
-                <Resolution t={t} busy={confirmingId === t.id} onConfirm={() => handleConfirm(t.id)} onReopen={() => openReopen(t)} />
+                <StatusCell t={t} busy={confirmingId === t.id} onConfirm={() => handleConfirm(t.id)} onReopen={() => openReopen(t)} />
               </div>
             );
           })
         )}
 
         <div className="tradePagination">
-          <Pagination page={page} perPage={PER_PAGE} total={filtered.length} onPage={setPage} />
+          {/* `total` is the server's count for the current filter set, so the
+              page buttons reflect the trader's whole history — clicking one now
+              refetches from the API instead of re-slicing an already-loaded batch. */}
+          <Pagination page={page} perPage={PER_PAGE} total={total} onPage={setPage} />
         </div>
       </Card>
 

@@ -13,6 +13,7 @@
  */
 
 const Joi = require('joi');
+const { Op } = require('sequelize');
 
 const db = require('../models');
 const config = require('../config');
@@ -499,6 +500,18 @@ const verifyPayment = asyncHandler(async (req, res) => {
 
 /* ------------------------------- GET / ------------------------------------ */
 // Role-scoped listing: admin=all, merchant=own, trader=assigned.
+//
+// Search params (`id`, `amount`, `bank`) exist because Trades.jsx used to run
+// its whole filter bar client-side over ONE page of results. Combined with the
+// default limit=25 that made every order older than a trader's 25 most recent
+// unreachable from the panel — including a cancelled order they needed to
+// recover via reopen-for-review. Pushing the filters into the query is what
+// lets real server-side pagination and "search my whole history" coexist:
+// filter first, then page the filtered set.
+//
+// Substring (LIKE) semantics are deliberate — they reproduce exactly what the
+// old client-side `String(x).includes(q)` checks did, so moving the work to the
+// server doesn't silently change which rows match.
 const list = asyncHandler(async (req, res) => {
   const { page, limit, offset } = pagination(req.query);
   const where = {};
@@ -512,12 +525,88 @@ const list = asyncHandler(async (req, res) => {
     where.trader_id = trader ? trader.id : -1;
   }
 
+  const q = (key) => String(req.query[key] || '').trim();
+  const like = (v) => ({ [Op.like]: `%${v}%` });
+  const and = [];
+
+  // Trade ID — the panel shows order.uuid, but a trader may paste any of the
+  // identifiers they've seen, so match all of them.
+  const idQ = q('id');
+  if (idQ) {
+    and.push({
+      [Op.or]: [
+        { uuid: like(idQ) },
+        { gateway_order_id: like(idQ) },
+        { merchant_order_id: like(idQ) },
+        // Only a fully-numeric query can be a primary key; `LIKE` on an integer
+        // column would otherwise force a full-table cast for no benefit.
+        ...(/^\d+$/.test(idQ) ? [{ id: Number(idQ) }] : []),
+      ],
+    });
+  }
+
+  // `q` is the single free-text box in the panel header (HeaderSearch.jsx),
+  // which used to pull one page of orders and grep it in the browser — so it
+  // could only ever find something among the newest 25. The column list here
+  // mirrors exactly what that local filter tested, so moving it server-side
+  // widens the reach without changing what counts as a hit.
+  const freeQ = q('q');
+  if (freeQ) {
+    and.push({
+      [Op.or]: [
+        { uuid: like(freeQ) },
+        { gateway_order_id: like(freeQ) },
+        { merchant_order_id: like(freeQ) },
+        { customer_ref: like(freeQ) },
+        { upi_ref_id: like(freeQ) },
+        { amount_inr: like(freeQ) },
+        { status: like(freeQ) },
+        { '$paymentDetail.upi_id$': like(freeQ) },
+        ...(/^\d+$/.test(freeQ) ? [{ id: Number(freeQ) }] : []),
+      ],
+    });
+  }
+
+  if (and.length) where[Op.and] = and;
+
+  // amount_inr is DECIMAL(15,2); MySQL casts it to '137.00' for LIKE, which is
+  // the same string the old client-side filter tested against.
+  const amountQ = q('amount');
+  if (amountQ) where.amount_inr = like(amountQ);
+
+  // "My bank details" spans the joined payment detail's UPI id and account
+  // name. `required` flips to an INNER JOIN only when this filter is active —
+  // leaving it always-on would silently hide orders whose payment_detail_id is
+  // null (order 3 in this dataset is exactly that).
+  const bankQ = q('bank');
+  const paymentDetailInclude = {
+    model: db.PaymentDetail,
+    as: 'paymentDetail',
+    attributes: ['id', 'upi_id', 'account_type', 'account_name'],
+    required: !!bankQ,
+    ...(bankQ ? { where: { [Op.or]: [{ upi_id: like(bankQ) }, { account_name: like(bankQ) }] } } : {}),
+  };
+
   const { rows, count } = await db.Order.findAndCountAll({
     where,
-    include: [{ model: db.PaymentDetail, as: 'paymentDetail', attributes: ['id', 'upi_id', 'account_type'] }],
-    order: [['created_at', 'DESC']],
+    include: [paymentDetailInclude],
+    // `id` breaks ties. created_at is second-granular, so a burst of orders
+    // shares a timestamp; with no tiebreaker MySQL may order those rows
+    // differently per query, which under real pagination lets a row appear on
+    // two pages (or none) as the trader clicks through.
+    order: [['created_at', 'DESC'], ['id', 'DESC']],
     limit,
     offset,
+    // Without this, a row-multiplying join makes `count` disagree with the
+    // number of orders, and the panel renders phantom pages.
+    distinct: true,
+    // `q` references a joined column ($paymentDetail.upi_id$) from the
+    // top-level WHERE. Sequelize's default LIMIT strategy wraps the base table
+    // in a subquery that hasn't joined paymentDetail yet, so that condition
+    // would reference a missing table. Safe to disable here specifically
+    // because Order->PaymentDetail is belongsTo (1:1) — there are no duplicate
+    // rows for LIMIT to slice incorrectly.
+    ...(freeQ ? { subQuery: false } : {}),
   });
 
   return ok(res, { orders: rows.map(orderView), pagination: { page, limit, total: count } });

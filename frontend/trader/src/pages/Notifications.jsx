@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { Info } from 'lucide-react';
 import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, EmptyState, LoadingState, BankBadge } from '../components/ui';
+import IdReveal from '../components/IdReveal';
 import { IconRefresh, IconBell, IconWarning } from '../components/icons';
 import { useApi } from '../hooks/useApi';
 import { getTransactions, getNgoSocketToken, NGO_SOCKET_ORIGIN, getDevices } from '../lib/ngoApi';
@@ -28,17 +28,13 @@ function apiToRow(txn, deviceMap) {
     sourceDeviceName = device?.deviceName || rawEvent.deviceId;
   }
 
-  // Linked account name (from Transaction.payerName)
+  // Linked account name (from Transaction.payerName) — still used in the
+  // Description subtitle's device attribution, just not in the Method column.
   let linkedAccount = txn.payerName || 'Unknown';
 
-  // Masked UPI for method column display
-  function maskUpi(upi = '') {
-    const [name, domain] = upi.split('@');
-    if (!domain) return upi;
-    const head = name.slice(0, 2);
-    return `${head}${'*'.repeat(Math.max(2, name.length - 2))}@${domain}`;
-  }
-  let maskedUpi = txn.payerUpiId ? maskUpi(txn.payerUpiId) : '—';
+  // Full, unmasked UPI ID for the Method column — the trader needs the real
+  // payer UPI ID to reconcile, not a masked preview.
+  let upiId = txn.payerUpiId || '—';
 
   // Full original captured text: RawEvent.body for APK, reconstructed for scraper
   let originalText = '';
@@ -59,7 +55,7 @@ function apiToRow(txn, deviceMap) {
     methodBadgeColor: ACCOUNT_TYPES[txn.platform]?.color || 'default',
     captureType,
     linkedAccount,
-    maskedUpi,
+    upiId,
     sourceDeviceName,
     originalText,
     transactionId: txn.utr || '—',
@@ -110,7 +106,6 @@ export default function Notifications() {
   const [filters, setFilters] = useState({ transactionId: '', amount: '', method: 'all', date: '', bankDetails: '' });
   const [page, setPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
-  const [infoTooltip, setInfoTooltip] = useState(null); // { type: 'notif' | 'status', value: string }
 
   // Fetch both transactions AND devices for name lookups
   const { data: transactions, loading: txnLoading, error, refetch } = useApi(
@@ -245,7 +240,7 @@ export default function Notifications() {
                 letterSpacing: '0.5px',
               }}
             >
-              <div style={{ textAlign: 'center' }}>T.ID</div>
+              <div style={{ textAlign: 'center' }}>N.ID</div>
               <div>Time</div>
               <div style={{ textAlign: 'right' }}>Amount</div>
               <div>Method</div>
@@ -272,44 +267,9 @@ export default function Notifications() {
                     fontSize: 13,
                   }}
                 >
-                  {/* 1. Info icon */}
+                  {/* 1. N.ID — Notification ID */}
                   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                    <button
-                      onClick={() => setInfoTooltip(infoTooltip?.type === 'notif' && infoTooltip?.value === n.notificationId ? null : { type: 'notif', value: n.notificationId })}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        padding: 0,
-                        color: 'var(--muted)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        position: 'relative',
-                      }}
-                      title={`Notification ID: ${n.notificationId}`}
-                    >
-                      <Info size={16} />
-                      {infoTooltip?.type === 'notif' && infoTooltip?.value === n.notificationId && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            bottom: '100%',
-                            left: 0,
-                            background: 'var(--text)',
-                            color: 'var(--bg)',
-                            padding: '4px 8px',
-                            borderRadius: 4,
-                            whiteSpace: 'nowrap',
-                            fontSize: 11,
-                            marginBottom: 4,
-                            zIndex: 10,
-                          }}
-                        >
-                          {n.notificationId}
-                        </div>
-                      )}
-                    </button>
+                    <IdReveal value={n.notificationId} label="Notification ID" size={16} />
                   </div>
 
                   {/* 2. Time (time + date) */}
@@ -323,7 +283,7 @@ export default function Notifications() {
                     ₹{Number(n.amount || 0).toLocaleString('en-IN')}
                   </div>
 
-                  {/* 4. Method (badge + linked account name · masked UPI) */}
+                  {/* 4. Method (badge + full, unmasked UPI ID — no bank/SMS-source label) */}
                   <div>
                     <div style={{ marginBottom: 4 }}>
                       {method ? (
@@ -334,8 +294,8 @@ export default function Notifications() {
                         <Badge>{n.method}</Badge>
                       )}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                      {n.linkedAccount} · {n.maskedUpi}
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, wordBreak: 'break-all' }}>
+                      {n.upiId}
                     </div>
                   </div>
 
@@ -374,44 +334,11 @@ export default function Notifications() {
                     >
                       {n.isLinked ? 'Linked' : 'Process'}
                     </div>
+                    {/* Real Transaction ID — only exists once matched=true (Linked);
+                        genuinely absent (not just hidden) on Process rows, since
+                        there's no real transaction ID to show for those. */}
                     {n.isLinked && (
-                      <button
-                        onClick={() => setInfoTooltip(infoTooltip?.type === 'status' && infoTooltip?.value === n.realId ? null : { type: 'status', value: n.realId })}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          padding: 0,
-                          color: 'var(--muted)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          position: 'relative',
-                          fontSize: 12,
-                        }}
-                        title={`Real ID: ${n.realId}`}
-                      >
-                        <Info size={12} />
-                        {infoTooltip?.type === 'status' && infoTooltip?.value === n.realId && (
-                          <div
-                            style={{
-                              position: 'absolute',
-                              bottom: '100%',
-                              right: 0,
-                              background: 'var(--text)',
-                              color: 'var(--bg)',
-                              padding: '4px 8px',
-                              borderRadius: 4,
-                              whiteSpace: 'nowrap',
-                              fontSize: 10,
-                              marginBottom: 4,
-                              zIndex: 10,
-                            }}
-                          >
-                            {n.realId}
-                          </div>
-                        )}
-                      </button>
+                      <IdReveal value={n.realId} label="Transaction ID" size={12} />
                     )}
                   </div>
                 </div>

@@ -22,24 +22,21 @@ export default function HeaderSearch() {
   const [details, setDetails] = useState([]);
   const wrapRef = useRef(null);
 
-  // Load the trader's own orders + payment details (real endpoints), then
-  // filter locally. Called on first focus and on Enter (force refresh).
-  const load = async (force = false) => {
+  // Payment details are a small, bounded per-trader list, so they're still
+  // fetched once and filtered in memory. Orders are not: this used to call
+  // traderApi.orders() with no params, which returns only the newest page
+  // (limit defaults to 25), so the header search physically could not find
+  // anything older than a trader's 25 most recent orders no matter what was
+  // typed. Orders are now searched by the server — see the `q` param on
+  // GET /api/orders in backend/src/controllers/orderController.js.
+  const loadDetails = async (force = false) => {
     if (loaded && !force) return;
-    setLoading(true);
-    setError(false);
     try {
-      const [ordersRes, detailsRes] = await Promise.all([
-        traderApi.orders(),
-        traderApi.paymentDetails(),
-      ]);
-      setOrders(pick(ordersRes, 'orders'));
+      const detailsRes = await traderApi.paymentDetails();
       setDetails(pick(detailsRes, 'payment_details'));
       setLoaded(true);
     } catch (e) {
-      setError(true);
-    } finally {
-      setLoading(false);
+      // Non-fatal: order results below are fetched independently.
     }
   };
 
@@ -48,6 +45,23 @@ export default function HeaderSearch() {
     const id = setTimeout(() => setDebounced(q.trim().toLowerCase()), 300);
     return () => clearTimeout(id);
   }, [q]);
+
+  // One request per settled query, against the trader's whole order history.
+  // `RESULT_LIMIT` matches the dropdown's own cap, so the server does the
+  // ranking (newest first) instead of us slicing an arbitrary local batch.
+  const RESULT_LIMIT = 8;
+  useEffect(() => {
+    if (!debounced) { setOrders([]); return undefined; }
+    let active = true;
+    setLoading(true);
+    setError(false);
+    traderApi
+      .orders(undefined, { q: debounced, limit: RESULT_LIMIT, page: 1 })
+      .then((res) => { if (active) setOrders(pick(res, 'orders')); })
+      .catch(() => { if (active) { setError(true); setOrders([]); } })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [debounced]);
 
   // Close on outside click.
   useEffect(() => {
@@ -59,19 +73,9 @@ export default function HeaderSearch() {
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  const orderMatches = useMemo(() => {
-    if (!debounced) return [];
-    return orders
-      .filter((o) =>
-        has(o.order_id, debounced) ||
-        has(o.amount_inr, debounced) ||
-        has(o.status, debounced) ||
-        has(o.upi_ref_id, debounced) ||
-        has(o.customer_ref, debounced) ||
-        has(o.paymentDetail?.upi_id, debounced)
-      )
-      .slice(0, 8);
-  }, [orders, debounced]);
+  // `orders` is already the server's answer to `debounced` (same column set the
+  // old local filter used), so there is nothing left to re-filter here.
+  const orderMatches = orders;
 
   const detailMatches = useMemo(() => {
     if (!debounced) return [];
@@ -100,8 +104,8 @@ export default function HeaderSearch() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          onFocus={() => { setOpen(true); load(); }}
-          onKeyDown={(e) => { if (e.key === 'Enter') { setDebounced(q.trim().toLowerCase()); load(true); } }}
+          onFocus={() => { setOpen(true); loadDetails(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { setDebounced(q.trim().toLowerCase()); loadDetails(true); } }}
           placeholder="Search orders, accounts, payouts…"
           style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13, width: '100%' }}
         />
