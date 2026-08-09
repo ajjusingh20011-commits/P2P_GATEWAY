@@ -112,7 +112,13 @@ public class UpdateCheckWorker extends Worker {
             if (latestVersionCode > BuildConfig.VERSION_CODE && !downloadUrl.isEmpty()) {
                 Log.i(TAG, "UpdateCheckWorker: newer version available (" + BuildConfig.VERSION_CODE
                         + " -> " + latestVersionCode + ")");
+                // Additive only — UpdateStore.setAvailable is a separate,
+                // UI-facing record; it does not change the download/install
+                // flow below at all, which is untouched.
+                UpdateStore.setAvailable(ctx, latestVersionCode, latestVersionName);
                 ApkDownloadWorker.enqueue(ctx, downloadUrl, latestVersionCode, latestVersionName);
+            } else {
+                UpdateStore.setAvailable(ctx, 0, "");
             }
         } catch (Exception e) {
             // Best-effort, same as every other periodic/immediate networking

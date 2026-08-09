@@ -20,6 +20,10 @@ import java.net.URL;
 
 public class RegistrationActivity extends Activity {
 
+  // Approved MaxPay brand — primary emerald, replacing the previous blue accent.
+  private static final int BRAND_PRIMARY = 0xFF0F6B5C;
+  private static final int DISABLED_GREY = 0xFF9E9E9E;
+
   private EditText codeInput;
   private Button continueBtn;
   private TextView statusText;
@@ -89,7 +93,7 @@ public class RegistrationActivity extends Activity {
 
     android.view.View underline =
       new android.view.View(this);
-    underline.setBackgroundColor(0xFF1565C0);
+    underline.setBackgroundColor(BRAND_PRIMARY);
     LinearLayout.LayoutParams ulp =
       new LinearLayout.LayoutParams(-1, dp(2));
     ulp.setMargins(dp(24), 0, dp(24), 0);
@@ -136,7 +140,7 @@ public class RegistrationActivity extends Activity {
       btnBg =
       new android.graphics.drawable
         .GradientDrawable();
-    btnBg.setColor(0xFF9E9E9E);
+    btnBg.setColor(DISABLED_GREY);
     btnBg.setCornerRadius(dp(12));
     continueBtn.setBackground(btnBg);
 
@@ -161,7 +165,7 @@ public class RegistrationActivity extends Activity {
             new android.graphics.drawable
               .GradientDrawable();
           bg.setColor(hasCode ?
-            0xFF1565C0 : 0xFF9E9E9E);
+            BRAND_PRIMARY : DISABLED_GREY);
           bg.setCornerRadius(dp(12));
           continueBtn.setBackground(bg);
         }

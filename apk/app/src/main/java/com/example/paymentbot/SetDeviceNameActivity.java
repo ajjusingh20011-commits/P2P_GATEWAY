@@ -18,6 +18,10 @@ import java.net.URL;
 public class SetDeviceNameActivity
   extends Activity {
 
+  // Approved MaxPay brand — primary emerald, replacing the previous blue accent.
+  private static final int BRAND_PRIMARY = 0xFF0F6B5C;
+  private static final int DISABLED_GREY = 0xFF9E9E9E;
+
   private EditText nameInput;
   private Button confirmBtn;
 
@@ -76,7 +80,7 @@ public class SetDeviceNameActivity
     // Underline
     android.view.View underline =
       new android.view.View(this);
-    underline.setBackgroundColor(0xFF1565C0);
+    underline.setBackgroundColor(BRAND_PRIMARY);
     LinearLayout.LayoutParams ulp =
       new LinearLayout.LayoutParams(-1, dp(2));
     ulp.setMargins(dp(24), 0, dp(24), dp(8));
@@ -112,7 +116,7 @@ public class SetDeviceNameActivity
       btnBg =
       new android.graphics.drawable
         .GradientDrawable();
-    btnBg.setColor(0xFF9E9E9E);
+    btnBg.setColor(DISABLED_GREY);
     btnBg.setCornerRadius(dp(12));
     confirmBtn.setBackground(btnBg);
 
@@ -134,7 +138,7 @@ public class SetDeviceNameActivity
             new android.graphics.drawable
               .GradientDrawable();
           bg.setColor(hasName ?
-            0xFF1565C0 : 0xFF9E9E9E);
+            BRAND_PRIMARY : DISABLED_GREY);
           bg.setCornerRadius(dp(12));
           confirmBtn.setBackground(bg);
         }
@@ -191,8 +195,8 @@ public class SetDeviceNameActivity
           conn.setConnectTimeout(10000);
           conn.getOutputStream().write(
             json.toString().getBytes("utf-8"));
-          conn.getResponseCode();
-          return true;
+          int status = conn.getResponseCode();
+          return status >= 200 && status < 300;
         } catch (Exception e) {
           return false;
         }
@@ -200,7 +204,27 @@ public class SetDeviceNameActivity
 
       @Override
       protected void onPostExecute(Boolean ok) {
-        // Save name locally
+        confirmBtn.setEnabled(true);
+        if (!Boolean.TRUE.equals(ok)) {
+          // Real bug fix: this used to save the name locally and show
+          // "Registration complete" regardless of whether the server call
+          // actually succeeded (the previous doInBackground always
+          // returned true unless an exception was thrown, and this method
+          // never checked its own `ok` parameter). A failed server call
+          // now surfaces honestly instead of a fabricated success dialog.
+          new AlertDialog.Builder(SetDeviceNameActivity.this)
+            .setTitle("Couldn't save device name")
+            .setMessage("The name wasn't saved to the server. Check your connection and try again.")
+            .setPositiveButton("Retry", (d, w) -> {
+              d.dismiss();
+              saveDeviceName();
+            })
+            .setNegativeButton("Cancel", (d, w) -> d.dismiss())
+            .show();
+          return;
+        }
+
+        // Save name locally — only once the server call is confirmed ok.
         RegistrationManager.register(
           SetDeviceNameActivity.this,
           licenseKey,

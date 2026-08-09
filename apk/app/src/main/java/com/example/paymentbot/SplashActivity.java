@@ -19,6 +19,9 @@ public class SplashActivity extends Activity {
 
   private static final String TAG = "MaxPay";
   private static final int STATUS_CHECK_TIMEOUT_MS = 5000;
+  // Approved MaxPay brand — primary emerald, replacing the previous
+  // slightly-different green (#1B5E3B).
+  private static final int BRAND_PRIMARY = 0xFF0F6B5C;
 
   @Override
   protected void onCreate(Bundle saved) {
@@ -45,7 +48,7 @@ public class SplashActivity extends Activity {
         .GradientDrawable();
     gd.setShape(android.graphics.drawable
       .GradientDrawable.OVAL);
-    gd.setColor(0xFF1B5E3B);
+    gd.setColor(BRAND_PRIMARY);
     circle.setBackground(gd);
 
     TextView logoIcon = new TextView(this);
@@ -59,10 +62,11 @@ public class SplashActivity extends Activity {
     circle.addView(logoIcon, fp);
     root.addView(circle, cp);
 
-    // App name
+    // App name — minimal branding only, per the approved direction (no
+    // tagline copy, no extra descriptive text on this screen).
     TextView appName = new TextView(this);
     appName.setText("MaxPay");
-    appName.setTextColor(0xFF1B5E3B);
+    appName.setTextColor(BRAND_PRIMARY);
     appName.setTextSize(32);
     appName.setTypeface(null,
       android.graphics.Typeface.BOLD);
@@ -70,27 +74,15 @@ public class SplashActivity extends Activity {
     LinearLayout.LayoutParams np =
       new LinearLayout.LayoutParams(-2, -2);
     np.gravity = Gravity.CENTER;
-    np.bottomMargin = dp(8);
+    np.bottomMargin = dp(40);
     root.addView(appName, np);
-
-    // Tagline
-    TextView tagline = new TextView(this);
-    tagline.setText("Simplifying Payments");
-    tagline.setTextColor(0xFF666666);
-    tagline.setTextSize(14);
-    tagline.setGravity(Gravity.CENTER);
-    LinearLayout.LayoutParams tp =
-      new LinearLayout.LayoutParams(-2, -2);
-    tp.gravity = Gravity.CENTER;
-    tp.bottomMargin = dp(48);
-    root.addView(tagline, tp);
 
     // Progress spinner
     ProgressBar spinner = new ProgressBar(this);
     android.graphics.PorterDuff.Mode mode =
       android.graphics.PorterDuff.Mode.SRC_IN;
     spinner.getIndeterminateDrawable()
-      .setColorFilter(0xFF1B5E3B, mode);
+      .setColorFilter(BRAND_PRIMARY, mode);
     LinearLayout.LayoutParams sp =
       new LinearLayout.LayoutParams(dp(40), dp(40));
     sp.gravity = Gravity.CENTER;

@@ -72,6 +72,11 @@
             android:exported="false"
             android:screenOrientation="portrait"/>
 
+        <activity
+            android:name=".UpdateAvailableActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"/>
+
         <service
             android:name=".KeepAliveService"
             android:exported="false"

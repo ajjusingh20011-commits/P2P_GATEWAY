@@ -10,20 +10,37 @@ import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.core.app.ActivityCompat;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class PermissionActivity extends Activity {
 
+  // Approved MaxPay brand — primary emerald / soft emerald / white.
+  private static final int BRAND_PRIMARY = 0xFF0F6B5C;
+  private static final int BRAND_SOFT = 0xFFE8F5F1;
+  private static final int DOT_INACTIVE = 0xFFE0E0E0;
+
+  // Page 4 (auto-start) only appears on OEMs detectOem() matches, so the
+  // total step count is dynamic (3 on stock Android, 4 on a matched OEM) —
+  // computed once per showPage() call from detectOem() rather than hardcoded.
   private int currentPage = 1;
+  private final List<View> dots = new ArrayList<>();
 
   @Override
   protected void onCreate(Bundle saved) {
     super.onCreate(saved);
     showPage(1);
+  }
+
+  private int totalPages() {
+    return detectOem() != null ? 4 : 3;
   }
 
   private void showPage(int page) {
@@ -47,19 +64,46 @@ public class PermissionActivity extends Activity {
     root.setLayoutParams(new ViewGroup
       .LayoutParams(-1, -1));
 
-    // X close button top left
+    // Top row: X close button + step-progress dots. Previously this wizard
+    // had no progress indicator at all — a real, simple "how many steps are
+    // left" signal, matching the dot pattern already built (and unused) in
+    // OnboardingActivity.
+    LinearLayout topRow = new LinearLayout(this);
+    topRow.setOrientation(LinearLayout.HORIZONTAL);
+    topRow.setGravity(Gravity.CENTER_VERTICAL);
+    topRow.setPadding(dp(20), dp(40), dp(20), dp(20));
+    topRow.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+
     TextView closeBtn = new TextView(this);
     closeBtn.setText("✕");
     closeBtn.setTextColor(0xFF333333);
     closeBtn.setTextSize(20);
-    closeBtn.setPadding(dp(20), dp(40),
-      dp(20), dp(20));
-    closeBtn.setOnClickListener(
-      v -> finish()
-    );
-    root.addView(closeBtn);
+    closeBtn.setOnClickListener(v -> finish());
+    LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(-2, -2);
+    topRow.addView(closeBtn, closeLp);
 
+    topRow.addView(buildDots(), new LinearLayout.LayoutParams(0, -2, 1f));
+
+    root.addView(topRow);
     return root;
+  }
+
+  private View buildDots() {
+    LinearLayout dotRow = new LinearLayout(this);
+    dotRow.setOrientation(LinearLayout.HORIZONTAL);
+    dotRow.setGravity(Gravity.CENTER);
+    dots.clear();
+    int total = totalPages();
+    for (int i = 0; i < total; i++) {
+      View dot = new View(this);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(7), dp(7));
+      lp.setMargins(dp(4), 0, dp(4), 0);
+      dot.setLayoutParams(lp);
+      dot.setBackground(circle(i == currentPage - 1 ? BRAND_PRIMARY : DOT_INACTIVE));
+      dots.add(dot);
+      dotRow.addView(dot);
+    }
+    return dotRow;
   }
 
   private void buildNotificationPage(
@@ -73,7 +117,6 @@ public class PermissionActivity extends Activity {
       new LinearLayout.LayoutParams(-1, 0, 1f);
     content.setLayoutParams(cp);
 
-    // Warning icon (blue triangle)
     TextView icon = new TextView(this);
     icon.setText("🔔");
     icon.setTextSize(64);
@@ -286,36 +329,50 @@ public class PermissionActivity extends Activity {
    * NOT independently verified against real hardware for every entry here
    * — see the audit report for exactly which ones still need a real-device
    * confirmation pass per manufacturer.
+   *
+   * `steps` is a numbered instruction list (was a single newline-joined
+   * String) — text-formatting only, same content, same detection/intent
+   * logic untouched.
    */
   private enum Oem {
     // Xiaomi / Redmi / POCO (MIUI) — Security app's Autostart manager.
     XIAOMI("xiaomi|redmi|poco",
-        "MIUI stops background apps unless\nAutostart is turned on.\n\n" +
-        "Open Autostart settings below, find\nMaxPay in the list, and turn it ON.",
+        new String[]{
+            "MIUI stops background apps unless Autostart is turned on.",
+            "Open Autostart settings below.",
+            "Find MaxPay in the list.",
+            "Turn Autostart ON."
+        },
         "com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
 
     // Oppo / Realme (ColorOS) — the case already built and shipped tonight.
     COLOROS("oppo|realme",
-        "Realme/Oppo phones stop background apps\n" +
-        "unless Auto-start is turned on.\n\n" +
-        "Open App info below, then look for\n" +
-        "\"Auto-start\" (sometimes under Battery\n" +
-        "or App Management) and turn it ON.",
+        new String[]{
+            "Realme/Oppo phones stop background apps unless Auto-start is turned on.",
+            "Open App info below.",
+            "Look for \"Auto-start\" (sometimes under Battery or App Management).",
+            "Turn it ON."
+        },
         null, null),
 
     // Vivo / iQOO — Permission Manager's background-startup whitelist.
     VIVO("vivo|iqoo",
-        "Vivo phones stop background apps unless\n" +
-        "they're added to the Autostart whitelist.\n\n" +
-        "Open Autostart settings below, find\nMaxPay in the list, and turn it ON.",
+        new String[]{
+            "Vivo phones stop background apps unless added to the Autostart whitelist.",
+            "Open Autostart settings below.",
+            "Find MaxPay in the list.",
+            "Turn it ON."
+        },
         "com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"),
 
     // Huawei / Honor (EMUI) — Phone Manager's Protected/Startup apps list.
     HUAWEI("huawei|honor",
-        "Huawei/Honor phones stop background apps\n" +
-        "unless they're a Protected App.\n\n" +
-        "Open Startup Manager below, find MaxPay,\n" +
-        "and enable Manage manually / Protected.",
+        new String[]{
+            "Huawei/Honor phones stop background apps unless they're a Protected App.",
+            "Open Startup Manager below.",
+            "Find MaxPay.",
+            "Enable \"Manage manually\" / Protected."
+        },
         "com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
 
     // Samsung (One UI) — no stable component across versions; Samsung's
@@ -324,11 +381,12 @@ public class PermissionActivity extends Activity {
     // between One UI releases that a direct app-details fallback is safer
     // as the PRIMARY path here rather than a secondary fallback.
     SAMSUNG("samsung",
-        "Samsung phones can put unused apps to\n" +
-        "sleep, stopping background monitoring.\n\n" +
-        "Open Battery settings below, find MaxPay\n" +
-        "under \"Never sleeping apps\" or similar,\n" +
-        "and make sure it's excluded from sleep.",
+        new String[]{
+            "Samsung phones can put unused apps to sleep, stopping background monitoring.",
+            "Open Battery settings below.",
+            "Find MaxPay under \"Never sleeping apps\" or similar.",
+            "Make sure it's excluded from sleep."
+        },
         null, null),
 
     // OnePlus (OxygenOS) — older, pre-ColorOS-merge builds have their own
@@ -337,21 +395,22 @@ public class PermissionActivity extends Activity {
     // instead — Build.MANUFACTURER doesn't distinguish this, so this is the
     // most likely of all six entries to need real-device correction.
     ONEPLUS("oneplus",
-        "OnePlus phones can restrict background\n" +
-        "apps under Battery Optimization.\n\n" +
-        "Open Battery settings below, find MaxPay,\n" +
-        "and set it to \"Don't optimize\" and\n" +
-        "disable \"Advanced Optimization\" for it.",
+        new String[]{
+            "OnePlus phones can restrict background apps under Battery Optimization.",
+            "Open Battery settings below.",
+            "Find MaxPay and set it to \"Don't optimize\".",
+            "Disable \"Advanced Optimization\" for it."
+        },
         "com.oneplus.security", "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity");
 
     final String manufacturerPattern;
-    final String instructions;
+    final String[] steps;
     final String intentPackage;
     final String intentClass;
 
-    Oem(String manufacturerPattern, String instructions, String intentPackage, String intentClass) {
+    Oem(String manufacturerPattern, String[] steps, String intentPackage, String intentClass) {
       this.manufacturerPattern = manufacturerPattern;
-      this.instructions = instructions;
+      this.steps = steps;
       this.intentPackage = intentPackage;
       this.intentClass = intentClass;
     }
@@ -389,12 +448,12 @@ public class PermissionActivity extends Activity {
 
     TextView icon = new TextView(this);
     icon.setText("🚀");
-    icon.setTextSize(64);
+    icon.setTextSize(56);
     icon.setGravity(Gravity.CENTER);
     LinearLayout.LayoutParams ip =
       new LinearLayout.LayoutParams(-2, -2);
     ip.gravity = Gravity.CENTER;
-    ip.bottomMargin = dp(32);
+    ip.bottomMargin = dp(24);
     content.addView(icon, ip);
 
     TextView title = new TextView(this);
@@ -407,20 +466,44 @@ public class PermissionActivity extends Activity {
     title.setPadding(dp(32), 0, dp(32), 0);
     LinearLayout.LayoutParams tp =
       new LinearLayout.LayoutParams(-1, -2);
-    tp.bottomMargin = dp(16);
+    tp.bottomMargin = dp(20);
     content.addView(title, tp);
 
     // No manufacturer here has a single universal settings screen or intent
-    // guaranteed stable across every firmware version — the on-screen text
-    // spells out the manual path as the source of truth; the button below
-    // is a best-effort shortcut into it, not a guarantee.
-    TextView desc = new TextView(this);
-    desc.setText(oem.instructions);
-    desc.setTextColor(0xFF666666);
-    desc.setTextSize(15);
-    desc.setGravity(Gravity.CENTER);
-    desc.setPadding(dp(32), 0, dp(32), 0);
-    content.addView(desc);
+    // guaranteed stable across every firmware version — the numbered steps
+    // below spell out the manual path as the source of truth (max 4 steps);
+    // the button underneath is a best-effort shortcut into it, not a
+    // guarantee.
+    LinearLayout stepsList = new LinearLayout(this);
+    stepsList.setOrientation(LinearLayout.VERTICAL);
+    LinearLayout.LayoutParams stepsLp = new LinearLayout.LayoutParams(-1, -2);
+    stepsLp.leftMargin = dp(32);
+    stepsLp.rightMargin = dp(32);
+    for (int i = 0; i < oem.steps.length; i++) {
+      LinearLayout stepRow = new LinearLayout(this);
+      stepRow.setOrientation(LinearLayout.HORIZONTAL);
+      LinearLayout.LayoutParams stepRowLp = new LinearLayout.LayoutParams(-1, -2);
+      stepRowLp.bottomMargin = dp(10);
+      stepRow.setLayoutParams(stepRowLp);
+
+      TextView number = new TextView(this);
+      number.setText((i + 1) + ".");
+      number.setTextColor(BRAND_PRIMARY);
+      number.setTypeface(null, android.graphics.Typeface.BOLD);
+      number.setTextSize(15);
+      LinearLayout.LayoutParams numberLp = new LinearLayout.LayoutParams(-2, -2);
+      numberLp.rightMargin = dp(8);
+      stepRow.addView(number, numberLp);
+
+      TextView stepText = new TextView(this);
+      stepText.setText(oem.steps[i]);
+      stepText.setTextColor(0xFF666666);
+      stepText.setTextSize(15);
+      stepRow.addView(stepText, new LinearLayout.LayoutParams(0, -2, 1f));
+
+      stepsList.addView(stepRow);
+    }
+    content.addView(stepsList, stepsLp);
 
     root.addView(content);
 
@@ -474,7 +557,7 @@ public class PermissionActivity extends Activity {
   private Button buildSecondaryButton(String text) {
     Button btn = new Button(this);
     btn.setText(text);
-    btn.setTextColor(0xFF1565C0);
+    btn.setTextColor(BRAND_PRIMARY);
     btn.setTextSize(15);
     btn.setTypeface(null, android.graphics.Typeface.BOLD);
     btn.setAllCaps(false);
@@ -522,7 +605,7 @@ public class PermissionActivity extends Activity {
     android.graphics.drawable.GradientDrawable bg =
       new android.graphics.drawable
         .GradientDrawable();
-    bg.setColor(0xFF1565C0);
+    bg.setColor(BRAND_PRIMARY);
     bg.setCornerRadius(dp(12));
     btn.setBackground(bg);
 
@@ -532,6 +615,14 @@ public class PermissionActivity extends Activity {
       dp(24), dp(40));
     btn.setLayoutParams(lp);
     return btn;
+  }
+
+  private android.graphics.drawable.GradientDrawable circle(int color) {
+    android.graphics.drawable.GradientDrawable d =
+      new android.graphics.drawable.GradientDrawable();
+    d.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+    d.setColor(color);
+    return d;
   }
 
   private int dp(int dp) {
