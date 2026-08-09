@@ -6,10 +6,12 @@ const OverlayCapture = require('../models/OverlayCapture');
 const OutgoingPayment = require('../models/OutgoingPayment');
 const Payout = require('../models/Payout');
 const CrashLog = require('../models/CrashLog');
+const Transaction = require('../models/Transaction');
 const scraperEngine = require('../services/scraperEngine');
 const matchingEngine = require('../services/matchingEngine');
 const { matchDebitWithOverlay } = require('../services/payoutVerifier');
-const { DEVICE_STATUS, RAW_EVENT_TYPE, CATEGORY, ROLES } = require('../config/constants');
+const { detectRealPayment } = require('../services/paymentDetector');
+const { DEVICE_STATUS, RAW_EVENT_TYPE, CATEGORY, TRANSACTION_STATUS, ROLES } = require('../config/constants');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { verifyServiceOrAdmin, resolveTraderFilter, requireTraderId } = require('../middleware/serviceAuth');
 
@@ -366,6 +368,14 @@ router.post('/event', async (req, res, next) => {
 
     // Payment events drive reconciliation against pending donor intents
     // (NGO's own donation ledger — unrelated to P2P order settlement).
+    //
+    // NOTE (left unchanged, flagging for visibility): the Android app
+    // hardcodes category:"PAYMENT" on every event it uploads (see
+    // NotificationService.java/APIClient.java), so this check has never
+    // actually filtered anything — every SMS/notification the phone
+    // captures reaches the two matching-engine calls below. Not touching
+    // that today; the real filtering added below (detectRealPayment) only
+    // gates the new Transaction-creation path.
     if (rawEvent.category === CATEGORY.PAYMENT) {
       matchingEngine.checkMatch(rawEvent, io).catch((e) => {
         console.error('checkMatch failed:', e.message);
@@ -376,6 +386,74 @@ router.post('/event', async (req, res, next) => {
       matchingEngine.triggerOrderSettlementFromRawEvent(rawEvent).catch((e) => {
         console.error('triggerOrderSettlementFromRawEvent failed:', e.message);
       });
+    }
+
+    // Real Transaction creation — this is what was missing. Web Login's
+    // webScraper.js writes a Transaction document on every scraped row;
+    // the APK path only ever wrote a RawEvent and stopped, so nothing
+    // captured by the APK ever reached the Trader panel's Notifications
+    // page (which reads the Transaction collection). Gated on a real
+    // classifier (paymentDetector.js), not the always-true category field
+    // above — promotional/reward noise, OTPs, outgoing payments, and
+    // payment *requests* are explicitly excluded, not just anything that
+    // happens to contain a ₹ amount.
+    if (device.traderId != null) {
+      const verdict = detectRealPayment({
+        type: rawEvent.type,
+        sender: rawEvent.sender,
+        body: rawEvent.body,
+        amount: rawEvent.amount,
+      });
+
+      if (verdict.isRealPayment) {
+        // Dedupe on (traderId, utr) — same reasoning as
+        // scraperEngine.persistTransactions()'s (accountId, utr/txnId)
+        // dedupe, adapted to the APK path's traderId-keyed ownership
+        // (there is no Account document here). Only dedupes when a UTR
+        // was actually captured; an event with no UTR at all is rare
+        // enough (and inherently unmatched to anything downstream) that
+        // skipping the dedupe check for it is the safer default over
+        // silently dropping a real payment that lacks one.
+        const existing = rawEvent.utr
+          ? await Transaction.findOne({ traderId: device.traderId, utr: rawEvent.utr })
+          : null;
+
+        if (!existing) {
+          await Transaction.create({
+            ngoId: device.ngoId || null,
+            traderId: device.traderId,
+            accountId: null, // no Account document for an APK-sourced capture
+            platform: rawEvent.type === RAW_EVENT_TYPE.NOTIFICATION ? 'apk-notification' : 'apk-sms',
+            amount: verdict.amount,
+            payerName: verdict.payerName || '',
+            payerUpiId: verdict.payerUpiId || '',
+            utr: rawEvent.utr || '',
+            txnId: '',
+            paymentMode: 'UPI',
+            status: TRANSACTION_STATUS.SUCCESS,
+            scrapedAt: new Date(),
+            rawEventId: rawEvent._id,
+          });
+
+          if (io) {
+            io.to(`trader:${device.traderId}`).emit('new-transactions', { count: 1 });
+          }
+
+          // Deliberately NOT calling matchingEngine.triggerOrderSettlementFromTransaction
+          // here (that's webScraper.js's post-create hook). It requires a
+          // real Account document (account.upiId) — there is none for an
+          // APK-sourced capture, only a Device. More importantly it would
+          // be redundant: triggerOrderSettlementFromRawEvent already ran
+          // unconditionally on this same event a few lines up (the
+          // category gate above is always true — see the NOTE there) and
+          // already resolves the trader's UPI IDs + triggers P2P
+          // settlement independent of any Transaction document existing.
+          // This Transaction is for the Notifications page / audit trail
+          // only — calling a second, differently-shaped settlement
+          // trigger on the same event would only add double-settlement
+          // risk for zero benefit.
+        }
+      }
     }
 
     return res.json({ success: true });
