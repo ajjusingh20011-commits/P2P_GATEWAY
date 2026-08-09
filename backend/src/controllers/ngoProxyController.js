@@ -36,10 +36,20 @@ const forward = async (req, res) => {
   const targetPath = req.originalUrl.replace(/^\/api\/trader\/ngo-proxy/, '/api');
   const serviceToken = mintNgoServiceToken(trader.id);
 
+  // Split path from querystring and let URLSearchParams do the parsing —
+  // a hand-rolled `pair.split('=')` here used to silently truncate any
+  // value containing its own literal '=' (e.g. a base64/JWT-style cursor
+  // or token), since split('=') breaks on every '=' it finds, not just the
+  // first. URLSearchParams (and axios, which accepts it directly as
+  // `params`) handles that correctly, and also handles repeated keys.
+  const [pathOnly, queryString] = targetPath.split('?');
+  const params = queryString ? new URLSearchParams(queryString) : undefined;
+
   try {
     const upstream = await axios({
       method: req.method,
-      url: base + targetPath,
+      url: base + pathOnly,
+      params,
       data: req.body,
       headers: { 'X-Service-Token': serviceToken },
       validateStatus: () => true, // relay ngo-backend's own status/body verbatim
