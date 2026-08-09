@@ -84,4 +84,18 @@ export const merchantApi = {
   myPayouts: (status) => api.get('/payout-requests/my', { params: status ? { status } : {} }),
 };
 
+// Kept for the offline mock-login fallback in AuthContext.
+export const MOCK_USER = {
+  id: 1,
+  email: 'merchant@p2p.com',
+  name: 'Test Store',
+  businessName: 'Test Store',
+  role: 'merchant',
+};
+
+export const MOCK_TOKENS = {
+  accessToken: 'mock.access.token',
+  refreshToken: 'mock.refresh.token',
+};
+
 export default api;

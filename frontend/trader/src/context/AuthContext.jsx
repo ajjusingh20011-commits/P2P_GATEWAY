@@ -1,7 +1,12 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { authApi } from '../services/api';
+import { authApi, MOCK_USER, MOCK_TOKENS } from '../services/api';
 
 const AuthContext = createContext(null);
+
+// Demo credentials accepted while running without a backend.
+const DEMO_PASSWORD = 'Trader@123456';
+const isDemoLogin = (email, password) =>
+  email.toLowerCase().includes('trader') && password === DEMO_PASSWORD;
 
 function persistSession(user, tokens) {
   localStorage.setItem('accessToken', tokens.accessToken);
@@ -24,9 +29,7 @@ export function AuthProvider({ children }) {
       .me()
       .then((res) => setUser(res.data.data.user))
       .catch(() => {
-        // A transient network error shouldn't force a re-login — fall back to
-        // the previously stored real user. A genuinely invalid/expired token
-        // is still caught by the response interceptor's 401 handler.
+        // Fall back to a previously stored (mock) user before giving up.
         const stored = localStorage.getItem('user');
         if (stored) {
           try {
@@ -42,17 +45,28 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = async (email, password) => {
-    const res = await authApi.login(email, password);
-    const data = res.data.data;
-    // Step 1 of a 2FA login: server withholds tokens until the TOTP code is
-    // validated. Signal the Login page to render the code-entry step.
-    if (data?.requires_2fa) {
-      return { requires2fa: true, tempToken: data.temp_token, role: data.role };
+    try {
+      const res = await authApi.login(email, password);
+      const data = res.data.data;
+      // Step 1 of a 2FA login: server withholds tokens until the TOTP code is
+      // validated. Signal the Login page to render the code-entry step.
+      if (data?.requires_2fa) {
+        return { requires2fa: true, tempToken: data.temp_token, role: data.role };
+      }
+      const { user: u, accessToken, refreshToken } = data;
+      persistSession(u, { accessToken, refreshToken });
+      setUser(u);
+      return u;
+    } catch (err) {
+      // Backend unreachable (network error) -> allow mock login for the demo account.
+      if (!err.response && isDemoLogin(email, password)) {
+        const u = { ...MOCK_USER, email };
+        persistSession(u, MOCK_TOKENS);
+        setUser(u);
+        return u;
+      }
+      throw err;
     }
-    const { user: u, accessToken, refreshToken } = data;
-    persistSession(u, { accessToken, refreshToken });
-    setUser(u);
-    return u;
   };
 
   // Step 2 of a 2FA login: exchange the temp token + TOTP code for a real
