@@ -3,6 +3,23 @@ import axios from 'axios';
 // The role this panel is allowed to authenticate.
 export const PANEL_ROLE = 'admin';
 
+// Compat exports — still imported by the currently-committed AuthContext.jsx
+// (a separate, in-progress Login/2FA redesign exists locally that drops this
+// dependency, but it's intentionally not part of this commit; see git log).
+// Restored verbatim from the last commit that had them so the build doesn't
+// break for whichever version of AuthContext.jsx is actually deployed.
+export const MOCK_USER = {
+  id: 1,
+  email: 'admin@p2p.com',
+  name: 'Platform Admin',
+  role: 'admin',
+};
+
+export const MOCK_TOKENS = {
+  accessToken: 'mock.access.token',
+  refreshToken: 'mock.refresh.token',
+};
+
 const BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api';
 
 const api = axios.create({
