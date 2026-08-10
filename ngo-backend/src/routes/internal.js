@@ -12,6 +12,7 @@ const mongoose = require('mongoose');
 const Account = require('../models/Account');
 const Device = require('../models/Device');
 const SessionStore = require('../services/SessionStore');
+const { CONNECTION_TYPE } = require('../config/constants');
 
 const router = express.Router();
 
@@ -71,8 +72,16 @@ router.get('/connection-liveness', async (req, res, next) => {
 
     // Only web accounts can have a Playwright session; APK-type accounts are
     // covered by the device list above.
-    const accounts = await Account.find({ type: 'web' })
-      .select('_id upiId status traderId gatewayPaymentDetailId')
+    //
+    // The field is `connectionType`, not `type`. Filtering on `type` looks
+    // like it works but is silently a no-op: database.js sets
+    // mongoose.set('strictQuery', true), which strips query conditions on
+    // paths the schema doesn't define — so `{ type: 'web' }` degrades to `{}`
+    // and matches every account, including APK ones. Those would then be
+    // evaluated with isSessionAlive() (always false, they have no browser
+    // session) and wrongly reported dead.
+    const accounts = await Account.find({ connectionType: CONNECTION_TYPE.WEB })
+      .select('_id upiId status traderId gatewayPaymentDetailId connectionType')
       .lean();
 
     const webAccounts = await Promise.all(
