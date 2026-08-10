@@ -4,29 +4,24 @@ import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, Empty
 import IdReveal from '../components/IdReveal';
 import { IconRefresh, IconBell, IconWarning } from '../components/icons';
 import { useApi } from '../hooks/useApi';
-import { getTransactions, getNgoSocketToken, NGO_SOCKET_ORIGIN, getDevices } from '../lib/ngoApi';
+import { getTransactions, getNgoSocketToken, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 import { notifications, ACCOUNT_TYPES } from '../utils/mock';
 
 const PER_PAGE = 8;
 
 // Map Transaction + rawEventId (populated) to row shape for table rendering.
-function apiToRow(txn, deviceMap) {
+function apiToRow(txn) {
   const rawEvent = txn.rawEventId; // Now populated with type, body, deviceId, category
   const isApk = !!rawEvent;
 
-  // Determine capture type
-  let captureType = 'Web scraper';
-  if (rawEvent) {
-    const typeMap = { SMS: 'SMS', NOTIFICATION: 'Notification', SCREEN: 'Screen' };
-    captureType = typeMap[rawEvent.type] || 'Unknown';
-  }
-
-  // Determine device/source display name (for description subtitle)
-  let sourceDeviceName = 'web';
-  if (rawEvent && rawEvent.deviceId && deviceMap) {
-    const device = deviceMap[rawEvent.deviceId];
-    sourceDeviceName = device?.deviceName || rawEvent.deviceId;
-  }
+  // The old "<captureType> · <deviceName>" subtitle ("Web scraper · web",
+  // "Notification · abc123…") was internal plumbing: which of our own engines
+  // saw the payment, and on which device row. A trader reconciling a payment
+  // cares about the money and the bank reference, not our capture topology —
+  // and the platform is already shown as a badge in the Method column, so
+  // repeating it there would just be redundant. That line now carries the
+  // UTR/RRN instead (see `utr` below), consistently for every source: APK
+  // notification, APK SMS and Web scraper alike.
 
   // Linked account name (from Transaction.payerName) — still used in the
   // Description subtitle's device attribution, just not in the Method column.
@@ -53,11 +48,15 @@ function apiToRow(txn, deviceMap) {
     currency: 'INR',
     method: txn.platform,
     methodBadgeColor: ACCOUNT_TYPES[txn.platform]?.color || 'default',
-    captureType,
     linkedAccount,
     upiId,
-    sourceDeviceName,
     originalText,
+    // Bank reference for the payment (Paytm calls it rrn; UPI calls it UTR).
+    // Real data, already stored on every scraped Transaction — it was simply
+    // never rendered, so traders had no way to reconcile a row against their
+    // bank statement. Null rather than '—' so the row can omit the line
+    // entirely when there genuinely isn't one.
+    utr: txn.utr || null,
     transactionId: txn.utr || '—',
     // Linked if matched=true (matched to an order), Process if false
     linkedStatus: txn.matched ? 'linked' : 'process',
@@ -76,9 +75,8 @@ function mockToRow(n) {
     currency: n.currency,
     method: n.method,
     methodBadgeColor: ACCOUNT_TYPES[n.method]?.color || 'default',
-    captureType: 'Notification',
-    source: 'mobile-device',
     originalText: n.description,
+    utr: n.transactionId || null,
     transactionId: n.transactionId,
     linkedStatus: 'linked',
     isLinked: true,
@@ -86,13 +84,28 @@ function mockToRow(n) {
   };
 }
 
+// createdAt/scrapedAt are stored in UTC and must stay that way — only the
+// rendering is converted.
+//
+// The bug this fixes: 'en-IN' is a LOCALE, not a timezone. It selects Indian
+// formatting conventions (dd/mm/yyyy, am/pm) but the clock still comes from
+// whatever machine is doing the rendering, so the same payment showed a
+// different time to a trader in Kolkata than to anyone viewing from another
+// zone — and neither was labelled. Pinning timeZone makes the output IST for
+// every viewer, everywhere, independent of the host's clock settings.
+const IST = 'Asia/Kolkata';
+
 function fmtTime(value) {
   if (!value) return { time: '—', date: '' };
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return { time: '—', date: '' };
 
-  const timeStr = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-  const dateStr = d.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const timeStr = d.toLocaleTimeString('en-IN', {
+    hour: '2-digit', minute: '2-digit', hour12: true, timeZone: IST,
+  });
+  const dateStr = d.toLocaleDateString('en-IN', {
+    day: '2-digit', month: '2-digit', year: 'numeric', timeZone: IST,
+  });
 
   return { time: timeStr, date: dateStr };
 }
@@ -107,30 +120,17 @@ export default function Notifications() {
   const [page, setPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Fetch both transactions AND devices for name lookups
   const { data: transactions, loading: txnLoading, error, refetch } = useApi(
     () => getTransactions().then((list) => list || []),
     { fallback: [] }
   );
 
-  const { data: devices } = useApi(
-    () => getDevices().then((list) => list || []),
-    { fallback: [] }
-  );
-
-  // Build deviceMap: deviceId (Android ID) → Device object for quick lookup
-  const deviceMap = useMemo(() => {
-    const map = {};
-    devices.forEach((d) => {
-      map[d.deviceId] = d;
-    });
-    return map;
-  }, [devices]);
-
-  // Transform transactions to row format using populated rawEventId
-  const rows = useMemo(() => {
-    return transactions.map((txn) => apiToRow(txn, deviceMap));
-  }, [transactions, deviceMap]);
+  // The devices fetch + deviceId->Device map that used to live here existed
+  // solely to resolve a display name for the "<captureType> · <deviceName>"
+  // subtitle. That subtitle is gone (it was internal plumbing, not something a
+  // trader reconciles against), so the extra round trip on every page load
+  // went with it.
+  const rows = useMemo(() => transactions.map((txn) => apiToRow(txn)), [transactions]);
 
   const set = (k) => (v) => {
     setFilters((f) => ({ ...f, [k]: v }));
@@ -273,8 +273,15 @@ export default function Notifications() {
                   </div>
 
                   {/* 2. Time (time + date) */}
+                  {/* Always IST, whoever is viewing and wherever from — the
+                      suffix says so explicitly so the number is unambiguous. */}
                   <div style={{ color: 'var(--text)', lineHeight: 1.4 }}>
-                    <div style={{ fontWeight: 600 }}>{timeStr}</div>
+                    <div style={{ fontWeight: 600 }}>
+                      {timeStr}
+                      {timeStr !== '—' && (
+                        <span style={{ fontSize: 10, fontWeight: 500, color: 'var(--subtle)', marginLeft: 4 }}>IST</span>
+                      )}
+                    </div>
                     <div style={{ fontSize: 11, color: 'var(--muted)' }}>{dateStr}</div>
                   </div>
 
@@ -314,9 +321,26 @@ export default function Notifications() {
                     >
                       {n.originalText || '—'}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--subtle)' }}>
-                      {n.captureType} · {n.sourceDeviceName}
-                    </div>
+                    {/* Bank reference (UTR/RRN) — what a trader actually
+                        matches against their statement. Monospace + tabular
+                        figures so digits line up down the column and a
+                        transposed one is easy to spot. Omitted rather than
+                        shown as a dash when the source genuinely has none. */}
+                    {n.utr ? (
+                      <div style={{ fontSize: 11, color: 'var(--subtle)', display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                        <span style={{ fontWeight: 600, letterSpacing: '.03em' }}>UTR</span>
+                        <span
+                          style={{
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                            fontVariantNumeric: 'tabular-nums',
+                            color: 'var(--muted)',
+                            wordBreak: 'break-all',
+                          }}
+                        >
+                          {n.utr}
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
 
                   {/* 6. Status (Linked/Process badge + info) */}
