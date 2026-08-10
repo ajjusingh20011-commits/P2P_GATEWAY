@@ -104,6 +104,19 @@ async function bootstrap() {
     logger.warn(`Could not start stale-claim sweep: ${err.message}`);
   }
 
+  // ---- Connection-liveness sync (works with or without Redis) ----
+  // Mirrors ngo-backend's real APK-heartbeat / Web-session liveness onto
+  // payment_details.connection_alive, which routingEngine.pickEligibleAccount
+  // reads so a dead connection can't be handed a real customer order. Same
+  // in-process pattern as the sweeps above; a failed tick leaves the previous
+  // values untouched rather than guessing.
+  try {
+    const { startConnectionLivenessSync } = require('./jobs/connectionLiveness');
+    startConnectionLivenessSync();
+  } catch (err) {
+    logger.warn(`Could not start connection-liveness sync: ${err.message}`);
+  }
+
   // ---- In-process under-review reminder sweep (works with or without Redis) ----
   // Nudges a trader (in-panel notification) + admin (Telegram) when an order
   // has sat in under_review for 2+ hours nobody has acted on. Notifications

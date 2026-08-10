@@ -61,6 +61,14 @@ module.exports = (sequelize) => {
 
       // Trader-facing activation toggle (distinct from admin `is_active`).
       is_active_detail: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+
+      // Is the underlying connection (APK device / Web Login session) actually
+      // alive? Mirrored from ngo-backend by jobs/connectionLiveness.js so the
+      // routing decision never has to make a cross-service call. Three-state:
+      // null = nothing linked (routing unaffected), true = alive, false = dead
+      // (routing skips it). See the migration for why null is not `false`.
+      connection_alive: { type: DataTypes.BOOLEAN, allowNull: true, defaultValue: null },
+      connection_checked_at: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
     },
     {
       sequelize,

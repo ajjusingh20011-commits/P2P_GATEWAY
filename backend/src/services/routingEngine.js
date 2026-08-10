@@ -110,6 +110,18 @@ async function pickEligibleAccount(trader, amount) {
     // Trader-facing on/off switch (Offers page toggle) — distinct from the
     // admin `is_active` linkage flag above; both must pass.
     if (!account.is_active_detail) continue;
+    // Connection liveness. Mirrored from ngo-backend's real signals (APK
+    // heartbeat freshness / SessionStore.isSessionAlive) by
+    // jobs/connectionLiveness.js — read locally so the checkout path never
+    // makes a cross-service call. Strictly additive: only an explicit `false`
+    // (a connection IS linked and IS confirmed dead) skips the account.
+    // `null` means nothing is linked to this UPI and routing behaves exactly
+    // as it did before this check existed.
+    if (account.connection_alive === false) {
+      logger.info(`routing: account ${account.upi_id} has a dead connection — skipping`);
+      continue;
+    }
+
     if (Number(account.min_amount) > 0 && Number(amount) < Number(account.min_amount)) continue;
     if (Number(account.max_amount) > 0 && Number(amount) > Number(account.max_amount)) continue;
 
