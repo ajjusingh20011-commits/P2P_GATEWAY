@@ -8,10 +8,71 @@ const { ACCOUNT_STATUS_REASON } = require('../config/constants');
 const path = require('path');
 const fs = require('fs');
 
+// ---------------------------------------------------------------------------
+// Concurrent Web Login session cap
+//
+// Nothing previously limited how many Playwright/Chromium sessions could run
+// at once. Three leftover sessions from failed logins exhausted this VPS's
+// ~961MB of RAM+swap and took the box down.
+//
+// Measured, not guessed: launching this exact configuration (headless,
+// --no-sandbox, loading the real Paytm dashboard) and sampling total Chromium
+// RSS after each session gave deltas of 228MB, 391MB and 215MB — ~280MB per
+// session. Three of those is ~840MB, which matches the observed outage almost
+// exactly. Against 961MB shared with node + mongod + the OS, only ~400-500MB
+// is realistically available, so 2 is the most that can be allowed to coexist.
+//
+// Default 2 rather than 1 because a cap of 1 would stop a trader running two
+// web accounts at all — a real functional regression, where the outage was
+// caused by UNBOUNDED growth, not by two. MAX_WEB_SESSIONS overrides it; on
+// this 961MB box specifically, setting it to 1 is the safe choice until the
+// VPS is upgraded.
+//
+// Rejected rather than queued: a login is interactive and OTP-bearing. Queuing
+// would leave the trader staring at a spinner while the OTP window expires,
+// and a queue of pending logins is exactly the unbounded backlog this is meant
+// to prevent. A clear, immediate error tells them to disconnect a session
+// first, which is an action they can actually take.
+// ---------------------------------------------------------------------------
+const MAX_WEB_SESSIONS = Math.max(1, parseInt(process.env.MAX_WEB_SESSIONS, 10) || 2);
+
+/**
+ * Sessions that hold (or are about to hold) a real browser. A 'connecting'
+ * placeholder counts: it is set immediately before chromium.launch(), so
+ * counting it is what stops N simultaneous login attempts from all passing the
+ * check and then launching N browsers.
+ */
+function activeSessionCount() {
+  let n = 0;
+  for (const [, s] of SessionStore.sessions) {
+    if (s && s.status !== 'disconnected') n += 1;
+  }
+  return n;
+}
+
 async function initiateLogin(account, io) {
   const accountId = account._id.toString();
   // Trader-scoped socket room string — no longer the old shared-org ngoId.
   const room = account.traderId != null ? `trader:${account.traderId}` : null;
+
+  // Cap check. Deliberately the first thing that happens: it runs before any
+  // browser is launched AND before the 'connecting' placeholder is stored, so
+  // a rejected attempt leaves nothing behind to clean up and cannot itself
+  // consume a slot. An account that already holds a session is exempt —
+  // reconnecting/re-logging-in an existing account replaces its own session
+  // rather than adding one, so it must not be blocked by its own presence.
+  if (!SessionStore.getSession(accountId)) {
+    const active = activeSessionCount();
+    if (active >= MAX_WEB_SESSIONS) {
+      const message = `Too many active Web Login sessions (${active}/${MAX_WEB_SESSIONS}). Disconnect one before connecting another.`;
+      // Surfaced the same way every other login failure is, so the trader
+      // panel shows a real reason instead of a silent hang.
+      await Account.findByIdAndUpdate(accountId, { status: 'failed', statusReason: null });
+      emitStatus(io, room, accountId, 'error', message);
+      throw new Error(message);
+    }
+  }
+
   // Declared here, not `const` inside the try block — the catch block below
   // needs to reach it to close it. Previously `browser` was scoped entirely
   // inside try, so ANY failure after chromium.launch() (wrong credentials,
@@ -609,5 +670,9 @@ function emitStatus(io, ngoId, accountId, status, message) {
 module.exports = {
   initiateLogin,
   submitOTP,
-  fetchAndSaveTransactions
+  fetchAndSaveTransactions,
+  // Exported for the cap's own tests and for anything that needs to report
+  // current capacity; not used by the login flow itself.
+  activeSessionCount,
+  MAX_WEB_SESSIONS
 };
