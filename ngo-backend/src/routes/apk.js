@@ -376,17 +376,30 @@ router.post('/event', async (req, res, next) => {
     // captures reaches the two matching-engine calls below. Not touching
     // that today; the real filtering added below (detectRealPayment) only
     // gates the new Transaction-creation path.
+    // Independent trigger for actual P2P order settlement (matching engine
+    // v2) — does not require a donor webhook to already exist. Awaited (not
+    // fire-and-forget) and hoisted above the Transaction-creation block
+    // below: previously this ran unawaited in parallel with Transaction
+    // creation, so there was no reliable way to know, at the point the
+    // Transaction is written, whether this exact event actually settled an
+    // order. `settlement` carries that real result forward so `matched`/
+    // `p2pOrderId` on the Transaction reflect it, instead of never being
+    // set at all (see Transaction.js's `matched` field comment).
+    let settlement = null;
     if (rawEvent.category === CATEGORY.PAYMENT) {
       matchingEngine.checkMatch(rawEvent, io).catch((e) => {
         console.error('checkMatch failed:', e.message);
       });
 
-      // Independent trigger for actual P2P order settlement (matching
-      // engine v2) — does not require a donor webhook to already exist.
-      matchingEngine.triggerOrderSettlementFromRawEvent(rawEvent).catch((e) => {
+      try {
+        settlement = await matchingEngine.triggerOrderSettlementFromRawEvent(rawEvent);
+      } catch (e) {
         console.error('triggerOrderSettlementFromRawEvent failed:', e.message);
-      });
+      }
     }
+    const settledOrderId = settlement && settlement.matched && settlement.order_id != null
+      ? settlement.order_id
+      : null;
 
     // TEMPORARY: unfiltered — shows ALL captured notifications, not just real
     // payments. Re-enable payment classification before this goes to real
@@ -444,7 +457,17 @@ router.post('/event', async (req, res, next) => {
           ? await Transaction.findOne({ traderId: device.traderId, utr: rawEvent.utr })
           : null;
 
-        if (!existing) {
+        if (existing) {
+          // A duplicate delivery of an event whose Transaction we already
+          // wrote — if THIS delivery is the one that carried the real
+          // settlement (e.g. the first delivery raced ahead of the order
+          // being created), catch the existing row up rather than losing it.
+          if (settledOrderId != null && !existing.matched) {
+            existing.matched = true;
+            existing.p2pOrderId = settledOrderId;
+            await existing.save();
+          }
+        } else {
           await Transaction.create({
             ngoId: device.ngoId || null,
             traderId: device.traderId,
@@ -466,6 +489,13 @@ router.post('/event', async (req, res, next) => {
             status: TRANSACTION_STATUS.SUCCESS,
             scrapedAt: new Date(),
             rawEventId: rawEvent._id,
+            // Real result of the settlement trigger awaited above — set
+            // here, not left for something else to fill in later,
+            // otherwise this exact combination (a first-time Transaction
+            // whose own event already settled the order) would create the
+            // row as unmatched and nothing would ever revisit it.
+            matched: settledOrderId != null,
+            p2pOrderId: settledOrderId,
           });
 
           if (io) {
@@ -477,7 +507,8 @@ router.post('/event', async (req, res, next) => {
           // real Account document (account.upiId) — there is none for an
           // APK-sourced capture, only a Device. More importantly it would
           // be redundant: triggerOrderSettlementFromRawEvent already ran
-          // unconditionally on this same event a few lines up (the
+          // (now awaited above, before this Transaction is created — see
+          // `settledOrderId`) unconditionally on this same event (the
           // category gate above is always true — see the NOTE there) and
           // already resolves the trader's UPI IDs + triggers P2P
           // settlement independent of any Transaction document existing.

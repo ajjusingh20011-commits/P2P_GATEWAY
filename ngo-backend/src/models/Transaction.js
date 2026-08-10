@@ -40,9 +40,20 @@ const transactionSchema = new mongoose.Schema(
       enum: Object.values(TRANSACTION_STATUS),
       default: TRANSACTION_STATUS.PENDING,
     },
-    // Set once a checkout /verify claim has been matched to this
-    // transaction, so it isn't matched to a second claim.
+    // Set once matchingEngineV2.matchAndSettle (backend/, MySQL side) has
+    // genuinely settled a P2P order off this transaction — see
+    // p2pOrderId below and matchingEngine.js's
+    // triggerOrderSettlementFromRawEvent/triggerOrderSettlementFromTransaction,
+    // which award the call sites (routes/apk.js, services/webScraper.js) the
+    // backend's real match result to apply here. NOT the old checkout
+    // /verify-based donation-ledger flow (routes/checkout.js) — that was
+    // retired 2026-08-06 and never runs for new data anymore, so it must
+    // never be the thing that sets this field again.
     matched: { type: Boolean, default: false },
+    // Cross-service link to backend's (MySQL) Order.id — not a Mongoose
+    // ref, since Order lives in a different database/service entirely.
+    // Only meaningful when matched is true.
+    p2pOrderId: { type: Number, default: null },
     txnTime: { type: String, default: '' },
     scrapedAt: { type: Date, default: Date.now },
     rawEventId: {
