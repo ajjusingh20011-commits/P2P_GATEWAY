@@ -12,6 +12,20 @@ async function initiateLogin(account, io) {
   const accountId = account._id.toString();
   // Trader-scoped socket room string — no longer the old shared-org ngoId.
   const room = account.traderId != null ? `trader:${account.traderId}` : null;
+  // Declared here, not `const` inside the try block — the catch block below
+  // needs to reach it to close it. Previously `browser` was scoped entirely
+  // inside try, so ANY failure after chromium.launch() (wrong credentials,
+  // a timed-out selector, a Paytm page-load timeout, "Login iframe not
+  // found.", ...) orphaned that Chromium process forever: the catch block
+  // had no way to even reference it, let alone close it, and
+  // SessionStore.removeSession() below only ever held a
+  // {status:'connecting'} placeholder at that point — never the real
+  // browser. Confirmed live: 14 Chromium-related processes on the VPS for
+  // what should be ~7 (one session) — a prior failed login's browser had
+  // never been closed, and two simultaneous Chromium sessions hitting
+  // Paytm from the same server IP is a plausible cause of the 403s the
+  // main working account then started seeing.
+  let browser;
   try {
     const email = decrypt(account.encryptedLoginEmail);
     const password = decrypt(account.encryptedLoginPassword);
@@ -21,7 +35,7 @@ async function initiateLogin(account, io) {
     // a LOCAL .env.local (or via scripts/test-web-login.js) to watch a real
     // login in a visible window — the deployed server never sets this var,
     // so its behavior is unaffected.
-    const browser = await chromium.launch({
+    browser = await chromium.launch({
       headless: process.env.SCRAPER_HEADLESS !== 'false',
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
@@ -180,6 +194,16 @@ async function initiateLogin(account, io) {
     }
     throw new Error('Login failed. Check credentials.');
   } catch (err) {
+    // Close the orphaned browser first — wrapped in its own try/catch so a
+    // failure here (e.g. the process already crashed on its own) can't
+    // mask the real error or block the cleanup below it.
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (closeErr) {
+        console.error(`[webScraper] failed to close browser for ${accountId} after login error:`, closeErr.message);
+      }
+    }
     await Account.findByIdAndUpdate(accountId, { status: 'failed', statusReason: null });
     SessionStore.removeSession(accountId);
     emitStatus(io, room, accountId, 'error', err.message);
@@ -235,6 +259,19 @@ async function submitOTP(account, otp, io) {
     }
     throw new Error('Invalid OTP. Try again.');
   } catch (err) {
+    // Same leak as initiateLogin's catch, different cause: browser WAS
+    // reachable here (destructured from the stored session above) but was
+    // never actually closed, and the session itself was never removed
+    // from SessionStore either — a wrong/expired OTP left a live,
+    // abandoned Chromium process running indefinitely, still sitting in
+    // SessionStore under 'otp_required' with nothing left able to ever
+    // act on it again.
+    try {
+      await browser.close();
+    } catch (closeErr) {
+      console.error(`[webScraper] failed to close browser for ${accountId} after OTP error:`, closeErr.message);
+    }
+    SessionStore.removeSession(accountId);
     await Account.findByIdAndUpdate(accountId, { status: 'failed', statusReason: null });
     emitStatus(io, room, accountId,
       'otp_error', err.message);
@@ -459,9 +496,22 @@ async function fetchAndSaveTransactions(account, page, io) {
       });
 
       // Matching engine v2 — independent P2P order-settlement trigger.
-      matchingEngine.triggerOrderSettlementFromTransaction(savedTxn, account).catch((e) => {
+      // Awaited (not fire-and-forget) so the real settlement result — did
+      // this transaction actually close an order, and which one — can be
+      // recorded on the Transaction itself: that's what makes the
+      // Notifications page's Linked/Process status real again (the old
+      // checkout /verify-based mechanism that used to set `matched` was
+      // retired 2026-08-06 and nothing has set it since).
+      try {
+        const settlement = await matchingEngine.triggerOrderSettlementFromTransaction(savedTxn, account);
+        if (settlement && settlement.matched && settlement.order_id != null) {
+          savedTxn.matched = true;
+          savedTxn.p2pOrderId = settlement.order_id;
+          await savedTxn.save();
+        }
+      } catch (e) {
         console.error('triggerOrderSettlementFromTransaction failed:', e.message);
-      });
+      }
 
       newCount++;
       console.log(
