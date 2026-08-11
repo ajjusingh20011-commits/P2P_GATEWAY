@@ -401,48 +401,28 @@ router.post('/event', async (req, res, next) => {
       ? settlement.order_id
       : null;
 
-    // TEMPORARY: unfiltered — shows ALL captured notifications, not just real
-    // payments. Re-enable payment classification before this goes to real
-    // production use. Flagged 2026-08-09.
-    //
-    // To re-enable real filtering: set this back to false (or delete the
-    // flag and the ternary below it, restoring a plain
-    // `const verdict = detectRealPayment({...})` call). paymentDetector.js
-    // itself is untouched — this only bypasses the call site.
-    const TEMP_SKIP_PAYMENT_FILTER = true;
-
     // Real Transaction creation — this is what was missing. Web Login's
     // webScraper.js writes a Transaction document on every scraped row;
     // the APK path only ever wrote a RawEvent and stopped, so nothing
     // captured by the APK ever reached the Trader panel's Notifications
-    // page (which reads the Transaction collection). Normally gated on a
-    // real classifier (paymentDetector.js) — promotional/reward noise,
-    // OTPs, outgoing payments, and payment *requests* are explicitly
-    // excluded there, not just anything that happens to contain a ₹
-    // amount — but see TEMP_SKIP_PAYMENT_FILTER above.
+    // page (which reads the Transaction collection). Gated on the real
+    // classifier (paymentDetector.js) — promotional/reward noise, OTPs,
+    // outgoing payments, and payment *requests* are explicitly excluded
+    // there, not just anything that happens to contain a ₹ amount.
+    //
+    // This call site was bypassed by a TEMP_SKIP_PAYMENT_FILTER flag between
+    // 2026-08-09 and 2026-08-11 to see every captured notification while the
+    // detector was being tightened against real formats. The flag, its
+    // synthetic verdict, and the '-unfiltered' platform suffix it wrote are
+    // all removed; rows created while it was on carry that suffix and are
+    // cleaned up separately.
     if (device.traderId != null) {
-      const verdict = TEMP_SKIP_PAYMENT_FILTER
-        ? {
-            isRealPayment: true,
-            // amount is a required field on Transaction — '0' is an
-            // honest placeholder (not a fabricated real amount) for
-            // events where nothing was extracted, so creation never
-            // fails validation while running unfiltered.
-            amount: rawEvent.amount || '0',
-            // Raw title + body, exactly as captured, so it's visible
-            // as-is on the Notifications page — no extraction/cleanup
-            // applied in this temporary mode.
-            payerName:
-              `${rawEvent.sender || ''}${rawEvent.sender && rawEvent.body ? ': ' : ''}${rawEvent.body || ''}`.trim() ||
-              '(no text captured)',
-            payerUpiId: '',
-          }
-        : detectRealPayment({
-            type: rawEvent.type,
-            sender: rawEvent.sender,
-            body: rawEvent.body,
-            amount: rawEvent.amount,
-          });
+      const verdict = detectRealPayment({
+        type: rawEvent.type,
+        sender: rawEvent.sender,
+        body: rawEvent.body,
+        amount: rawEvent.amount,
+      });
 
       if (verdict.isRealPayment) {
         // Dedupe on (traderId, utr) — same reasoning as
@@ -472,14 +452,7 @@ router.post('/event', async (req, res, next) => {
             ngoId: device.ngoId || null,
             traderId: device.traderId,
             accountId: null, // no Account document for an APK-sourced capture
-            // '-unfiltered' suffix while TEMP_SKIP_PAYMENT_FILTER is on —
-            // makes these rows easy to find and bulk-remove later (e.g.
-            // Transaction.deleteMany({ platform: /-unfiltered$/ })) once
-            // real filtering is re-enabled, instead of them blending in
-            // with genuine captured payments.
-            platform:
-              (rawEvent.type === RAW_EVENT_TYPE.NOTIFICATION ? 'apk-notification' : 'apk-sms') +
-              (TEMP_SKIP_PAYMENT_FILTER ? '-unfiltered' : ''),
+            platform: rawEvent.type === RAW_EVENT_TYPE.NOTIFICATION ? 'apk-notification' : 'apk-sms',
             amount: verdict.amount,
             payerName: verdict.payerName || '',
             payerUpiId: verdict.payerUpiId || '',
