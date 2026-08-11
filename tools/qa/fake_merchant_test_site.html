@@ -5,59 +5,115 @@
 <title>Test Merchant — P2P Gateway QA harness</title>
 <style>
   :root {
-    --bg: #0f1420;
-    --panel: #161d2e;
-    --panel-2: #1d2740;
-    --border: #2a3450;
-    --text: #e6e9f2;
-    --text-muted: #8b93ab;
-    --accent: #3b6fd4;
-    --accent-hover: #4d7fe0;
-    --success: #2ea86c;
-    --danger: #d64545;
-    --warn: #d4a13b;
+    --bg: #0b0f19;
+    --panel: #141b2c;
+    --panel-2: #1b2438;
+    --border: #262f47;
+    --border-soft: #1e2740;
+    --text: #eef1f8;
+    --text-muted: #8891a8;
+    --text-faint: #5c6580;
+    --accent: #4a7fe8;
+    --accent-hover: #5c8ef2;
+    --accent-soft: rgba(74,127,232,0.12);
+    --success: #34b378;
+    --danger: #e05a5a;
+    --warn: #dba84a;
   }
   * { box-sizing: border-box; }
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    -webkit-font-smoothing: antialiased;
     margin: 0;
-    padding: 32px 16px;
+    padding: 40px 20px 64px;
   }
   .wrap { max-width: 640px; margin: 0 auto; }
-  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
-  .sub { color: var(--text-muted); font-size: 13px; margin: 0 0 28px; }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .brand-mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), #2f5bc4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: white;
+    letter-spacing: -0.02em;
+    flex-shrink: 0;
+  }
+  .brand-name { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: 0.01em; }
+  .brand-tag { font-size: 11px; color: var(--text-faint); letter-spacing: 0.04em; text-transform: uppercase; margin-top: 1px; }
+  h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 6px; }
+  .sub { color: var(--text-muted); font-size: 13.5px; line-height: 1.55; margin: 0 0 32px; max-width: 52ch; }
   .card {
     background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 20px;
-    margin-bottom: 20px;
+    border: 1px solid var(--border-soft);
+    border-radius: 12px;
+    padding: 22px;
+    margin-bottom: 18px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2), 0 8px 24px -12px rgba(0,0,0,0.35);
   }
-  .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 14px; display: flex; align-items: center; gap: 8px; }
+  .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .card h2 { font-size: 14px; font-weight: 650; margin: 0; display: flex; align-items: center; gap: 8px; letter-spacing: -0.005em; }
   .badge {
     font-size: 10px;
-    font-weight: 600;
-    padding: 2px 8px;
+    font-weight: 650;
+    padding: 3px 9px;
     border-radius: 20px;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
   }
-  .badge.live { background: rgba(46,168,108,0.15); color: var(--success); }
-  .badge.pending { background: rgba(212,161,59,0.15); color: var(--warn); }
-  label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 5px; margin-top: 12px; }
+  .badge.live { background: rgba(52,179,120,0.14); color: var(--success); }
+  .badge.pending { background: rgba(219,168,74,0.14); color: var(--warn); }
+  .badge.neutral { background: var(--panel-2); color: var(--text-muted); border: 1px solid var(--border); }
+  label { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.01em; margin-bottom: 6px; margin-top: 14px; }
   label:first-of-type { margin-top: 0; }
   input, select {
     width: 100%;
     background: var(--panel-2);
     border: 1px solid var(--border);
     color: var(--text);
-    padding: 9px 11px;
-    border-radius: 6px;
+    padding: 9px 12px;
+    border-radius: 7px;
     font-size: 13px;
     font-family: inherit;
+    transition: border-color 0.12s ease;
   }
-  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  input::placeholder { color: var(--text-faint); }
+  input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  select { cursor: pointer; }
+  .profile-row { display: flex; gap: 8px; align-items: center; }
+  .profile-row select { flex: 1; }
+  .profile-save-row { display: flex; gap: 8px; margin-top: 8px; }
+  .profile-save-row input { flex: 1; }
+  .btn-outline {
+    flex-shrink: 0;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 9px 14px;
+    border-radius: 7px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-outline:hover { border-color: var(--accent); color: var(--accent-hover); }
+  .profile-hint { font-size: 11.5px; color: var(--text-faint); margin-top: 8px; line-height: 1.5; }
+  .profile-hint.success { color: var(--success); }
+  .section-divider {
+    border: none;
+    border-top: 1px solid var(--border-soft);
+    margin: 20px 0 16px;
+  }
   .amount-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
   .amount-btn {
     flex: 1;
@@ -66,53 +122,47 @@
     border: 1px solid var(--border);
     color: var(--text);
     padding: 10px;
-    border-radius: 6px;
+    border-radius: 7px;
     font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
+    transition: border-color 0.12s ease;
   }
   .amount-btn:hover { border-color: var(--accent); }
-  .amount-btn.selected { border-color: var(--accent); background: rgba(59,111,212,0.15); }
+  .amount-btn.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-hover); }
   button.primary {
     width: 100%;
-    margin-top: 16px;
+    margin-top: 18px;
     background: var(--accent);
     border: none;
     color: white;
     padding: 12px;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 600;
+    border-radius: 7px;
+    font-size: 13.5px;
+    font-weight: 650;
+    letter-spacing: -0.005em;
     cursor: pointer;
+    transition: background 0.12s ease;
   }
   button.primary:hover { background: var(--accent-hover); }
   button.primary:disabled { background: var(--panel-2); color: var(--text-muted); cursor: not-allowed; }
-  button.secondary {
-    width: 100%;
-    margin-top: 16px;
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    padding: 12px;
-    border-radius: 6px;
-    font-size: 13px;
-    cursor: not-allowed;
-  }
   .out {
     margin-top: 14px;
-    background: var(--panel-2);
+    background: #0d1220;
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 12px;
-    font-family: ui-monospace, monospace;
-    font-size: 11px;
+    border-radius: 8px;
+    padding: 13px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 11.5px;
+    line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 220px;
+    max-height: 240px;
     overflow-y: auto;
     display: none;
   }
   .out.show { display: block; }
-  .out.err { border-color: var(--danger); color: #f3a3a3; }
+  .out.err { border-color: var(--danger); color: #f4a5a5; }
   .checkout-link {
     display: block;
     margin-top: 12px;
@@ -120,15 +170,15 @@
     background: var(--success);
     color: white;
     text-decoration: none;
-    padding: 10px;
-    border-radius: 6px;
+    padding: 11px;
+    border-radius: 7px;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 650;
   }
   .note {
     font-size: 12px;
     color: var(--text-muted);
-    line-height: 1.5;
+    line-height: 1.55;
     margin-top: 10px;
   }
   .note.warn { color: var(--warn); }
@@ -138,6 +188,7 @@
     font-size: 12px;
     color: var(--text-muted);
     text-decoration: underline;
+    text-underline-offset: 2px;
     cursor: pointer;
   }
   .clear-link:hover { color: var(--text); }
@@ -145,28 +196,56 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Test merchant — QA harness</h1>
-  <p class="sub">Calls your real backend directly. Nothing here is simulated — every request goes to the API base URL below.</p>
+  <div class="brand">
+    <div class="brand-mark">P2P</div>
+    <div>
+      <div class="brand-name">Test Merchant Console</div>
+      <div class="brand-tag">Internal QA harness</div>
+    </div>
+  </div>
+  <h1>Merchant integration tester</h1>
+  <p class="sub">Calls your real backend directly. Nothing here is simulated — every request goes to the API base URL below, and every response shown is exactly what your API returned.</p>
 
   <div class="card">
-    <h2>Connection</h2>
+    <div class="card-header">
+      <h2>Connection</h2>
+      <span class="badge neutral">merchant identity</span>
+    </div>
+
+    <label>Saved merchant profile</label>
+    <div class="profile-row">
+      <select id="profileSelect"><option value="">— Unsaved / new —</option></select>
+      <span class="clear-link" id="deleteProfileBtn">Delete</span>
+    </div>
+    <div class="profile-save-row">
+      <input id="profileNameInput" placeholder="Profile name, e.g. Acme Retail" />
+      <button class="btn-outline" id="saveProfileBtn" type="button">Save as profile</button>
+    </div>
+    <p class="profile-hint">Save the fields below under a name to switch between test merchants quickly. Purely local — nothing here is fetched from or written to your API; it's just a labelled bundle of whatever you've typed in.</p>
+    <p class="profile-hint" id="profileFeedback"></p>
+
+    <hr class="section-divider" />
+
     <label>API base URL (e.g. https://api.adminmaxedge.com or http://localhost:4000)</label>
-    <input id="apiBase" placeholder="https://api.adminmaxedge.com" />
+    <input id="apiBase" autocomplete="off" placeholder="https://api.adminmaxedge.com" />
     <label>Merchant X-API-Key</label>
-    <input id="apiKey" placeholder="stays in this browser tab only, never sent anywhere but your API" />
+    <input id="apiKey" autocomplete="off" placeholder="stays in this browser tab only, never sent anywhere but your API" />
     <label>Merchant X-API-Secret</label>
-    <input id="apiSecret" type="password" placeholder="stays in this browser tab only" />
+    <input id="apiSecret" type="password" autocomplete="new-password" placeholder="stays in this browser tab only" />
     <label>Merchant email (for withdrawal login)</label>
-    <input id="merchantEmail" placeholder="stays in this browser tab only — used only to call POST /api/auth/login" />
+    <input id="merchantEmail" autocomplete="off" placeholder="stays in this browser tab only — used only to call POST /api/auth/login" />
     <label>Merchant password</label>
-    <input id="merchantPassword" type="password" placeholder="stays in this browser tab only" />
+    <input id="merchantPassword" type="password" autocomplete="new-password" placeholder="stays in this browser tab only" />
     <button class="primary" id="loginBtn" type="button">Log in &amp; get access token</button>
     <div class="out" id="loginOut"></div>
     <p class="note">Base URL, API key/secret, and email/password above are saved in this browser's localStorage and restored on refresh — the access token itself is never saved (in-memory only, cleared on refresh, same as before). <span class="clear-link" id="clearSavedBtn">Clear saved details</span></p>
   </div>
 
   <div class="card">
-    <h2>Deposit <span class="badge live">wired to real API</span></h2>
+    <div class="card-header">
+      <h2>Deposit</h2>
+      <span class="badge live">wired to real API</span>
+    </div>
     <label>Amount (INR)</label>
     <div class="amount-row">
       <button class="amount-btn" data-amt="200">₹200</button>
@@ -177,12 +256,21 @@
     <input id="customAmt" type="number" placeholder="Custom amount" />
     <label>Customer reference</label>
     <input id="customerRef" placeholder="Customer reference" />
+    <label>Deposit type</label>
+    <select id="depositType">
+      <option value="STD">STD</option>
+      <option value="FTD">FTD</option>
+    </select>
+    <p class="note warn">The server auto-detects the real type from customer_ref's order history (orderService.js) and IGNORES this claim if it disagrees — this only matters if you reuse a customer_ref that already has a successful order (then STD sticks). A fresh/auto-filled reference is always detected FTD no matter what you pick here.</p>
     <button class="primary" id="depositBtn">Create order &amp; open checkout</button>
     <div class="out" id="depositOut"></div>
   </div>
 
   <div class="card">
-    <h2>Withdrawal <span class="badge live">wired to real API</span></h2>
+    <div class="card-header">
+      <h2>Withdrawal</h2>
+      <span class="badge live">wired to real API</span>
+    </div>
     <label>Amount (INR)</label>
     <input id="wdAmt" type="number" placeholder="Amount" />
     <label>Payment method</label>
@@ -267,9 +355,104 @@ PERSIST_FIELD_IDS.forEach((id) => {
 
 document.getElementById('clearSavedBtn').addEventListener('click', () => {
   localStorage.removeItem(PERSIST_KEY);
+  localStorage.removeItem(ACTIVE_PROFILE_KEY);
   PERSIST_FIELD_IDS.forEach((id) => {
     document.getElementById(id).value = '';
   });
+  document.getElementById('profileSelect').value = '';
+});
+
+// --- Named merchant profiles (localStorage) ---
+// Separate from the plain auto-persist above: that always remembers
+// "whatever's currently in the fields," this is an explicit, named,
+// switchable list — "which merchants I've added for testing." Same
+// storage-is-fine-here reasoning as the auto-persist fields; nothing here
+// is ever sent anywhere, it's a local label for a bundle of the same 5
+// fields already being persisted.
+const PROFILES_KEY = 'qaHarnessProfiles';
+// Tracks which saved profile (if any) is the one currently loaded into the
+// fields, so the dropdown itself survives a refresh too — otherwise the
+// fields correctly restore (via the plain auto-persist above) but the
+// dropdown falsely resets to "Unsaved / new", which is real, confirmed
+// live-browser behavior this exact code produced before this fix.
+const ACTIVE_PROFILE_KEY = 'qaHarnessActiveProfile';
+
+function getProfiles() {
+  try {
+    return JSON.parse(localStorage.getItem(PROFILES_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function populateProfileSelect(selectedName) {
+  const select = document.getElementById('profileSelect');
+  const names = Object.keys(getProfiles()).sort((a, b) => a.localeCompare(b));
+  select.innerHTML = '<option value="">— Unsaved / new —</option>' +
+    names.map((n) => `<option value="${n.replace(/"/g, '&quot;')}">${n}</option>`).join('');
+  select.value = names.includes(selectedName) ? selectedName : '';
+}
+
+function showProfileFeedback(message, isSuccess) {
+  const el = document.getElementById('profileFeedback');
+  el.textContent = message;
+  el.classList.toggle('success', !!isSuccess);
+  setTimeout(() => {
+    if (el.textContent === message) el.textContent = '';
+  }, 3000);
+}
+
+populateProfileSelect(localStorage.getItem(ACTIVE_PROFILE_KEY) || '');
+
+document.getElementById('profileSelect').addEventListener('change', (e) => {
+  const name = e.target.value;
+  if (!name) {
+    localStorage.removeItem(ACTIVE_PROFILE_KEY);
+    return; // "— Unsaved / new —" — leave whatever's currently typed alone
+  }
+  const profile = getProfiles()[name];
+  if (!profile) return;
+  PERSIST_FIELD_IDS.forEach((id) => {
+    if (typeof profile[id] === 'string') document.getElementById(id).value = profile[id];
+  });
+  saveFields(); // keep the plain auto-persist blob in sync, so a refresh keeps this profile's fields loaded
+  localStorage.setItem(ACTIVE_PROFILE_KEY, name); // and keep the dropdown itself in sync too
+  document.getElementById('profileNameInput').value = name;
+  showProfileFeedback('Loaded "' + name + '".', true);
+});
+
+document.getElementById('saveProfileBtn').addEventListener('click', () => {
+  const name = document.getElementById('profileNameInput').value.trim();
+  if (!name) {
+    showProfileFeedback('Enter a profile name above first.', false);
+    document.getElementById('profileNameInput').focus();
+    return;
+  }
+  const values = {};
+  PERSIST_FIELD_IDS.forEach((id) => { values[id] = document.getElementById(id).value; });
+  const profiles = getProfiles();
+  const overwritten = Object.prototype.hasOwnProperty.call(profiles, name);
+  profiles[name] = values;
+  localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+  localStorage.setItem(ACTIVE_PROFILE_KEY, name);
+  populateProfileSelect(name);
+  showProfileFeedback((overwritten ? 'Updated "' : 'Saved "') + name + '".', true);
+});
+
+document.getElementById('deleteProfileBtn').addEventListener('click', () => {
+  const select = document.getElementById('profileSelect');
+  const name = select.value;
+  if (!name) {
+    showProfileFeedback('Select a saved profile above to delete it.', false);
+    return;
+  }
+  const profiles = getProfiles();
+  delete profiles[name];
+  localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+  localStorage.removeItem(ACTIVE_PROFILE_KEY);
+  populateProfileSelect('');
+  document.getElementById('profileNameInput').value = '';
+  showProfileFeedback('Deleted "' + name + '".', true);
 });
 
 document.getElementById('wdMethod').addEventListener('change', (e) => {
@@ -301,6 +484,7 @@ document.getElementById('depositBtn').addEventListener('click', async () => {
   const customAmt = document.getElementById('customAmt').value;
   const amount = customAmt || selectedAmt;
   const customerRef = document.getElementById('customerRef').value.trim();
+  const depositType = document.getElementById('depositType').value;
 
   const out = document.getElementById('depositOut');
   out.classList.remove('err');
@@ -332,7 +516,7 @@ document.getElementById('depositBtn').addEventListener('click', async () => {
         'X-API-Key': apiKey,
         'X-API-Secret': apiSecret,
       },
-      body: JSON.stringify({ amount: Number(amount), customer_ref: customerRef }),
+      body: JSON.stringify({ amount: Number(amount), customer_ref: customerRef, deposit_type: depositType }),
     });
 
     const text = await res.text();
