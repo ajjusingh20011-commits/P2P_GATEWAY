@@ -468,6 +468,27 @@
 .rateCell strong, .rateCell span,
 .personCell strong, .personCell span,
 .dateCell strong, .dateCell span { display: block; }
+
+/* Created / Closed stacked in one column. The two stamps used to be visually
+   identical adjacent lines that ran together; these give the time clear
+   priority, mute the date, and put a rule between the two blocks. */
+.dateCellSplit { display: flex; flex-direction: column; gap: 5px; }
+.dateCellSplit .stampBlock + .stampBlock {
+  padding-top: 5px;
+  border-top: 1px solid var(--cardborder);
+}
+.dateCellSplit .stampLabel {
+  display: block; font-size: 9px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--subtle); line-height: 1.2;
+}
+.dateCellSplit .stampTime {
+  display: block; font-size: 13px; font-weight: 700; line-height: 1.25;
+  color: var(--text); font-variant-numeric: tabular-nums;
+}
+.dateCellSplit .stampDate {
+  display: block; font-size: 10px; color: var(--muted); margin-top: 0;
+  font-variant-numeric: tabular-nums;
+}
 /* Method/Account's UPI ID is the prominent bold line — real data can run
    long, so it truncates with an ellipsis rather than wrapping/breaking the
    row height; the native title= on the element (set in Trades.jsx) surfaces
@@ -484,9 +505,17 @@
 }
 .needsAction { color: #b45309; } /* under_review — the trader can act right now */
 .terminalState { color: #ef4444; } /* cancelled/failed — real status word, red; recoverable via Reopen */
-.confirmTrade, .reopenTrade {
+.confirmTrade, .reopenTrade, .rejectTrade {
   height: 30px; border: 0; color: #fff; border-radius: 8px;
   padding: 0 10px; font-size: 11px; font-weight: 700; cursor: pointer; flex-shrink: 0;
+}
+.confirmTrade:disabled, .rejectTrade:disabled { opacity: .5; cursor: not-allowed; }
+/* Reject — destructive, but outlined rather than filled so it never competes
+   with Confirm for the eye. Rejecting is recoverable (the order becomes
+   failed, which keeps its Reopen action); confirming settles money now. */
+.rejectTrade {
+  background: transparent; color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, .45);
 }
 .confirmTrade { background: #22c55e; } /* real trader-confirm — settles the order now */
 .reopenTrade { background: #f59e0b; } /* real reopen-for-review — needs a UTR first, not an instant settle */

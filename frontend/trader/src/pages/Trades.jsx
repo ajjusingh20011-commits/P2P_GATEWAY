@@ -41,19 +41,75 @@ function formatStamp(value) {
   };
 }
 
-// Reference's dateCell, applied to Created+Closed merged into one cell: two
-// stacked lines (created timestamp, then closed timestamp or a muted dash),
-// each combining time + date since there's no longer a second column to
-// carry the date separately.
-function CreatedClosedCell({ createdAt, closedAt }) {
-  const c = formatStamp(createdAt);
-  const cl = formatStamp(closedAt);
+// Two timestamps in one column. Previously both rendered as "09:44 · 11.08.2026"
+// on adjacent lines, which ran together — same size, same weight, same
+// separator, and nothing saying which was Created and which was Closed.
+//
+// Now each stamp leads with the time (the part actually scanned) in a larger
+// tabular-numbers face, with the date beneath it small and muted, and the two
+// are separated by a rule with explicit Created/Closed labels.
+function Stamp({ label, value, muted }) {
+  const s = formatStamp(value);
   return (
-    <div className="dateCell">
-      <strong>{c ? `${c.time} · ${c.date}` : '—'}</strong>
-      <span>{cl ? `${cl.time} · ${cl.date}` : '—'}</span>
+    <div className="stampBlock">
+      <span className="stampLabel">{label}</span>
+      {s ? (
+        <>
+          <strong className="stampTime" style={muted ? { color: 'var(--muted)' } : undefined}>{s.time}</strong>
+          <span className="stampDate">{s.date}</span>
+        </>
+      ) : (
+        <strong className="stampTime" style={{ color: 'var(--subtle)', fontWeight: 500 }}>—</strong>
+      )}
     </div>
   );
+}
+
+function CreatedClosedCell({ createdAt, closedAt }) {
+  return (
+    <div className="dateCell dateCellSplit">
+      <Stamp label="Created" value={createdAt} />
+      <Stamp label="Closed" value={closedAt} muted />
+    </div>
+  );
+}
+
+// Statuses in which the customer has asserted payment, so the Client column
+// should say something definite even when no reference was supplied.
+const CLAIMED_STATUSES = new Set(['claimed_paid', 'under_review']);
+
+// What the customer submitted. The trader cross-checks this against their own
+// bank/UPI app before confirming, so it is rendered in a monospace,
+// tabular-numbers face — a reference number is read digit by digit, and a
+// proportional font makes transposed digits easy to miss.
+function ClientCell({ t }) {
+  if (t.clientUtr) {
+    return (
+      <div className="personCell">
+        <strong
+          title={`Customer-submitted reference: ${t.clientUtr}`}
+          style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontVariantNumeric: 'tabular-nums', letterSpacing: '.01em' }}
+        >
+          {t.clientUtr}
+        </strong>
+        <span>{t.confirmationType === 'screenshot' ? 'UTR + screenshot' : 'Customer UTR'}</span>
+      </div>
+    );
+  }
+  if (CLAIMED_STATUSES.has(t.status)) {
+    // Claimed but nothing to check against — materially different from an
+    // order the customer simply hasn't acted on, and previously identical
+    // on screen (both blank).
+    return (
+      <div className="personCell">
+        <strong style={{ color: '#b45309' }}>
+          {t.confirmationType === 'screenshot' ? 'Screenshot only' : 'No UTR provided'}
+        </strong>
+        <span>Customer marked as paid</span>
+      </div>
+    );
+  }
+  return <div className="personCell"><strong style={{ color: 'var(--muted)' }}>—</strong></div>;
 }
 
 // Terminal statuses that count as "closed" for the Closed-timestamp column.
@@ -61,10 +117,9 @@ const CLOSED_STATUSES = new Set([
   'success', 'failed', 'rejected', 'cancelled', 'disputed',
 ]);
 
-// Map a backend order onto the shape this table renders. The API lacks a
-// client-identity field — shows `—`. No deposit_type (FTD/STD) field is read
-// here — that's an admin-only trader-classification/routing concept and is
-// deliberately never surfaced on the trader panel, on this page or any other.
+// Map a backend order onto the shape this table renders. No deposit_type
+// (FTD/STD) field is read here — that's an admin-only trader-classification/
+// routing concept, deliberately never surfaced on the trader panel.
 function orderToRow(o) {
   return {
     id: o.order_id || o.id,
@@ -77,7 +132,20 @@ function orderToRow(o) {
     traderDeductionUsdt: o.trader_deduction_usdt != null ? Number(o.trader_deduction_usdt) : null,
     // Persisted trader_rate on confirmed orders; else filled from current rate.
     traderRate: o.trader_rate != null ? Number(o.trader_rate) : null,
-    client: '—',
+    // What the CUSTOMER submitted on the checkout page. This column was
+    // hardcoded to '—' on the premise that "the API lacks a client-identity
+    // field" — but the real reference the trader needs to cross-check against
+    // their own account was being returned all along and simply never read.
+    //
+    // donor_submitted_utr is the customer's own entry (claimPaid writes it);
+    // utr_number is the same value but is also what a real settlement
+    // confirms against, so it is the fallback rather than the primary;
+    // upi_ref_id is the receiver-side reference when matching supplied one.
+    clientUtr: o.donor_submitted_utr || o.utr_number || o.upi_ref_id || null,
+    // 'utr' | 'screenshot' | 'no_proof' — how the customer claimed to have
+    // paid, so "claimed with no reference" is stated rather than left blank.
+    confirmationType: o.confirmation_type || null,
+    claimedPaidAt: o.claimed_paid_at || null,
     createdAt: o.created_at || null,
     // Real settlement/close time. confirmed_at covers success; other terminal
     // states (cancelled/failed/rejected/disputed) fall back to updated_at —
@@ -152,13 +220,31 @@ function mockToRow(t) {
 //   everything else (success, rejected, disputed, pending, checkout_open,
 //     claimed_paid) -> no trader action from this column; just the real
 //     status word via the shared STATUS-map badge.
-function StatusCell({ t, busy, onConfirm, onReopen }) {
-  if (t.status === 'under_review') {
+function StatusCell({ t, busy, onConfirm, onReject, onReopen }) {
+  // Both REVIEWABLE_STATUSES get the same pair of real actions. claimed_paid
+  // previously rendered as a terminal-looking badge with nothing to do, so a
+  // trader who had already cross-checked the customer's UTR against their own
+  // account had no way to act and could only wait on automated matching.
+  if (t.status === 'claimed_paid' || t.status === 'under_review') {
+    const label = t.status === 'under_review' ? 'Under review' : 'Claimed paid';
     return (
       <div className="resolutionCell">
-        <span className="needsAction"><Hand size={16} />Under review</span>
-        <button className="confirmTrade" disabled={busy} onClick={onConfirm}>
+        <span className="needsAction"><Hand size={16} />{label}</span>
+        <button
+          className="confirmTrade"
+          disabled={busy}
+          onClick={onConfirm}
+          title="I can see this payment in my account — settle this order now"
+        >
           {busy ? 'Confirming…' : 'Confirm'}
+        </button>
+        <button
+          className="rejectTrade"
+          disabled={busy}
+          onClick={onReject}
+          title="No matching payment arrived — reject this claim"
+        >
+          Reject
         </button>
       </div>
     );
@@ -261,6 +347,30 @@ export default function Trades() {
     } finally {
       setConfirmingId(null);
       setConfirmOrderId(null);
+    }
+  };
+
+  // Reject: the customer claimed a payment that never arrived. Uses the real
+  // POST /orders/:id/cancel (trader-scoped), which moves the order to failed
+  // and releases the trader's amount lock. Deliberately recoverable — a
+  // failed order keeps its "Reopen" action, so a reject made too early can be
+  // undone once the payment does show up.
+  const [rejectOrder, setRejectOrder] = useState(null);
+  const [rejectBusy, setRejectBusy] = useState(false);
+
+  const doReject = async () => {
+    const t = rejectOrder;
+    if (!t) return;
+    setRejectBusy(true);
+    try {
+      await traderApi.cancelOrder(t.id);
+      toast('Order rejected — no matching payment', 'success');
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      toast(err.response?.data?.message || 'Failed to reject this order', 'error');
+    } finally {
+      setRejectBusy(false);
+      setRejectOrder(null);
     }
   };
 
@@ -465,11 +575,9 @@ export default function Trades() {
 
                 <CreatedClosedCell createdAt={t.createdAt} closedAt={t.closedAt} />
 
-                <div className="personCell">
-                  <strong>{t.client}</strong>
-                </div>
+                <ClientCell t={t} />
 
-                <StatusCell t={t} busy={confirmingId === t.id} onConfirm={() => handleConfirm(t.id)} onReopen={() => openReopen(t)} />
+                <StatusCell t={t} busy={confirmingId === t.id || rejectBusy} onConfirm={() => handleConfirm(t.id)} onReject={() => setRejectOrder(t)} onReopen={() => openReopen(t)} />
               </div>
             );
           })
@@ -519,6 +627,18 @@ export default function Trades() {
         </Modal>
       )}
     </div>
+    <ConfirmModal
+      open={!!rejectOrder}
+      title="Reject this claim?"
+      description={rejectOrder
+        ? `The customer marked ${rejectOrder.id} (${inr(rejectOrder.amountInr)}) as paid. Reject it only if no matching payment reached your account. The order moves to failed and can be reopened later if the payment does arrive.`
+        : ''}
+      confirmLabel="Reject"
+      tone="danger"
+      busy={rejectBusy}
+      onConfirm={doReject}
+      onClose={() => { if (!rejectBusy) setRejectOrder(null); }}
+    />
     <ConfirmModal
       open={!!confirmOrderId}
       title="Confirm this order?"

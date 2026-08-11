@@ -131,6 +131,11 @@ export const traderApi = {
   // unlike confirmOrder above, this order has no existing claim/matching
   // trail, so a real UTR the trader found is required.
   reopenForReview: (id, utr) => api.post(`/orders/${id}/reopen-for-review`, { utr }),
+  // Trader rejects a payment claim that never arrived. Moves the order to
+  // failed and releases the amount lock; recoverable via reopenForReview if
+  // the payment turns up later. Trader-scoped server-side — a trader can only
+  // cancel their own orders.
+  cancelOrder: (id) => api.post(`/orders/${id}/cancel`),
   notifications: () => api.get('/trader/notifications'),
   paymentDetails: () => api.get('/trader/payment-details'),
   addPaymentDetail: (body) => api.post('/trader/payment-details', body),
