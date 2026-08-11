@@ -63,6 +63,10 @@ function orderView(order) {
     match_tier: order.match_tier,
     confirm_engine: order.confirm_engine,
     confirmation_type: order.confirmation_type,
+    // When the customer pressed "I paid". Real column, never serialized
+    // before, so the trader panel could not distinguish "claimed with a UTR"
+    // from "claimed with no proof at all" — both rendered as an empty cell.
+    claimed_paid_at: order.claimed_paid_at,
     redirect_url: order.redirect_url,
     expires_at: order.expires_at,
     created_at: order.created_at,
@@ -243,6 +247,19 @@ const confirm = claimPaid;
 const cancel = asyncHandler(async (req, res) => {
   const order = await findOrder(req.params.id);
   if (!order) return fail(res, 404, 'Order not found');
+
+  // Ownership. This route is role-gated to trader|admin but never checked
+  // WHICH trader, so any authenticated trader could cancel any order in the
+  // system — including another trader's in-flight one. Admins keep the
+  // cross-trader reach the route was built for; a trader is now confined to
+  // their own orders, matching traderConfirm/reopenForReview. Added here
+  // because the trader panel's Reject action calls this endpoint.
+  if (req.user.role === 'trader') {
+    const trader = await db.Trader.findOne({ where: { user_id: req.user.id } });
+    if (!trader) return fail(res, 404, 'Trader profile not found');
+    if (order.trader_id !== trader.id) return fail(res, 403, 'This order does not belong to you');
+  }
+
   if (['success', 'failed', 'rejected'].includes(order.status)) return ok(res, { order: orderView(order) });
 
   const traderId = order.trader_id;
@@ -317,10 +334,17 @@ const traderConfirm = asyncHandler(async (req, res) => {
   if (order.trader_id !== trader.id) return fail(res, 403, 'This order does not belong to you');
   // Hard guard — not just a UI assumption. smartMerge.confirmOrder's own
   // idempotency check only catches "already success"; it does not care what
-  // status an order was in before that, so the under_review requirement has
-  // to be enforced here.
-  if (order.status !== 'under_review') {
-    return fail(res, 409, `Order must be under_review to confirm (current status: ${order.status})`);
+  // status an order was in before that, so the allowed set has to be
+  // enforced here.
+  //
+  // Both REVIEWABLE_STATUSES are accepted: the customer has asserted payment
+  // in either case, and the difference between them is only whether automated
+  // matching has picked the order up yet. Restricting this to under_review
+  // meant a trader looking at a claimed_paid order — who could see the
+  // customer's UTR and had checked it against their own account — had no way
+  // to settle it and could only wait on the matching engine.
+  if (!db.Order.REVIEWABLE_STATUSES.includes(order.status)) {
+    return fail(res, 409, `Order must be claimed_paid or under_review to confirm (current status: ${order.status})`);
   }
 
   await smartMerge.confirmOrder(order, { engine: 'trader_manual' });
