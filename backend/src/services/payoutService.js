@@ -199,7 +199,17 @@ async function accept(traderId, id) {
     });
     if (!trader) throw Object.assign(new Error('Trader not found'), { status: 404 });
     if (trader.user && trader.user.status !== 'active') throw Object.assign(new Error('Trader account is not active'), { status: 403 });
-    if (!trader.is_online) throw Object.assign(new Error('Go online to accept payout requests'), { status: 403 });
+    // NOTE: deliberately does NOT check trader.is_online. That flag exists for
+    // one thing — routingEngine.eligibleTraders(), which PUSHES incoming
+    // deposit orders at a trader, so it needs to know they're present. A payout
+    // is the opposite direction and is PULLED: the trader is looking at the
+    // queue and clicking Accept, which is itself proof of presence. Gating on
+    // is_online here just meant a trader who had switched off new deposits
+    // could not process money they owed out. Every check that actually
+    // protects this operation is independent of it and still runs: the user
+    // must be active (above), the request must still be unassigned and
+    // awaiting_processing (above), both balances must cover the payout
+    // (below), and the row locks guard against a double accept.
 
     const merchant = await db.Merchant.findByPk(row.merchant_id, { transaction, lock: transaction.LOCK.UPDATE });
     if (!merchant) throw Object.assign(new Error('Merchant not found'), { status: 404 });
