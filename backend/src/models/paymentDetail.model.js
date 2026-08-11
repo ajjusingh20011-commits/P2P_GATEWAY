@@ -69,6 +69,14 @@ module.exports = (sequelize) => {
       // (routing skips it). See the migration for why null is not `false`.
       connection_alive: { type: DataTypes.BOOLEAN, allowNull: true, defaultValue: null },
       connection_checked_at: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
+
+      // Trader's explicit "I confirm this account's payments by hand" opt-in.
+      // The ONLY thing that keeps an account with no linked connection
+      // (connection_alive = null) eligible for routing — see
+      // routingEngine.pickEligibleAccount. Does not override a confirmed-dead
+      // connection: `false` still wins, because an account that HAS a
+      // connection and lost it is a fault to fix, not a manual workflow.
+      manually_confirmed: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     },
     {
       sequelize,

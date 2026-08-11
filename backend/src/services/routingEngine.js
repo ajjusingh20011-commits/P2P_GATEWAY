@@ -113,12 +113,24 @@ async function pickEligibleAccount(trader, amount) {
     // Connection liveness. Mirrored from ngo-backend's real signals (APK
     // heartbeat freshness / SessionStore.isSessionAlive) by
     // jobs/connectionLiveness.js — read locally so the checkout path never
-    // makes a cross-service call. Strictly additive: only an explicit `false`
-    // (a connection IS linked and IS confirmed dead) skips the account.
-    // `null` means nothing is linked to this UPI and routing behaves exactly
-    // as it did before this check existed.
+    // makes a cross-service call.
+    //
+    //   false - a connection IS linked and IS confirmed dead. Always skipped;
+    //           manually_confirmed does not override this, because a
+    //           connection that existed and died is a fault to fix, not a
+    //           manual workflow.
+    //   true  - linked and alive. Routes.
+    //   null  - NOTHING is linked to this UPI: no APK device, no web session.
+    //           Such an account can never observe an incoming payment, so it
+    //           routes only when the trader has explicitly taken on confirming
+    //           it by hand (manually_confirmed). Two live accounts were
+    //           silently in this state, which is the bug this branch closes.
     if (account.connection_alive === false) {
       logger.info(`routing: account ${account.upi_id} has a dead connection — skipping`);
+      continue;
+    }
+    if (account.connection_alive == null && !account.manually_confirmed) {
+      logger.info(`routing: account ${account.upi_id} has no linked connection and is not marked manually confirmed — skipping`);
       continue;
     }
 
