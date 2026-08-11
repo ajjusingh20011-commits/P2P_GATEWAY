@@ -10,6 +10,7 @@
  */
 
 const axios = require('axios');
+const { internalAuthHeaders } = require('../middleware/internalAuth');
 const Account = require('../models/Account');
 
 const UPI_TAKEN_MESSAGE = 'This UPI ID is already registered on the platform';
@@ -34,6 +35,7 @@ async function assertUpiAvailable(upiId, { excludeId } = {}) {
     const res = await axios.get(`${base}/api/internal/upi-check`, {
       params: { upi_id: upiId },
       timeout: 3000,
+      headers: internalAuthHeaders(),
     });
     if (res.data?.exists) throw new UpiTakenError();
   } catch (err) {

@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { internalAuthHeaders } = require('../middleware/internalAuth');
 const Webhook = require('../models/Webhook');
 const Transaction = require('../models/Transaction');
 const NGO = require('../models/NGO');
@@ -249,7 +250,10 @@ async function runMatching(io) {
 async function callMatchSettlement(payload) {
   try {
     const base = process.env.P2P_BACKEND_URL || 'http://localhost:4000';
-    const res = await axios.post(`${base}/api/internal/match-settlement`, payload, { timeout: 5000 });
+    const res = await axios.post(`${base}/api/internal/match-settlement`, payload, {
+      timeout: 5000,
+      headers: internalAuthHeaders(),
+    });
     return res.data;
   } catch (e) {
     console.error('matchingEngineV2 callMatchSettlement failed:', e.message);

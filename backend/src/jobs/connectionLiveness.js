@@ -30,6 +30,7 @@ const axios = require('axios');
 
 const db = require('../models');
 const logger = require('../utils/logger');
+const { internalAuthHeaders } = require('../services/ngoServiceAuth');
 
 const SYNC_INTERVAL_MS = 15 * 1000;
 const REQUEST_TIMEOUT_MS = 5000;
@@ -65,7 +66,10 @@ async function syncOnce() {
   const base = process.env.NGO_BACKEND_URL || 'http://localhost:3000';
   let snapshot;
   try {
-    const res = await axios.get(`${base}/api/internal/connection-liveness`, { timeout: REQUEST_TIMEOUT_MS });
+    const res = await axios.get(`${base}/api/internal/connection-liveness`, {
+      timeout: REQUEST_TIMEOUT_MS,
+      headers: internalAuthHeaders(),
+    });
     if (!res.data || res.data.success !== true) throw new Error('unexpected response shape');
     snapshot = res.data;
   } catch (err) {

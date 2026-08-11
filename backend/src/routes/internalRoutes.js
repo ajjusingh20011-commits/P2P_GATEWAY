@@ -2,18 +2,26 @@
 
 /**
  * Internal service-to-service routes — mounted at /api/internal.
- * Unauthenticated, same trust model as ngo-backend's POST /api/checkout/verify
- * (called the other direction from orderController.js): both services run on
- * a private network in this deployment, and these endpoints only ever
- * disclose a boolean, never a record.
+ *
+ * Every route here requires a signed X-Service-Token from ngo-backend (see
+ * middleware/internalAuth.js). They used to be unauthenticated on the premise
+ * that both services sit on a private network; with the API published at a
+ * public hostname that premise was false, and both endpoints below were
+ * answering unauthenticated requests from the internet. match-settlement in
+ * particular settles orders and moves balances.
  */
 
 const { Router } = require('express');
 const db = require('../models');
 const { asyncHandler } = require('../utils/http');
 const matchingEngineV2 = require('../services/matchingEngineV2');
+const { verifyInternalService } = require('../middleware/internalAuth');
 
 const router = Router();
+
+// Applied at the router, not per-route, so a future endpoint added to this
+// file cannot accidentally ship unauthenticated.
+router.use(verifyInternalService);
 
 // GET /api/internal/upi-check?upi_id=X — used by ngo-backend before creating
 // an Account, to enforce UPI uniqueness across both databases.

@@ -16,6 +16,7 @@ const logger = require('../utils/logger');
 const balanceService = require('../services/balanceService');
 const rateService = require('../services/rateService');
 const { computeWindowUsage } = require('../services/usageWindows');
+const { internalAuthHeaders } = require('../services/ngoServiceAuth');
 
 /** Load the Trader row for the current user, or 404. */
 async function currentTrader(req, res) {
@@ -347,6 +348,10 @@ const paymentDetailSchema = Joi.object({
   monthly_start_date: Joi.date().allow(null),
   is_active_detail: Joi.boolean().default(true),
   is_active: Joi.boolean().default(true),
+  // Trader takes on confirming this account's payments by hand. Defaults to
+  // false so a newly added account never quietly enters the routing pool
+  // without a real connection — see routingEngine.pickEligibleAccount.
+  manually_confirmed: Joi.boolean().default(false),
 });
 
 const UPI_TAKEN_MESSAGE = 'This UPI ID is already registered on the platform';
@@ -382,6 +387,7 @@ async function assertUpiAvailable(upiId, { excludeId, excludeNgoAccountId } = {}
     const res = await axios.get(`${base}/api/internal/upi-check`, {
       params,
       timeout: 3000,
+      headers: internalAuthHeaders(),
     });
     if (res.data?.exists) {
       throw Object.assign(new Error(UPI_TAKEN_MESSAGE), { status: 422 });
@@ -442,7 +448,7 @@ const updatePaymentDetail = asyncHandler(async (req, res) => {
 
   // Patchable fields (only apply the ones supplied).
   const patch = {};
-  const bools = ['is_active', 'is_active_detail'];
+  const bools = ['is_active', 'is_active_detail', 'manually_confirmed'];
   const passthrough = [
     'account_name', 'upi_id', 'bank_name', 'organization_name', 'account_type', 'daily_limit', 'smartphone_id',
     'ngo_device_id',

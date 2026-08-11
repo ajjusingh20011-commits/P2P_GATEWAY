@@ -2,9 +2,12 @@
 
 /**
  * Internal service-to-service routes — mounted at /api/internal.
- * Unauthenticated, same trust model as POST /api/checkout/verify: both
- * services run on a private network in this deployment, and this endpoint
- * only ever discloses a boolean, never a record.
+ *
+ * Every route here requires a signed X-Service-Token from the P2P backend
+ * (see middleware/internalAuth.js). They used to be unauthenticated on the
+ * premise that both services sit on a private network; once the APIs were
+ * published at public hostnames that premise was false and these were
+ * answering unauthenticated requests from the internet.
  */
 
 const express = require('express');
@@ -13,8 +16,13 @@ const Account = require('../models/Account');
 const Device = require('../models/Device');
 const SessionStore = require('../services/SessionStore');
 const { CONNECTION_TYPE } = require('../config/constants');
+const { verifyInternalService } = require('../middleware/internalAuth');
 
 const router = express.Router();
+
+// Applied at the router, not per-route, so a future endpoint added to this
+// file cannot accidentally ship unauthenticated.
+router.use(verifyInternalService);
 
 // Same 15s freshness window routes/apk.js uses for its own `online` field —
 // duplicated as a constant rather than exported/imported because apk.js keeps
