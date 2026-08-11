@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Test Merchant — P2P Gateway QA harness</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #161d2e;
+    --panel-2: #1d2740;
+    --border: #2a3450;
+    --text: #e6e9f2;
+    --text-muted: #8b93ab;
+    --accent: #3b6fd4;
+    --accent-hover: #4d7fe0;
+    --success: #2ea86c;
+    --danger: #d64545;
+    --warn: #d4a13b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0;
+    padding: 32px 16px;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--text-muted); font-size: 13px; margin: 0 0 28px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 14px; display: flex; align-items: center; gap: 8px; }
+  .badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 20px;
+    letter-spacing: 0.03em;
+  }
+  .badge.live { background: rgba(46,168,108,0.15); color: var(--success); }
+  .badge.pending { background: rgba(212,161,59,0.15); color: var(--warn); }
+  label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 5px; margin-top: 12px; }
+  label:first-of-type { margin-top: 0; }
+  input, select {
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 9px 11px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .amount-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .amount-btn {
+    flex: 1;
+    min-width: 80px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .amount-btn:hover { border-color: var(--accent); }
+  .amount-btn.selected { border-color: var(--accent); background: rgba(59,111,212,0.15); }
+  button.primary {
+    width: 100%;
+    margin-top: 16px;
+    background: var(--accent);
+    border: none;
+    color: white;
+    padding: 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.primary:hover { background: var(--accent-hover); }
+  button.primary:disabled { background: var(--panel-2); color: var(--text-muted); cursor: not-allowed; }
+  button.secondary {
+    width: 100%;
+    margin-top: 16px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: not-allowed;
+  }
+  .out {
+    margin-top: 14px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 220px;
+    overflow-y: auto;
+    display: none;
+  }
+  .out.show { display: block; }
+  .out.err { border-color: var(--danger); color: #f3a3a3; }
+  .checkout-link {
+    display: block;
+    margin-top: 12px;
+    text-align: center;
+    background: var(--success);
+    color: white;
+    text-decoration: none;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .note {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-top: 10px;
+  }
+  .note.warn { color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Test merchant — QA harness</h1>
+  <p class="sub">Calls your real backend directly. Nothing here is simulated — every request goes to the API base URL below.</p>
+
+  <div class="card">
+    <h2>Connection</h2>
+    <label>API base URL (e.g. https://api.adminmaxedge.com or http://localhost:4000)</label>
+    <input id="apiBase" placeholder="https://api.adminmaxedge.com" />
+    <label>Merchant X-API-Key</label>
+    <input id="apiKey" placeholder="stays in this browser tab only, never sent anywhere but your API" />
+    <label>Merchant X-API-Secret</label>
+    <input id="apiSecret" type="password" placeholder="stays in this browser tab only" />
+    <label>Merchant email (for withdrawal login)</label>
+    <input id="merchantEmail" placeholder="stays in this browser tab only — used only to call POST /api/auth/login" />
+    <label>Merchant password</label>
+    <input id="merchantPassword" type="password" placeholder="stays in this browser tab only" />
+    <button class="primary" id="loginBtn" type="button">Log in &amp; get access token</button>
+    <div class="out" id="loginOut"></div>
+  </div>
+
+  <div class="card">
+    <h2>Deposit <span class="badge live">wired to real API</span></h2>
+    <label>Amount (INR)</label>
+    <div class="amount-row">
+      <button class="amount-btn" data-amt="200">₹200</button>
+      <button class="amount-btn" data-amt="500">₹500</button>
+      <button class="amount-btn" data-amt="2000">₹2000</button>
+    </div>
+    <label>Or custom amount</label>
+    <input id="customAmt" type="number" placeholder="Custom amount" />
+    <label>Customer reference</label>
+    <input id="customerRef" placeholder="Customer reference" />
+    <button class="primary" id="depositBtn">Create order &amp; open checkout</button>
+    <div class="out" id="depositOut"></div>
+  </div>
+
+  <div class="card">
+    <h2>Withdrawal <span class="badge live">wired to real API</span></h2>
+    <label>Amount (INR)</label>
+    <input id="wdAmt" type="number" placeholder="Amount" />
+    <label>Payment method</label>
+    <select id="wdMethod">
+      <option value="upi">UPI</option>
+      <option value="bank">Bank / IMPS</option>
+    </select>
+    <label>Recipient name</label>
+    <input id="wdRecipientName" placeholder="Recipient name" />
+    <div id="wdUpiFields">
+      <label>UPI ID</label>
+      <input id="wdUpiId" placeholder="recipient@bank" />
+    </div>
+    <div id="wdBankFields" style="display:none;">
+      <label>Account number</label>
+      <input id="wdAccountNumber" placeholder="Account number" />
+      <label>IFSC code</label>
+      <input id="wdIfsc" placeholder="IFSC code" />
+      <label>Bank name</label>
+      <input id="wdBankName" placeholder="Bank name" />
+    </div>
+    <button class="primary" id="withdrawBtn" type="button">Process withdrawal</button>
+    <div class="out" id="withdrawOut"></div>
+  </div>
+
+  <p class="note">Every response below is the raw, unmodified JSON your API returns — nothing is invented or reformatted. If a field is missing, it will show as missing, not filled in.</p>
+</div>
+
+<script>
+let selectedAmt = null;
+
+// Real backend requirement (orderService.js's createOrder), not optional —
+// POST /api/orders/create 400s with missing_customer_ref without it. A
+// merchant integration would generate their own; this harness pre-fills a
+// unique one on load so the field is usable with zero typing, but it's a
+// real, visible, editable input — not a hidden/hardcoded value.
+document.getElementById('customerRef').value = 'QA-' + Date.now();
+
+// In-memory only — never localStorage/sessionStorage, per project convention
+// (no persisted credentials/tokens for a QA harness). Lost on refresh, which
+// is intentional: the merchant has to log in again with real credentials
+// each session, same as they'd have to re-enter the API key/secret above.
+let accessToken = null;
+
+document.getElementById('wdMethod').addEventListener('change', (e) => {
+  const isUpi = e.target.value === 'upi';
+  document.getElementById('wdUpiFields').style.display = isUpi ? '' : 'none';
+  document.getElementById('wdBankFields').style.display = isUpi ? 'none' : '';
+});
+
+document.querySelectorAll('.amount-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.amount-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    selectedAmt = btn.dataset.amt;
+    document.getElementById('customAmt').value = '';
+  });
+});
+
+document.getElementById('customAmt').addEventListener('input', (e) => {
+  if (e.target.value) {
+    document.querySelectorAll('.amount-btn').forEach(b => b.classList.remove('selected'));
+    selectedAmt = e.target.value;
+  }
+});
+
+document.getElementById('depositBtn').addEventListener('click', async () => {
+  const apiBase = document.getElementById('apiBase').value.trim().replace(/\/$/, '');
+  const apiKey = document.getElementById('apiKey').value.trim();
+  const apiSecret = document.getElementById('apiSecret').value.trim();
+  const customAmt = document.getElementById('customAmt').value;
+  const amount = customAmt || selectedAmt;
+  const customerRef = document.getElementById('customerRef').value.trim();
+
+  const out = document.getElementById('depositOut');
+  out.classList.remove('err');
+  out.classList.add('show');
+
+  if (!apiBase || !apiKey || !apiSecret) {
+    out.classList.add('err');
+    out.textContent = 'Missing API base URL, key, or secret above.';
+    return;
+  }
+  if (!amount) {
+    out.classList.add('err');
+    out.textContent = 'Pick an amount or enter a custom one.';
+    return;
+  }
+  if (!customerRef) {
+    out.classList.add('err');
+    out.textContent = 'Missing customer reference above (required by the real API).';
+    return;
+  }
+
+  out.textContent = 'Sending real request to ' + apiBase + '/api/orders/create ...';
+
+  try {
+    const res = await fetch(apiBase + '/api/orders/create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+        'X-API-Secret': apiSecret,
+      },
+      body: JSON.stringify({ amount: Number(amount), customer_ref: customerRef }),
+    });
+
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = text; }
+
+    if (!res.ok) {
+      out.classList.add('err');
+      out.textContent = 'HTTP ' + res.status + '\n\n' + JSON.stringify(data, null, 2);
+      return;
+    }
+
+    out.textContent = JSON.stringify(data, null, 2);
+
+    // Only show a checkout link if the real response actually contains something
+    // that looks like a checkout URL or an order identifier. Never construct
+    // a guessed URL — that would be fabricated data.
+    const existing = document.querySelector('.checkout-link');
+    if (existing) existing.remove();
+
+    const possibleUrl = data.checkout_url || data.checkoutUrl || data.url || data.data?.checkout_url;
+    if (possibleUrl) {
+      const a = document.createElement('a');
+      a.className = 'checkout-link';
+      a.href = possibleUrl;
+      a.target = '_blank';
+      a.textContent = 'Open real checkout page →';
+      out.insertAdjacentElement('afterend', a);
+    } else {
+      const note = document.createElement('p');
+      note.className = 'note warn';
+      note.textContent = 'No checkout URL field found in the response above — check the raw JSON for the order UUID/ID and confirm the real checkout route pattern, so this isn\'t guessed.';
+      out.insertAdjacentElement('afterend', note);
+    }
+  } catch (err) {
+    out.classList.add('err');
+    out.textContent = 'Request failed: ' + err.message + '\n\nCheck CORS settings on your API — if this page is opened as a local file, the browser origin is "null" and your CORS_ORIGINS config may need to allow it for testing.';
+  }
+});
+
+// Withdrawal (POST /api/payout-requests) needs a real merchant login — it's
+// authenticated with Authorization: Bearer <accessToken>, NOT the
+// X-API-Key/X-API-Secret headers deposit uses (confirmed by reading
+// payoutRoutes.js/middleware/auth.js — see the investigation this harness
+// was built from). Login is its own explicit button, not an
+// auto-trigger-on-first-withdrawal-click: withdrawal's own click handler
+// stays a single real POST /api/payout-requests call, same shape as
+// deposit's handler, and the merchant can see the real login response (or a
+// real login failure — wrong password, inactive account, etc.) on its own,
+// before ever touching the withdrawal endpoint. Blending "log in" into
+// "process withdrawal" would hide which of two different real API calls
+// actually failed.
+document.getElementById('loginBtn').addEventListener('click', async () => {
+  const apiBase = document.getElementById('apiBase').value.trim().replace(/\/$/, '');
+  const email = document.getElementById('merchantEmail').value.trim();
+  const password = document.getElementById('merchantPassword').value;
+
+  const out = document.getElementById('loginOut');
+  out.classList.remove('err');
+  out.classList.add('show');
+
+  if (!apiBase) {
+    out.classList.add('err');
+    out.textContent = 'Missing API base URL above.';
+    return;
+  }
+  if (!email || !password) {
+    out.classList.add('err');
+    out.textContent = 'Missing merchant email or password above.';
+    return;
+  }
+
+  out.textContent = 'Sending real request to ' + apiBase + '/api/auth/login ...';
+  accessToken = null;
+
+  try {
+    const res = await fetch(apiBase + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = text; }
+
+    if (!res.ok) {
+      out.classList.add('err');
+      out.textContent = 'HTTP ' + res.status + '\n\n' + JSON.stringify(data, null, 2);
+      return;
+    }
+
+    // Only trust a token that's actually present in the real response —
+    // never assume res.ok means we got one.
+    const token = data?.data?.accessToken;
+    if (!token) {
+      out.classList.add('err');
+      out.textContent = 'Login response had no accessToken field — see raw response below.\n\n' + JSON.stringify(data, null, 2);
+      return;
+    }
+
+    accessToken = token;
+    out.textContent = 'Logged in. Access token stored in memory for this tab only.\n\n' + JSON.stringify(data, null, 2);
+  } catch (err) {
+    out.classList.add('err');
+    out.textContent = 'Request failed: ' + err.message + '\n\nCheck CORS settings on your API — if this page is opened as a local file, the browser origin is "null" and your CORS_ORIGINS config may need to allow it for testing.';
+  }
+});
+
+document.getElementById('withdrawBtn').addEventListener('click', async () => {
+  const apiBase = document.getElementById('apiBase').value.trim().replace(/\/$/, '');
+  const amount = document.getElementById('wdAmt').value;
+  const method = document.getElementById('wdMethod').value;
+  const recipientName = document.getElementById('wdRecipientName').value.trim();
+  const upiId = document.getElementById('wdUpiId').value.trim();
+  const accountNumber = document.getElementById('wdAccountNumber').value.trim();
+  const ifscCode = document.getElementById('wdIfsc').value.trim();
+  const bankName = document.getElementById('wdBankName').value.trim();
+
+  const out = document.getElementById('withdrawOut');
+  out.classList.remove('err');
+  out.classList.add('show');
+
+  if (!apiBase) {
+    out.classList.add('err');
+    out.textContent = 'Missing API base URL above.';
+    return;
+  }
+  if (!accessToken) {
+    out.classList.add('err');
+    out.textContent = 'Not logged in yet — use "Log in & get access token" in the Connection card above first.';
+    return;
+  }
+  // Only the fields the real Joi schema (payoutController.js) actually
+  // requires: amount_inr, payment_method, recipient_name. account_number/
+  // upi_id/ifsc_code/bank_name are genuinely optional server-side, so an
+  // empty one here is not an error.
+  if (!amount) {
+    out.classList.add('err');
+    out.textContent = 'Missing amount above.';
+    return;
+  }
+  if (!recipientName) {
+    out.classList.add('err');
+    out.textContent = 'Missing recipient name above.';
+    return;
+  }
+
+  const body = {
+    amount_inr: Number(amount),
+    payment_method: method,
+    recipient_name: recipientName,
+  };
+  // Omit optional fields entirely when left blank, rather than sending an
+  // explicit null — keeps the request body minimal and doesn't lean on the
+  // Joi schema's null-handling for fields it doesn't actually need.
+  if (method === 'upi') {
+    if (upiId) body.upi_id = upiId;
+  } else {
+    if (accountNumber) body.account_number = accountNumber;
+    if (ifscCode) body.ifsc_code = ifscCode;
+    if (bankName) body.bank_name = bankName;
+  }
+
+  out.textContent = 'Sending real request to ' + apiBase + '/api/payout-requests ...';
+
+  try {
+    const res = await fetch(apiBase + '/api/payout-requests', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + accessToken,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = text; }
+
+    if (!res.ok) {
+      out.classList.add('err');
+      out.textContent = 'HTTP ' + res.status + '\n\n' + JSON.stringify(data, null, 2);
+      return;
+    }
+
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    out.classList.add('err');
+    out.textContent = 'Request failed: ' + err.message + '\n\nCheck CORS settings on your API — if this page is opened as a local file, the browser origin is "null" and your CORS_ORIGINS config may need to allow it for testing.';
+  }
+});
+</script>
+</body>
+</html>
