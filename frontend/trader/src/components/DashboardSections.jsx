@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Coins, Smartphone, Clock3, ChevronRight, CheckCircle2, ArrowRight, MoreHorizontal, TrendingUp, ShieldCheck } from 'lucide-react';
+import { Coins, Smartphone, Clock3, ChevronRight, CheckCircle2, ArrowRight, MoreHorizontal, TrendingUp, ShieldCheck, AlertTriangle, RefreshCw, Link2 as LinkIcon } from 'lucide-react';
 import { traderApi } from '../services/api';
-import { getDevices } from '../lib/ngoApi';
+import { getDevices, getAccounts } from '../lib/ngoApi';
 import { BankBadge, Segments } from './ui';
 import { IconRobot, IconGlobe } from './icons';
 import { toast } from './Toaster';
 import { ACCOUNT_TYPES, inr } from '../utils/mock';
+import { ACCOUNT_STATE, STATE_META, accountState, isLive } from '../utils/accountState';
 import ConfirmModal from './ConfirmModal';
 
 /*
@@ -524,6 +525,14 @@ export function TransactionActivityChart() {
 export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
   const navigate = useNavigate();
   const [deviceNames, setDeviceNames] = useState({});
+  // UPI ids (lowercased) that a Web Login account really owns. `details` rows
+  // come from MySQL, which has no connectionType column at all — reading
+  // d.connectionType here was always undefined, so every row rendered "APK"
+  // including genuine web-login accounts. Joined on upi_id rather than
+  // Account.gatewayPaymentDetailId because that back-reference is dangling in
+  // real data (it points at payment_detail ids that no longer exist) — the
+  // same reason jobs/connectionLiveness.js keys on upi_id.
+  const [webUpis, setWebUpis] = useState(() => new Set());
   const [payoutSummary, setPayoutSummary] = useState({ count: 0, total: 0 });
   const [busyId, setBusyId] = useState(null);
   const [confirmTarget, setConfirmTarget] = useState(null);
@@ -558,8 +567,25 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
       .then((devices) => {
         if (!alive) return;
         const map = {};
-        (devices || []).forEach((d) => { map[d.id] = d.deviceName || 'Smartphone'; });
+        // Real trader-assigned name, else the hardware model. A device that
+        // reported neither is left out of the map entirely so the row falls
+        // through to the honest "Not linked" branch rather than inventing a
+        // name for it.
+        (devices || []).forEach((d) => {
+          const name = (d.deviceName || d.deviceModel || '').trim();
+          if (name) map[d.id] = name;
+        });
         setDeviceNames(map);
+      })
+      .catch(() => {});
+    getAccounts()
+      .then((accounts) => {
+        if (!alive) return;
+        setWebUpis(new Set(
+          (accounts || [])
+            .filter((a) => a.connectionType === 'web' && a.upiId)
+            .map((a) => String(a.upiId).trim().toLowerCase())
+        ));
       })
       .catch(() => {});
     traderApi
@@ -576,14 +602,27 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
     return () => { alive = false; };
   }, []);
 
-  // Routing requires BOTH flags (routingEngine.pickEligibleAccount: is_active
-  // is the linkage/admin gate, is_active_detail is the trader's own on/off
-  // intent) — filtering on is_active alone would keep showing an account
-  // here as "live" even after the trader had turned it off.
-  const live = (details || []).filter((d) => d.is_active && d.is_active_detail !== false);
+  // "Live" now means a CONFIRMED-ALIVE connection, not just a toggle left on.
+  // This filter used to be `is_active && is_active_detail !== false`, which
+  // counted accounts that had never had a device attached and accounts whose
+  // session had died — the panel reported "Live pool: 3" against zero
+  // genuinely-connected accounts. See utils/accountState.js.
+  const all = details || [];
+  const live = all.filter(isLive);
+  // Manually-confirmed accounts with no connection do still receive orders, so
+  // they are surfaced separately rather than folded into "live" (which would
+  // overstate real connectivity) or hidden (which would understate the pool).
+  const manual = all.filter((d) => accountState(d) === ACCOUNT_STATE.MANUAL && d.is_active !== false);
+  const needsReconnect = all.filter((d) => accountState(d) === ACCOUNT_STATE.RECONNECT);
+  // The table lists everything routing could touch, each row labelled with its
+  // real state, so a "Reconnect needed" account is visible instead of absent.
+  const shown = all.filter((d) => d.is_active_detail !== false);
 
-  const liveOrdersToday = live.reduce((sum, d) => sum + (Number(d.usage?.used_today) || 0), 0);
-  const withUsage = live.filter((d) => (d.usage?.orders_total || 0) > 0);
+  // Activity aggregates describe the rows the table actually lists (`shown`),
+  // not just the live subset — otherwise a pool with real orders on a
+  // manually-confirmed account would report zero.
+  const liveOrdersToday = shown.reduce((sum, d) => sum + (Number(d.usage?.used_today) || 0), 0);
+  const withUsage = shown.filter((d) => (d.usage?.orders_total || 0) > 0);
   const avgSuccess = withUsage.length
     ? Math.round(withUsage.reduce((sum, d) => sum + (d.usage.orders_confirmed / d.usage.orders_total) * 100, 0) / withUsage.length)
     : null;
@@ -594,13 +633,17 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '20px 22px 16px' }}>
         <div>
           <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0 }}>Live pool</h3>
-          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0 0' }}>Accounts currently eligible for incoming orders</p>
+          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0 0' }}>
+            Accounts with a confirmed connection right now
+            {manual.length > 0 && ` · ${manual.length} manually confirmed`}
+            {needsReconnect.length > 0 && ` · ${needsReconnect.length} need reconnecting`}
+          </p>
         </div>
         <button
           onClick={() => navigate('/offers')}
           style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 0, color: 'var(--accent)', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
         >
-          {live.length} live of {(details || []).length}
+          {live.length} live of {all.length}
           <ArrowRight size={13} />
         </button>
       </div>
@@ -635,17 +678,31 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
           <span>Limit</span>
           <span />
         </div>
-        {live.length === 0 ? (
-          <p style={{ padding: '22px', color: 'var(--muted)', fontSize: 13, margin: 0, textAlign: 'center' }}>No live accounts right now.</p>
+        {shown.length === 0 ? (
+          <p style={{ padding: '22px', color: 'var(--muted)', fontSize: 13, margin: 0, textAlign: 'center' }}>No accounts are switched on right now.</p>
         ) : (
-          live.map((d) => {
+          shown.map((d) => {
             const type = ACCOUNT_TYPES[d.account_type] || { label: d.account_type };
-            const isWeb = d.connectionType === 'web';
-            const sessionLabel = isWeb
-              ? 'Web session'
-              : d.ngo_device_id
-                ? (deviceNames[d.ngo_device_id] || 'APK device')
-                : '—';
+            const isWeb = webUpis.has(String(d.upi_id || '').trim().toLowerCase());
+            // The real linked device's name, never a generic placeholder. An
+            // ngo_device_id that resolves to no Device row (stale pairing, or
+            // the phone was deleted) is reported as not linked, because from
+            // the trader's side there is no device — showing "APK device" for
+            // it hid exactly the case Fix 2 is about.
+            const deviceName = d.ngo_device_id ? deviceNames[d.ngo_device_id] : null;
+            const sessionLabel = isWeb ? 'Web session' : (deviceName || 'Not linked');
+            const sessionTitle = isWeb
+              ? 'Connected through a Web Login provider session'
+              : deviceName
+                ? `Paired APK device: ${deviceName}`
+                : d.ngo_device_id
+                  ? 'Paired device no longer exists — re-pair a phone on Smartphones'
+                  : 'No device or web session is linked to this account';
+            const linked = isWeb || !!deviceName;
+            // Real connection state, not the toggle position — see
+            // utils/accountState.js.
+            const state = accountState(d);
+            const meta = STATE_META[state];
             const hasLimit = !!(d.max_per_day || d.daily_limit_amount);
             const total = d.usage?.orders_total || 0;
             const rate = total ? Math.round((d.usage.orders_confirmed / total) * 100) : null;
@@ -666,12 +723,24 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
                   </div>
                 </div>
                 <div className="personCell"><strong>{type.label}</strong></div>
-                <div className="personCell">
-                  <strong className="truncate">{sessionLabel}</strong>
+                <div className="personCell" title={sessionTitle}>
+                  <strong className="truncate" style={linked ? undefined : { color: 'var(--muted)', fontWeight: 500 }}>
+                    {sessionLabel}
+                  </strong>
                 </div>
-                <span className="tf-connmark">
-                  {isWeb ? <IconGlobe className="h-3 w-3" /> : <IconRobot className="h-3 w-3" />}
-                  {isWeb ? 'WEB' : 'APK'}
+                {/* Real connection state. The connection-type icon stays so
+                    APK vs Web is still readable at a glance, but the label is
+                    now the honest status rather than a type that was true of
+                    every row regardless of whether anything was connected. */}
+                <span
+                  className="tf-connmark"
+                  title={`${meta.title}. ${sessionTitle}.`}
+                  style={{ color: meta.hex, borderColor: 'transparent', background: `${meta.hex}22` }}
+                >
+                  {state === ACCOUNT_STATE.RECONNECT || state === ACCOUNT_STATE.NEVER
+                    ? <AlertTriangle size={11} />
+                    : isWeb ? <IconGlobe className="h-3 w-3" /> : <IconRobot className="h-3 w-3" />}
+                  {meta.short}
                 </span>
                 <div className="personCell"><strong>{d.usage?.used_today ?? 0}{d.max_per_day ? ` / ${d.max_per_day}` : ''}</strong></div>
                 <div className="personCell"><strong>{inr(d.usage?.daily_amount_total || 0)}</strong></div>
@@ -683,14 +752,36 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
                 <span style={{ display: 'flex', justifyContent: 'center' }}>
                   {hasLimit ? <CheckCircle2 size={15} style={{ color: '#22c55e' }} /> : <span style={{ color: 'var(--subtle)' }}>—</span>}
                 </span>
-                <button
-                  className="tf-hbtn"
-                  style={{ width: 28, height: 28 }}
-                  onClick={() => navigate('/offers')}
-                  aria-label={`Open ${d.account_name} in Payment details`}
-                >
-                  <MoreHorizontal size={15} />
-                </button>
+                {/* Inline recovery action for the two states the trader can
+                    actually do something about. Web accounts reconnect from
+                    Payment details, APK ones from Smartphones. */}
+                {state === ACCOUNT_STATE.RECONNECT || state === ACCOUNT_STATE.NEVER ? (
+                  // Icon-only: this trailing column is 28px, so a text button
+                  // clips. The full-width worded action lives on the account's
+                  // own row in Payment details, where there's room for it.
+                  <button
+                    onClick={() => navigate(isWeb ? '/offers' : '/smartphones')}
+                    className="tf-hbtn"
+                    style={{ width: 28, height: 28, color: meta.hex, borderColor: `${meta.hex}66` }}
+                    aria-label={state === ACCOUNT_STATE.RECONNECT
+                      ? `Reconnect ${d.account_name}`
+                      : `Link a device to ${d.account_name}`}
+                    title={state === ACCOUNT_STATE.RECONNECT
+                      ? 'Reconnect this account’s device or web session'
+                      : 'Link a device or Web Login to this account'}
+                  >
+                    {state === ACCOUNT_STATE.RECONNECT ? <RefreshCw size={14} /> : <LinkIcon size={14} />}
+                  </button>
+                ) : (
+                  <button
+                    className="tf-hbtn"
+                    style={{ width: 28, height: 28 }}
+                    onClick={() => navigate('/offers')}
+                    aria-label={`Open ${d.account_name} in Payment details`}
+                  >
+                    <MoreHorizontal size={15} />
+                  </button>
+                )}
               </div>
             );
           })

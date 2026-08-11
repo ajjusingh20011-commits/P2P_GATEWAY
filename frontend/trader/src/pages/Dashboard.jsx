@@ -6,6 +6,7 @@ import { CommissionSection, AttentionSection, LivePoolSection, TransactionActivi
 import { useApi } from '../hooks/useApi';
 import { traderApi } from '../services/api';
 import { balance, stats, ACCOUNT_TYPES } from '../utils/mock';
+import { isLive } from '../utils/accountState';
 
 // Success-rate → red / yellow / green thresholds (shared with the currency widget).
 function rateColor(rate) {
@@ -152,13 +153,11 @@ export default function Dashboard() {
   }, [details]);
   const hasRateData = rateBands.some((b) => b.count > 0);
 
-  // Real live-account count — same routing-eligibility definition
-  // LivePoolSection uses (is_active is the admin/linkage gate,
-  // is_active_detail is the trader's own on/off intent; both must hold).
-  const liveCount = useMemo(
-    () => details.filter((d) => d.is_active && d.is_active_detail !== false).length,
-    [details]
-  );
+  // Real live-account count — a CONFIRMED-ALIVE connection, the same
+  // definition LivePoolSection uses (utils/accountState.js). This counted
+  // toggle position alone before, so it reported accounts as live that had
+  // never been connected to anything.
+  const liveCount = useMemo(() => details.filter(isLive).length, [details]);
 
   // Top stat row — exactly the set the approved design calls for. No My
   // Rate / FTD / STD cards (FTD/STD is an admin-only concept, not shown on

@@ -6,6 +6,7 @@ import {
   IconPlus, IconEdit, IconTrash, IconChevron, IconRobot, IconWarning, IconDots, IconLock, IconGlobe, IconPhone,
 } from '../components/icons';
 import { ACCOUNT_TYPES } from '../utils/mock';
+import { ACCOUNT_STATE, STATE_META, accountState, isLive } from '../utils/accountState';
 import { traderApi } from '../services/api';
 import { toast } from '../components/Toaster';
 import ConfirmModal from '../components/ConfirmModal';
@@ -1038,6 +1039,7 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
     bank_name: detail.bank_name ?? '',
     smartphone_id: detail.smartphone_id ?? '',
     is_active_detail: detail.is_active_detail ?? true,
+    manually_confirmed: !!detail.manually_confirmed,
     min_amount: detail.min_amount ?? '',
     max_amount: detail.max_amount ?? '',
     monthly_limit: detail.monthly_limit ?? '',
@@ -1080,6 +1082,10 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
         upi_id: form.upi_id,
         bank_name: form.bank_name || '',
         organization_name: form.organization_name,
+        // Trader-native details only — a Web Login account has a real session
+        // to confirm against, so the manual opt-in never applies to it and
+        // ngo-backend has no such field to receive.
+        ...(detail.__ngo ? {} : { manually_confirmed: !!form.manually_confirmed }),
       });
       let syncFailed = false;
       if (detail.__ngo) {
@@ -1161,11 +1167,16 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
         </div>
         {detail.__ngo ? (
           <Badge color="green">Live</Badge>
-        ) : liveState ? (
-          <LivenessBadge state={liveState} />
         ) : (
-          <span title="No device connected" style={{ color: 'var(--subtle)', flexShrink: 0 }}>
-            <IconRobot className="h-5 w-5" />
+          // Same real connection state the row list and Live pool show, so
+          // opening an account to edit it never disagrees with the list.
+          <span
+            title={STATE_META[accountState(detail)].title}
+            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold"
+            style={{ background: `${STATE_META[accountState(detail)].hex}22`, color: STATE_META[accountState(detail)].hex }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: STATE_META[accountState(detail)].hex, flexShrink: 0 }} />
+            {STATE_META[accountState(detail)].label}
           </span>
         )}
       </div>
@@ -1197,6 +1208,34 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
         <BadgeCheck className="h-[18px] w-[18px] flex-shrink-0" style={{ color: 'var(--muted)' }} />
       </div>
       <LimitsForm form={form} set={set} caps={caps} setCaps={setCaps} usage={detail.usage} />
+
+      {/* Manual-confirmation opt-in. An account with no APK device and no web
+          session cannot observe an incoming payment, so routing now skips it
+          unless the trader explicitly takes that job on — this toggle is the
+          only thing that keeps such an account in the pool
+          (routingEngine.pickEligibleAccount). Hidden for web accounts, which
+          always have a real session to confirm against. */}
+      {!detail.__ngo && (
+        <div
+          className="mt-4 flex items-center justify-between gap-3 rounded-lg p-3"
+          style={hasNoConnection(detail) && !form.manually_confirmed
+            ? { border: '1px solid rgba(245,158,11,.4)', background: 'rgba(245,158,11,.08)' }
+            : { border: '1px solid var(--cardborder)', background: 'var(--hover)' }}
+        >
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="h-4 w-4 flex-shrink-0" style={{ color: form.manually_confirmed ? '#22c55e' : 'var(--muted)' }} />
+            <div>
+              <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>I confirm this account&rsquo;s payments manually</p>
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                {hasNoConnection(detail)
+                  ? 'No device or web session is linked, so payments here can only be confirmed by hand. Without this, the account will not receive orders.'
+                  : 'Keeps this account receiving orders even when no device or web session is linked to it.'}
+              </p>
+            </div>
+          </div>
+          <Toggle checked={!!form.manually_confirmed} onChange={(v) => set('manually_confirmed', v)} />
+        </div>
+      )}
 
       {/* NGO/web accounts do have a real delete endpoint, but it's exposed
           from the trash icon on their row in AccountsColumn instead of here
@@ -1268,6 +1307,42 @@ const notLinked = (d) => !!d.is_active_detail && d.is_active === false;
 // (ngo-backend connectionType === 'web'), otherwise 'apk' (the default for
 // trader-native details, which have no connectionType field).
 const connType = (d) => (d && d.connectionType === 'web' ? 'web' : 'apk');
+
+// A Web Login account is mirrored into MySQL payment_details for the routing
+// engine, so the SAME real account exists on both sides. Returns the ids of
+// the payment_details rows that are those shadow copies, so nothing counts or
+// renders one account twice.
+//
+// Matched primarily on upi_id: Account.gatewayPaymentDetailId is the intended
+// back-reference but is dangling in real data (it holds ids of payment_details
+// rows that no longer exist), which silently defeated the id-only matching
+// this replaced. gatewayPaymentDetailId is still honoured as a second pass so
+// a mirror whose UPI was later edited on one side is still caught.
+function mirroredDetailIds(details = [], ngoAccounts = []) {
+  const byUpi = new Map(
+    details.filter((d) => d.upi_id).map((d) => [String(d.upi_id).trim().toLowerCase(), String(d.id)])
+  );
+  const ids = new Set();
+  for (const a of ngoAccounts) {
+    const viaUpi = a.upiId ? byUpi.get(String(a.upiId).trim().toLowerCase()) : undefined;
+    if (viaUpi !== undefined) ids.add(viaUpi);
+    else if (a.gatewayPaymentDetailId) ids.add(String(a.gatewayPaymentDetailId));
+  }
+  return ids;
+}
+
+// Distinct real accounts across both sides — the number the header must show.
+// `predicate` optionally narrows it to a subset (e.g. only the live ones).
+function distinctAccounts(details = [], ngoAccounts = [], detailPredicate = () => true, ngoPredicate = () => true) {
+  const mirrored = mirroredDetailIds(details, ngoAccounts);
+  const natives = details.filter((d) => !mirrored.has(String(d.id)) && detailPredicate(d));
+  return natives.length + ngoAccounts.filter(ngoPredicate).length;
+}
+
+// No APK device and no Web Login session backs this payment detail, so nothing
+// can observe a payment arriving on it. `connection_alive` is null in exactly
+// this case (jobs/connectionLiveness.js), which is what routing keys on.
+const hasNoConnection = (d) => !!d && !d.__ngo && connType(d) !== 'web' && d.connection_alive == null;
 
 // Small badge: android robot (teal) for APK, globe (coral) for Web Login.
 function ConnTypeIcon({ type, size = 24 }) {
@@ -1392,7 +1467,7 @@ function AccountsColumn({
   ngoAccounts = [], onToggleNGO, onDeleteNGO, onRetryNGO,
   otpValues, onOtpChange, onSubmitOtp, otpBusyId,
   linkBlocked = {}, linkChecking = null, onReconnect, ngoToggleBusyId,
-  deviceLiveMap = {}, ngoAliveMap = {},
+  deviceLiveMap = {}, ngoAliveMap = {}, deviceNames = {},
 }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all'); // all | active | inactive
@@ -1413,18 +1488,11 @@ function AccountsColumn({
     });
   }, [details, query, filter, onlyUnlinked]);
 
-  // A Web Login account is mirrored into payment_details for the
-  // order-routing engine (syncNgoAccountToPaymentDetail, above), tagged
-  // back onto the ngo Account via gatewayPaymentDetailId. Exclude those
-  // mirror rows from the native side of the merged grouping below so the
-  // same real account isn't counted/rendered twice — once as its own ngo
-  // Account, once as its payment_details shadow copy. Compared as strings
-  // since one side is a Sequelize numeric id and the other whatever JSON
-  // round-tripped it through.
-  const mirroredDetailIds = useMemo(
-    () => new Set(ngoAccounts.map((a) => a.gatewayPaymentDetailId).filter(Boolean).map(String)),
-    [ngoAccounts]
-  );
+  // Exclude Web Login mirror rows from the native side of the merged grouping
+  // below so the same real account isn't rendered twice — once as its own ngo
+  // Account, once as its payment_details shadow copy. See mirroredDetailIds
+  // for why this can't key on gatewayPaymentDetailId alone.
+  const mirrored = useMemo(() => mirroredDetailIds(details, ngoAccounts), [details, ngoAccounts]);
 
   // ONE grouping, keyed by canonical provider — merges trader-native
   // payment_details rows (account_type) and ngo Account rows (platform)
@@ -1434,7 +1502,7 @@ function AccountsColumn({
   // on both sides — see canonicalProviderKey's comment for why a raw
   // string comparison wasn't enough (BharatPe's mismatched spelling).
   const providerGroups = useMemo(() => {
-    const nativeItems = filteredDetails.filter((d) => !mirroredDetailIds.has(String(d.id)));
+    const nativeItems = filteredDetails.filter((d) => !mirrored.has(String(d.id)));
 
     const q = query.trim().toLowerCase();
     const ngoItems = ngoAccounts.filter((a) => {
@@ -1451,7 +1519,7 @@ function AccountsColumn({
     for (const a of ngoItems) bucket(canonicalProviderKey(a.platform)).ngoItems.push(a);
 
     return Object.values(map).map((g) => ({ ...g, mapKey: `provider-${g.key}` }));
-  }, [filteredDetails, mirroredDetailIds, ngoAccounts, query, filter, onlyUnlinked]);
+  }, [filteredDetails, mirrored, ngoAccounts, query, filter, onlyUnlinked]);
 
   // Groups are OPEN by default (real traders have a handful of accounts, not
   // MaxPayDesign's 230) — `expanded[key] === false` is the only closed state.
@@ -1479,7 +1547,13 @@ function AccountsColumn({
     const exhausted = isExhausted(d);
     const unlinked = notLinked(d);
     const highlight = exhausted || unlinked;
-    const liveState = d.ngo_device_id ? (deviceLiveMap[d.ngo_device_id] ? 'active' : 'dead') : null;
+    // Real connection state, shared with the Live pool and the dashboard
+    // counts (utils/accountState.js). This used to key off deviceLiveMap,
+    // which only ever knew about accounts that had an ngo_device_id — so an
+    // account with no connection at all rendered a neutral robot icon rather
+    // than saying it was not connected.
+    const state = accountState(d);
+    const meta = STATE_META[state];
     return (
       <div
         key={d.id}
@@ -1492,21 +1566,33 @@ function AccountsColumn({
           {/* ON/OFF toggle (red off / green on) */}
           <Toggle checked={!!d.is_active_detail} onChange={() => onToggle(d)} />
 
-          {/* real heartbeat liveness (deviceLiveMap, polled every
-              15s) — a 2-state active/dead badge; no device
-              assigned at all shows a neutral placeholder, not a
-              fabricated 3rd state. */}
-          {liveState ? (
-            <LivenessBadge state={liveState} />
-          ) : (
-            <span title="No device connected" style={{ color: 'var(--subtle)' }}>
-              <IconRobot className="h-5 w-5" />
-            </span>
-          )}
+          {/* Real connection state: Live / Reconnect needed / Manual / Not
+              connected / Off. "Off" stays visually calm — it's a normal
+              trader choice, not a fault. */}
+          <span
+            title={meta.title}
+            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold"
+            style={{ background: `${meta.hex}22`, color: meta.hex }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: meta.hex, flexShrink: 0 }} />
+            {meta.label}
+          </span>
 
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{d.account_name || 'Untitled'}</p>
-            <p className="truncate text-xs" style={{ color: 'var(--muted)' }}>{d.upi_id}</p>
+            <p className="truncate text-xs" style={{ color: 'var(--muted)' }}>
+              {d.upi_id}
+              {/* The actual thing this account is connected through — the
+                  paired phone by name, or the web session. Previously only a
+                  generic type icon was shown, so "paired to a device that no
+                  longer exists" was indistinguishable from "properly paired". */}
+              <span style={{ opacity: 0.75 }}>
+                {' · '}
+                {connType(d) === 'web'
+                  ? 'Web Login session'
+                  : (d.ngo_device_id && deviceNames[d.ngo_device_id]) || 'Not linked'}
+              </span>
+            </p>
           </div>
 
           {/* connection-type icon (apk=android/teal · web=globe/coral) */}
@@ -1563,6 +1649,34 @@ function AccountsColumn({
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Connection-state recovery. Distinct from the `highlight` block
+            above (which is about limits and the admin linkage flag) — this is
+            purely about whether anything is actually connected, and offers the
+            one action that fixes it. Deliberately NOT a second toggle: the
+            trader's intent is already expressed by the switch on this row. */}
+        {(state === ACCOUNT_STATE.RECONNECT || state === ACCOUNT_STATE.NEVER) && (
+          <div
+            className="mt-2 flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs"
+            style={{ border: `1px solid ${meta.hex}55`, background: `${meta.hex}14` }}
+          >
+            <span style={{ color: meta.hex }}>
+              {state === ACCOUNT_STATE.RECONNECT
+                ? 'Was connected, not responding now — orders are not being routed here.'
+                : 'Not connected — link a device or Web Login first.'}
+            </span>
+            <button
+              onClick={() => onReconnect({
+                kind: connType(d) === 'web' ? 'web' : 'apk',
+                account: ngoAccounts.find((a) => String(a.upiId || '').trim().toLowerCase() === String(d.upi_id || '').trim().toLowerCase()) || null,
+              })}
+              className="whitespace-nowrap rounded-md px-2 py-0.5 font-medium"
+              style={{ border: `1px solid ${meta.hex}88`, color: meta.hex }}
+            >
+              {state === ACCOUNT_STATE.RECONNECT ? 'Reconnect' : 'Link a device'}
+            </button>
           </div>
         )}
       </div>
@@ -1679,7 +1793,7 @@ function AccountsColumn({
         <div>
           <div className="flex items-center gap-2">
             <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>All Payment Accounts</h2>
-            <Badge color="gray">{details.length + ngoAccounts.length}</Badge>
+            <Badge color="gray">{distinctAccounts(details, ngoAccounts)}</Badge>
           </div>
           <p className="mt-0.5 text-xs" style={{ color: 'var(--muted)' }}>Grouped by provider for fast management</p>
         </div>
@@ -1908,6 +2022,9 @@ export default function Offers() {
   // device going offline and auto-flips is_active back to false.
   // ---------------------------------------------------------------------
   const [deviceLiveMap, setDeviceLiveMap] = useState({});
+  // Real device NAMES, from the same poll — so a row can name the phone it's
+  // actually paired to instead of just showing a generic connection-type icon.
+  const [deviceNameMap, setDeviceNameMap] = useState({});
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
@@ -1918,6 +2035,15 @@ export default function Offers() {
         return; // transient fetch failure — keep the last-known map
       }
       if (cancelled) return;
+      const names = {};
+      (list || []).forEach((dev) => {
+        // Trader-assigned name, else the hardware model. A device reporting
+        // neither is left out entirely so the row says "Not linked" rather
+        // than inventing a label for it.
+        const n = (dev.deviceName || dev.deviceModel || '').trim();
+        if (n) names[dev.id] = n;
+      });
+      setDeviceNameMap(names);
       const map = {};
       (list || []).forEach((dev) => { map[dev.id] = !!dev.online; });
       setDeviceLiveMap((prev) => {
@@ -2250,14 +2376,14 @@ export default function Offers() {
         <div>
           <span className="tf-summary5-icon"><Layers3 size={18} /></span>
           <small>Total UPI accounts</small>
-          <strong>{details.length + ngoAccounts.length}</strong>
+          <strong>{distinctAccounts(details, ngoAccounts)}</strong>
           <em>All connected accounts</em>
         </div>
         <div>
           <span className="tf-summary5-icon" style={{ background: 'rgba(34,197,94,.14)', color: '#22c55e' }}><Wifi size={18} /></span>
           <small>Live pool</small>
-          <strong>{details.filter((d) => d.is_active && d.is_active_detail !== false).length + ngoAccounts.filter((a) => a.status === 'live').length}</strong>
-          <em>Currently receiving orders</em>
+          <strong>{distinctAccounts(details, ngoAccounts, isLive, (a) => a.status === 'live')}</strong>
+          <em>Connection confirmed alive</em>
         </div>
         <div>
           <span className="tf-summary5-icon" style={{ background: 'rgba(34,197,94,.14)', color: '#22c55e' }}><IconRobot className="h-[18px] w-[18px]" /></span>
@@ -2310,6 +2436,7 @@ export default function Offers() {
             onSubmitOtp={submitNGOOtp}
             otpBusyId={otpBusyId}
             deviceLiveMap={deviceLiveMap}
+            deviceNames={deviceNameMap}
             ngoAliveMap={ngoAliveMap}
           />
         </>
