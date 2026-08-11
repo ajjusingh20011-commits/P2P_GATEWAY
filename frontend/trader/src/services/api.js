@@ -118,6 +118,11 @@ export const traderApi = {
   stats: (period) => api.get('/trader/stats', { params: period ? { period } : {} }),
   commission: (period) => api.get('/trader/commission', { params: period ? { period } : {} }),
   setOnline: (is_online) => api.put('/trader/online-status', { is_online }),
+  // Presence ping. The backend's heartbeatCheck job flips is_online back to
+  // false once last_heartbeat is older than HEARTBEAT_TIMEOUT_MS (2 min by
+  // default), so an online trader has to keep saying they're here — see
+  // TraderLayout's heartbeat effect.
+  heartbeat: () => api.put('/trader/heartbeat'),
   orders: (status, opts) => api.get('/orders', { params: { ...(status ? { status } : {}), ...(opts || {}) } }),
   // Trader manually confirms an under_review order (bare click — no UTR input;
   // the trader has already checked their own bank/UPI app).

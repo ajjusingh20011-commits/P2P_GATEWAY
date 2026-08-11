@@ -11,6 +11,17 @@ import { traderApi } from '../services/api';
 import { getDevices } from '../lib/ngoApi';
 import { inr, balance } from '../utils/mock';
 
+// Presence cadence. The backend marks a trader offline once last_heartbeat is
+// older than HEARTBEAT_TIMEOUT_MS (config.platform, 2 min by default), so the
+// ping interval has to sit comfortably inside that window.
+const HEARTBEAT_INTERVAL_MS = 30 * 1000;
+// How long a hidden tab still counts as presence. Long enough that a tab
+// switch mid-order is harmless, short enough that a forgotten background tab
+// stops holding a trader in the routing pool.
+const HIDDEN_GRACE_MS = 5 * 60 * 1000;
+// How often the sidebar re-reads the trader's real is_online from the DB.
+const PRESENCE_INTERVAL_MS = 30 * 1000;
+
 /**
  * Shell for all authenticated trader pages: sidebar + top bar + routed content.
  * Shares { online, setOnline, connected, theme, setTheme } with child pages
@@ -76,7 +87,57 @@ export default function TraderLayout() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => { refreshProfile(); }, [refreshProfile]);
+  // Poll the real is_online rather than trusting the last toggle position.
+  // The toggle used to be set once on mount and then never re-checked, so when
+  // the backend's heartbeatCheck job flipped is_online to false the sidebar
+  // went on showing a green "Online & receiving" indefinitely while routing
+  // was already rejecting every order for this trader. Whatever else drifts,
+  // the indicator now converges on the DB within one interval.
+  useEffect(() => {
+    refreshProfile();
+    const id = setInterval(refreshProfile, PRESENCE_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [refreshProfile]);
+
+  // Presence heartbeat. traders.last_heartbeat is what keeps is_online true;
+  // nothing in this panel ever sent one, so a trader who toggled online was
+  // silently marked offline by heartbeatCheck ~2 minutes later and every
+  // subsequent order failed with no_provider_available.
+  //
+  // Only runs while the trader is actually online AND the panel is present, so
+  // presence stays real: close the tab and the pings stop, and the trader
+  // times out normally. A hidden tab keeps its heartbeat for HIDDEN_GRACE_MS
+  // first, so switching tabs or minimising for a moment mid-order doesn't
+  // knock the trader out of the routing pool; a tab left buried longer than
+  // that stops counting as presence. A visible, idle tab stays online by
+  // design — the panel is on screen and would show an incoming order.
+  useEffect(() => {
+    if (!online) return undefined;
+    let hiddenSince = document.visibilityState === 'hidden' ? Date.now() : null;
+
+    const present = () => hiddenSince == null || Date.now() - hiddenSince < HIDDEN_GRACE_MS;
+    const ping = () => { if (present()) traderApi.heartbeat().catch(() => {}); };
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenSince = Date.now();
+        return;
+      }
+      // Back on screen: resume immediately and re-read the real status, which
+      // may have gone offline while the tab was buried.
+      hiddenSince = null;
+      ping();
+      refreshProfile();
+    };
+
+    ping();
+    const id = setInterval(ping, HEARTBEAT_INTERVAL_MS);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [online, refreshProfile]);
 
   // Keep the sidebar balance live: the socket effect below already re-dispatches
   // every settlement/cancellation/payout event as a window 'order:update' event
@@ -168,8 +229,8 @@ export default function TraderLayout() {
     const onRefresh = (payload = {}) => window.dispatchEvent(new CustomEvent('order:update', { detail: payload }));
     // Admin force-disconnected one of this trader's devices — the only
     // device-state event actually pushed to the trader room (heartbeat
-    // online/offline is polled, not socket-pushed — see refreshProfile's
-    // 30s interval above).
+    // online/offline is polled, not socket-pushed — see the
+    // PRESENCE_INTERVAL_MS poll above).
     const onDeviceDisconnected = (payload = {}) => window.dispatchEvent(new CustomEvent('device:disconnected', { detail: payload }));
 
     socket.on('order:new', onNewOrder);
