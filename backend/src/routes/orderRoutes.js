@@ -17,6 +17,7 @@ const { Router } = require('express');
 const orderController = require('../controllers/orderController');
 const { verifyToken, checkRole } = require('../middleware/auth');
 const { apiKeyAuth } = require('../middleware/apiKeyAuth');
+const { verifyInternalService } = require('../middleware/internalAuth');
 
 const router = Router();
 
@@ -36,10 +37,20 @@ router.post('/:id/customer-confirm', orderController.markPaid);
 // only. Distinct from the authenticated /:id/cancel below (trader/admin).
 router.post('/:id/cancel-checkout', orderController.cancelCheckout);
 // Internal callback: NGO backend -> P2P backend once it verifies a payment.
-// SECURITY: unauthenticated — anyone who can reach it can settle any order
-// with a fabricated UTR. Restrict before production (shared-secret header,
-// IP allowlist, or a service-account verifyToken check).
-router.post('/verify-payment', orderController.verifyPayment);
+//
+// Was unauthenticated and publicly reachable on the production API host, and
+// flips an order to `success` — confirmed live. Now requires the same signed
+// service token as /api/internal/* (middleware/internalAuth.js).
+//
+// Locking this down cannot break real settlement: it has no reachable caller.
+// Its only caller is ngo-backend's matchingEngine.notifyP2PBackend, which
+// returns immediately unless webhook.orderId is set, and nothing populates
+// that field any more — the checkout -> ngo-backend bridge that used to was
+// retired on 2026-08-06 (see claimPaid's comment), and the sole Webhook
+// creation site never sets it. Real settlement runs through matchingEngineV2
+// via POST /api/internal/match-settlement instead. The token is nonetheless
+// sent by notifyP2PBackend, so the path works if it is ever revived.
+router.post('/verify-payment', verifyInternalService, orderController.verifyPayment);
 router.post('/:id/cancel', verifyToken, checkRole('trader', 'admin'), orderController.cancel);
 router.post('/:id/expire', verifyToken, checkRole('trader', 'admin'), orderController.expire);
 router.post('/:id/trader-confirm', verifyToken, checkRole('trader'), orderController.traderConfirm);

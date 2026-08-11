@@ -51,7 +51,11 @@ async function notifyP2PBackend(webhook, txn) {
         verified: true,
         verifiedAt: new Date().toISOString(),
       },
-      { timeout: 5000 }
+      // That endpoint settles an order, so it is no longer unauthenticated.
+      // Sent here even though this call is currently unreachable (nothing
+      // populates webhook.orderId any more), so reviving the path does not
+      // also require remembering to add auth to it.
+      { timeout: 5000, headers: internalAuthHeaders() }
     );
     console.log('P2P order closed:', webhook.orderId);
   } catch (e) {
