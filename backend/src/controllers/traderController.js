@@ -34,6 +34,29 @@ function startOfToday() {
   return d;
 }
 
+/**
+ * Success rate measures how well a trader handles payments the CUSTOMER
+ * claimed to have made. An order therefore only counts — as a success or as a
+ * failure — if the customer actually pressed "I paid" at some point, whatever
+ * settled it afterwards (trader confirm, or automatic APK/Web-Login matching).
+ *
+ * An order the system detected and settled on its own, with the customer never
+ * claiming anything, is excluded from BOTH sides of the fraction: the money
+ * moved, but nothing about it reflects the trader's claim handling, so it must
+ * not move the stated rate in either direction.
+ *
+ * `customer_confirmed_at` is the right field and already exists — written in
+ * exactly one place, orderController.claimPaid, i.e. the "I paid" click, and
+ * described by its own migration as "when the customer clicked Continue /
+ * confirmed paid".
+ *
+ * NOT `claimed_paid_at`, despite the name: smartMerge.mergePaymentData also
+ * stamps that when a SYSTEM-detected payment lands below the auto-confirm
+ * threshold, with no customer involvement at all. Using it would have counted
+ * exactly the orders this rule is meant to exclude.
+ */
+const CUSTOMER_CLAIMED = { customer_confirmed_at: { [Op.ne]: null } };
+
 /* ---------------------------- GET /dashboard ------------------------------ */
 const dashboard = asyncHandler(async (req, res) => {
   const trader = await currentTrader(req, res);
@@ -42,8 +65,9 @@ const dashboard = asyncHandler(async (req, res) => {
   const today = startOfToday();
   const [todayOrders, confirmedToday, closedToday, volume, ftdToday, stdToday] = await Promise.all([
     db.Order.count({ where: { trader_id: trader.id, created_at: { [Op.gte]: today } } }),
-    db.Order.count({ where: { trader_id: trader.id, status: 'success', created_at: { [Op.gte]: today } } }),
-    db.Order.count({ where: { trader_id: trader.id, status: { [Op.in]: ['success', 'failed', 'rejected', 'disputed'] }, created_at: { [Op.gte]: today } } }),
+    // Both sides of success_rate are gated on CUSTOMER_CLAIMED — see above.
+    db.Order.count({ where: { trader_id: trader.id, status: 'success', created_at: { [Op.gte]: today }, ...CUSTOMER_CLAIMED } }),
+    db.Order.count({ where: { trader_id: trader.id, status: { [Op.in]: ['success', 'failed', 'rejected', 'disputed'] }, created_at: { [Op.gte]: today }, ...CUSTOMER_CLAIMED } }),
     db.Order.sum('amount_inr', { where: { trader_id: trader.id, status: 'success', created_at: { [Op.gte]: today } } }),
     db.Order.count({ where: { trader_id: trader.id, deposit_type: 'FTD', created_at: { [Op.gte]: today } } }),
     db.Order.count({ where: { trader_id: trader.id, deposit_type: 'STD', created_at: { [Op.gte]: today } } }),
@@ -114,8 +138,11 @@ const stats = asyncHandler(async (req, res) => {
 
   const [totalOrders, confirmedOrders, closedOrders, volume] = await Promise.all([
     db.Order.count({ where: where({}) }),
-    db.Order.count({ where: where({ status: 'success' }) }),
-    db.Order.count({ where: where({ status: { [Op.in]: ['success', 'failed', 'rejected', 'disputed'] } }) }),
+    // success_rate only — gated on CUSTOMER_CLAIMED. `trades` and `volume_inr`
+    // deliberately are NOT: those are real activity and real money, and an
+    // auto-detected settlement is both.
+    db.Order.count({ where: where({ status: 'success', ...CUSTOMER_CLAIMED }) }),
+    db.Order.count({ where: where({ status: { [Op.in]: ['success', 'failed', 'rejected', 'disputed'] }, ...CUSTOMER_CLAIMED }) }),
     db.Order.sum('amount_inr', { where: where({ status: 'success' }) }),
   ]);
 
@@ -283,8 +310,14 @@ const listPaymentDetails = asyncHandler(async (req, res) => {
       const [windowUsage, ordersTotal, ordersConfirmed] = await Promise.all([
         computeWindowUsage(d.id, d.monthly_start_date, { statusWhere: 'success' }),
         // Success-rate counts (all-time, COUNTS not amounts): confirmed / total.
-        db.Order.count({ where: { payment_detail_id: d.id } }),
-        db.Order.count({ where: { payment_detail_id: d.id, status: 'success' } }),
+        // Both gated on CUSTOMER_CLAIMED — see the constant. These feed the
+        // per-account "Success rate" column and the Live pool's average, so
+        // they must use the same rule as the dashboard figure or the panel
+        // would show two different success rates for the same trader.
+        // `orders_total` here is the success-rate DENOMINATOR, not the
+        // account's total order count — nothing else reads it.
+        db.Order.count({ where: { payment_detail_id: d.id, ...CUSTOMER_CLAIMED } }),
+        db.Order.count({ where: { payment_detail_id: d.id, status: 'success', ...CUSTOMER_CLAIMED } }),
       ]);
       return {
         ...d.toJSON(),
