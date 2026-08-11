@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Layers3, Wifi, BadgeCheck, Check, CheckCircle2, KeyRound, ExternalLink } from 'lucide-react';
 import { Card, Badge, Button, Toggle, SearchInput, Select, PageHeader, Modal, BankBadge, LivenessBadge } from '../components/ui';
 import { LivePoolSection } from '../components/DashboardSections';
@@ -367,6 +367,7 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
   const [step, setStep] = useState(presetBank ? 2 : 1);
   const [bank, setBank] = useState(presetBank || null);
   const [bankQuery, setBankQuery] = useState('');
+  const [deviceQuery, setDeviceQuery] = useState('');
   const [form, setForm] = useState(() => ({
     ...emptyLimits(),
     account_name: '',
@@ -400,6 +401,31 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
     const q = bankQuery.trim().toLowerCase();
     return q ? BANKS.filter((b) => b.name.toLowerCase().includes(q)) : BANKS;
   }, [bankQuery]);
+
+  // The picker is a flat, unfiltered scroll of every paired device. Fine at
+  // two or three, unusable at six or seven. Search by name or model, and put
+  // online devices first — a trader is nearly always reaching for one that is
+  // actually up, and those were previously buried in registration order.
+  const deviceLabel = (dev) => dev.deviceName || dev.deviceModel || 'Unnamed device';
+  const filteredDevices = useMemo(() => {
+    const q = deviceQuery.trim().toLowerCase();
+    const matched = q
+      ? ngoDevices.filter((d) => `${d.deviceName || ''} ${d.deviceModel || ''}`.toLowerCase().includes(q))
+      : ngoDevices;
+    return [...matched].sort((a, b) => (b.online === true) - (a.online === true));
+  }, [ngoDevices, deviceQuery]);
+
+  // A secondary line repeating the same value on every row is pure noise —
+  // it costs a line of height per device and distinguishes nothing. Only
+  // surface the model when it actually varies between devices.
+  const modelVaries = useMemo(() => {
+    const models = new Set(ngoDevices.map((d) => (d.deviceModel || '').trim()).filter(Boolean));
+    return models.size > 1;
+  }, [ngoDevices]);
+
+  // Below this the list is short enough to scan directly; a search box would
+  // just be another thing to skip past.
+  const showDeviceSearch = ngoDevices.length > 3;
 
   const pickBank = (b) => {
     setBank(b);
@@ -490,11 +516,22 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
           <div>
             <p className="mb-1 text-sm font-medium" style={{ color: 'var(--text)' }}>Select a paired smartphone</p>
             <p className="mb-3 text-xs" style={{ color: 'var(--muted)' }}>The APK on this device will detect payment notifications.</p>
-            <div className="space-y-1.5">
+            {showDeviceSearch && !devicesLoading && (
+              <div className="mb-2">
+                <SearchInput
+                  value={deviceQuery}
+                  onChange={setDeviceQuery}
+                  placeholder={`Search ${ngoDevices.length} devices by name…`}
+                />
+              </div>
+            )}
+            {/* Capped height so a long device list scrolls inside the step
+                instead of pushing the form's own fields off the modal. */}
+            <div className="space-y-1.5" style={showDeviceSearch ? { maxHeight: 260, overflowY: 'auto' } : undefined}>
               {devicesLoading && (
                 <p className="text-xs" style={{ color: 'var(--muted)' }}>Loading devices…</p>
               )}
-              {!devicesLoading && ngoDevices.map((dev) => {
+              {!devicesLoading && filteredDevices.map((dev) => {
                 const selected = form.ngo_device_id === String(dev.id);
                 return (
                   <button
@@ -511,13 +548,25 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
                       <IconPhone className="h-4 w-4" />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{dev.deviceName || dev.deviceModel || 'Unnamed device'}</p>
-                      <p className="text-xs" style={{ color: dev.online ? '#22c55e' : 'var(--muted)' }}>{dev.online ? 'Online · heartbeat healthy' : 'Offline'}</p>
+                      {/* The device NAME is what the trader is choosing by, so
+                          it carries the weight; everything else is secondary
+                          and deliberately smaller and muted. */}
+                      <p className="truncate text-sm font-semibold" style={{ color: 'var(--text)' }}>{deviceLabel(dev)}</p>
+                      <p className="truncate text-[11px]" style={{ color: dev.online ? '#22c55e' : 'var(--subtle)' }}>
+                        {dev.online ? 'Online' : 'Offline'}
+                        {/* Only when it actually distinguishes one row from another. */}
+                        {modelVaries && dev.deviceModel ? ` · ${dev.deviceModel}` : ''}
+                      </p>
                     </div>
                     {selected && <Check className="h-4 w-4 flex-shrink-0" style={{ color: '#22c55e' }} />}
                   </button>
                 );
               })}
+              {!devicesLoading && ngoDevices.length > 0 && filteredDevices.length === 0 && (
+                <p className="py-3 text-center text-xs" style={{ color: 'var(--muted)' }}>
+                  No devices match “{deviceQuery}”.
+                </p>
+              )}
               {!devicesLoading && ngoDevices.length === 0 && (
                 <p className="rounded-lg px-3 py-2.5 text-xs" style={{ border: '1px dashed var(--cardborder)', color: 'var(--muted)' }}>
                   No paired devices yet — you can still save this detail and link a device later.
@@ -1685,7 +1734,26 @@ function AccountsColumn({
 
   const renderNgoRow = (a) => {
     const live = a.status === 'live';
-    const meta = ngoStatusMeta(a.status, a.statusReason);
+    // `a.status` is a CACHED field in Mongo that the 60s monitor loop updates,
+    // so it lags reality by up to a minute — and a Web Login account whose
+    // browser session has died can sit at 'live' indefinitely. The Live pool
+    // table on this same page reads the real mirrored connection_alive, so
+    // the two disagreed: one said Live, the other said Reconnect needed, for
+    // the same account at the same moment.
+    //
+    // Resolve against the same evidence the Live pool uses — the mirrored
+    // payment_details row's connection_alive — falling back to the direct
+    // SessionStore poll. Only the "claims live but isn't" case is overridden;
+    // pending / failed / OTP-required keep their existing meta and flows.
+    const mirror = details.find(
+      (d) => String(d.upi_id || '').trim().toLowerCase() === String(a.upiId || '').trim().toLowerCase()
+    );
+    const reallyDead = mirror
+      ? mirror.connection_alive === false
+      : ngoAliveMap[a._id] === false;
+    const meta = live && reallyDead
+      ? { label: STATE_META[ACCOUNT_STATE.RECONNECT].label, color: 'amber' }
+      : ngoStatusMeta(a.status, a.statusReason);
     // 'paused' alone is ambiguous — manual pause, a genuine OTP
     // request, and a dead session all set the same status value
     // (see statusReason, added specifically to disambiguate).
@@ -1714,16 +1782,10 @@ function AccountsColumn({
           {/* connection-status badge: pending/paused/failed/live */}
           <Badge color={meta.color}>{meta.label}</Badge>
 
-          {/* real SessionStore.isSessionAlive check (polled every
-              15s) disagreeing with the DB's cached 'live' status —
-              the 60s monitor loop hasn't caught up yet */}
-          {live && ngoAliveMap[a._id] === false && (
-            <span
-              className="h-2 w-2 rounded-full"
-              style={{ background: '#ef4444' }}
-              title="Marked live, but the session isn't responding right now"
-            />
-          )}
+          {/* The small red dot that used to sit here signalled exactly this
+              condition, but next to a badge still reading "Live" — so the row
+              contradicted itself. The badge above now carries the real state,
+              and the banner below carries the action. */}
 
           <span title={live ? undefined : 'Available once connected'}>
             <button
@@ -1778,6 +1840,26 @@ function AccountsColumn({
               style={{ border: '1px solid rgba(34,197,94,.4)', color: '#6ee7b7' }}
             >
               Verify
+            </button>
+          </div>
+        )}
+
+        {/* Same inline recovery the trader-native rows get, so a dead web
+            session is actionable from where it's reported. */}
+        {live && reallyDead && (
+          <div
+            className="mt-2 flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs"
+            style={{ border: '1px solid rgba(245,158,11,.35)', background: 'rgba(245,158,11,.12)' }}
+          >
+            <span style={{ color: '#f59e0b' }}>
+              Was connected, not responding now — orders are not being routed here.
+            </span>
+            <button
+              onClick={() => onReconnect({ kind: 'web', account: a })}
+              className="whitespace-nowrap rounded-md px-2 py-0.5 font-medium"
+              style={{ border: '1px solid rgba(245,158,11,.6)', color: '#f59e0b' }}
+            >
+              Reconnect
             </button>
           </div>
         )}
@@ -1947,15 +2029,47 @@ export default function Offers() {
   const load = async () => {
     try {
       const res = await traderApi.paymentDetails();
-      setDetails(res?.data?.data?.payment_details || []);
+      const next = res?.data?.data?.payment_details || [];
+      announceDeadTransitions(detailsRef.current, next);
+      setDetails(next);
     } catch (e) {
-      setDetails([]);
+      // A transient fetch failure must not blank the list — that would look
+      // identical to "the trader has no accounts".
+      setDetails((prev) => (prev.length ? prev : []));
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  // A connection dropping is the exact failure the routing-liveness work
+  // exists to catch, so it can't be left to a badge quietly changing colour
+  // on a page the trader may not be looking at. Fires once per account, on
+  // the transition into dead — not on every poll while it stays dead.
+  const announceDeadTransitions = (prev, next) => {
+    if (!prev || !prev.length) return; // first load is not a transition
+    const was = new Map(prev.map((d) => [d.id, d]));
+    for (const d of next) {
+      const before = was.get(d.id);
+      if (!before) continue;
+      const wentDead = before.connection_alive === true && d.connection_alive === false;
+      // Only worth telling them about if the account is switched on: a dead
+      // connection on an account they deliberately turned off is not news.
+      if (wentDead && d.is_active_detail) {
+        toast(`${d.account_name || d.upi_id} lost its connection — no orders are being routed to it`, 'error');
+      }
+    }
+  };
+
+  // Poll on the same cadence the backend mirrors liveness at
+  // (jobs/connectionLiveness.js, 15s). Without this, connection_alive changed
+  // in the database and nothing on this page ever noticed: the badge, the
+  // counts and the Live pool all kept rendering whatever was true at page
+  // load, which is how a dead account could keep showing "Live".
+  useEffect(() => {
+    load();
+    const id = setInterval(load, LIVE_ICON_POLL_MS);
+    return () => clearInterval(id);
+  }, []);
 
   // Real today's-volume figure for the Live Pool card's summary strip — same
   // /trader/dashboard field (today_volume_inr) Dashboard.jsx's own
@@ -2065,6 +2179,7 @@ export default function Offers() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+
   // ---------------------------------------------------------------------
   // Item 5 (web half): real SessionStore.isSessionAlive for accounts the DB
   // currently says are 'live' — catches the case where the session died but
@@ -2095,6 +2210,34 @@ export default function Offers() {
     const id = setInterval(poll, LIVE_ICON_POLL_MS);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
+
+  // A Web Login account whose cached Mongo status still says 'live' but whose
+  // real session is gone. Same evidence renderNgoRow resolves the badge with:
+  // the mirrored payment_details row's connection_alive first (that is what
+  // the Live pool reads), the direct SessionStore poll as a fallback.
+  const ngoReallyDead = useCallback((a) => {
+    if (a.status !== 'live') return false;
+    const mirror = details.find(
+      (d) => String(d.upi_id || '').trim().toLowerCase() === String(a.upiId || '').trim().toLowerCase()
+    );
+    return mirror ? mirror.connection_alive === false : ngoAliveMap[a._id] === false;
+  }, [details, ngoAliveMap]);
+
+  // Counted once per real account: mirror rows are excluded from the native
+  // side so an account that exists on both sides can't inflate the figure.
+  const needsAttentionCount = useMemo(() => {
+    const mirrored = mirroredDetailIds(details, ngoAccounts);
+    const native = details.filter(
+      (d) => !mirrored.has(String(d.id))
+        && (notLinked(d) || accountState(d) === ACCOUNT_STATE.RECONNECT)
+    ).length;
+    const ngo = ngoAccounts.filter(
+      (a) => a.status === 'failed'
+        || (a.status === 'paused' && a.statusReason === 'otp_required')
+        || ngoReallyDead(a)
+    ).length;
+    return native + ngo;
+  }, [details, ngoAccounts, ngoReallyDead]);
 
   // Item 4 (web half): auto-unlink on a REAL session-death push — the
   // existing account-status socket event webScraper.js already emits when
@@ -2400,8 +2543,12 @@ export default function Offers() {
         <div>
           <span className="tf-summary5-icon" style={{ background: 'rgba(245,158,11,.14)', color: '#f59e0b' }}><IconWarning className="h-[18px] w-[18px]" /></span>
           <small>Needs attention</small>
-          <strong>{details.filter(notLinked).length + ngoAccounts.filter((a) => a.status === 'failed' || (a.status === 'paused' && a.statusReason === 'otp_required')).length}</strong>
-          <em>Unlinked, failed or waiting for OTP</em>
+          {/* A switched-on account whose connection has died belongs here:
+              the trader wants orders on it and none are being routed, which
+              is precisely "needs attention". It was previously counted
+              nowhere, so a dead connection had no presence in the summary. */}
+          <strong>{needsAttentionCount}</strong>
+          <em>Unlinked, disconnected, failed or waiting for OTP</em>
         </div>
       </div>
 
