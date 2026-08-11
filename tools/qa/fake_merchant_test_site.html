@@ -132,6 +132,15 @@
     margin-top: 10px;
   }
   .note.warn { color: var(--warn); }
+  .clear-link {
+    display: inline-block;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .clear-link:hover { color: var(--text); }
 </style>
 </head>
 <body>
@@ -153,6 +162,7 @@
     <input id="merchantPassword" type="password" placeholder="stays in this browser tab only" />
     <button class="primary" id="loginBtn" type="button">Log in &amp; get access token</button>
     <div class="out" id="loginOut"></div>
+    <p class="note">Base URL, API key/secret, and email/password above are saved in this browser's localStorage and restored on refresh — the access token itself is never saved (in-memory only, cleared on refresh, same as before). <span class="clear-link" id="clearSavedBtn">Clear saved details</span></p>
   </div>
 
   <div class="card">
@@ -211,11 +221,56 @@ let selectedAmt = null;
 // real, visible, editable input — not a hidden/hardcoded value.
 document.getElementById('customerRef').value = 'QA-' + Date.now();
 
-// In-memory only — never localStorage/sessionStorage, per project convention
-// (no persisted credentials/tokens for a QA harness). Lost on refresh, which
-// is intentional: the merchant has to log in again with real credentials
-// each session, same as they'd have to re-enter the API key/secret above.
+// In-memory only, even now — the access token is a live session credential,
+// never written to localStorage. Lost on refresh; the merchant logs in again
+// with real credentials each session. Distinct from the fields below, which
+// ARE persisted: a fresh access token is one click away (Login button) once
+// the credentials are pre-filled, so there's no real cost to re-fetching it,
+// and every meaningful benefit to never letting a live token sit on disk.
 let accessToken = null;
+
+// --- Persisted connection fields (localStorage) ---
+// This page is already behind HTTP basic auth and only ever used internally
+// for testing — not a production concern — so localStorage is fine here.
+// Persisted: apiBase, apiKey, apiSecret, merchantEmail, AND merchantPassword
+// (password persistence was a judgment call, not explicitly requested — going
+// with "persist everything needed for one-click re-login" since that's the
+// actual goal here; use "Clear saved details" below to wipe it, e.g. before
+// switching to a different merchant).
+const PERSIST_KEY = 'qaHarnessSavedFields';
+const PERSIST_FIELD_IDS = ['apiBase', 'apiKey', 'apiSecret', 'merchantEmail', 'merchantPassword'];
+
+function loadSavedFields() {
+  let saved;
+  try {
+    saved = JSON.parse(localStorage.getItem(PERSIST_KEY) || '{}');
+  } catch {
+    saved = {};
+  }
+  PERSIST_FIELD_IDS.forEach((id) => {
+    if (typeof saved[id] === 'string') document.getElementById(id).value = saved[id];
+  });
+}
+
+function saveFields() {
+  const values = {};
+  PERSIST_FIELD_IDS.forEach((id) => {
+    values[id] = document.getElementById(id).value;
+  });
+  localStorage.setItem(PERSIST_KEY, JSON.stringify(values));
+}
+
+loadSavedFields();
+PERSIST_FIELD_IDS.forEach((id) => {
+  document.getElementById(id).addEventListener('input', saveFields);
+});
+
+document.getElementById('clearSavedBtn').addEventListener('click', () => {
+  localStorage.removeItem(PERSIST_KEY);
+  PERSIST_FIELD_IDS.forEach((id) => {
+    document.getElementById(id).value = '';
+  });
+});
 
 document.getElementById('wdMethod').addEventListener('change', (e) => {
   const isUpi = e.target.value === 'upi';
