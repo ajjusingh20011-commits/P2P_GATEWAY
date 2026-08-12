@@ -128,11 +128,74 @@ async function scrapeAccount(accountId) {
 }
 
 /**
+ * How far back an identical capture counts as a re-delivery rather than a new
+ * payment. Not unbounded: two genuinely separate payments can produce
+ * byte-identical text when the app's format carries no time or reference
+ * ("Received ₹87 from Verify Tester"), and suppressing the second of those
+ * forever would silently cost a real settlement.
+ *
+ * The failure modes are not symmetric, which is why this errs long: a
+ * suppressed real payment falls back to manual confirmation, whereas an
+ * unsuppressed re-post can settle a DIFFERENT open order of the same amount
+ * and move money against the wrong trade.
+ */
+const RAW_EVENT_DEDUPE_WINDOW_MINUTES = 24 * 60;
+
+/**
  * Persists a raw device event (SMS/notification/screen) for later matching.
+ *
+ * De-duplicates on (deviceId, body, amount, utr) within the window above.
+ * This used to be a bare RawEvent.create with no dedupe of any kind, which was
+ * harmless only for as long as APK captures never actually matched anything.
+ * They do now (see matchingEngineV2's trader_id resolution), and payment apps
+ * re-post notifications: a Google Pay for Business summary notification whose
+ * expanded text names one real payment was re-delivered 21 times in a week on
+ * a live device. Each delivery reached the matcher as a fresh event, and with
+ * no UTR in the text the Tier 2 (amount-only) path would happily settle a
+ * second, unrelated order for the same amount.
+ *
+ * `utr` is part of the key deliberately, even though the reported case has
+ * none: two real payments that happen to render identical text still carry
+ * different bank references, so keying on it suppresses strictly less while
+ * still catching every re-post (a re-post repeats the reference, or repeats
+ * its absence).
+ *
+ * Web Login captures are exempt — they are structured reads from the
+ * platform's own API rather than re-postable OS notifications, and their body
+ * is not the payment's identity.
+ *
  * @param {Object} payload
- * @returns {Promise<Object>} the created RawEvent
+ * @returns {Promise<Object>} the created RawEvent, or the existing one it
+ *   duplicates, flagged `isDuplicate` (in memory only — nothing is persisted
+ *   to say so, and callers must treat a flagged event as already handled).
  */
 async function ingestRawEvent(payload) {
+  const isWebLogin = String(payload.source || '').startsWith('web_login');
+
+  if (payload.deviceId && payload.body && !isWebLogin) {
+    const since = new Date(Date.now() - RAW_EVENT_DEDUPE_WINDOW_MINUTES * 60 * 1000);
+    const existing = await RawEvent.findOne({
+      deviceId: payload.deviceId,
+      body: payload.body,
+      amount: payload.amount || '',
+      utr: payload.utr || '',
+      createdAt: { $gte: since },
+    }).sort({ createdAt: -1 });
+
+    if (existing) {
+      // Logged, never silent: a suppressed capture is a real event the trader
+      // saw on their phone, and support needs to be able to explain why it
+      // isn't on the Notifications page.
+      console.warn(
+        `ingest: DUPLICATE suppressed — device=${payload.deviceId} amount=${payload.amount || '(none)'} `
+        + `utr=${payload.utr || '(none)'} matches raw ${existing._id} from ${existing.createdAt.toISOString()} `
+        + '(re-posted notification, not a new payment)'
+      );
+      existing.isDuplicate = true;
+      return existing;
+    }
+  }
+
   return RawEvent.create(payload);
 }
 
@@ -198,6 +261,7 @@ module.exports = {
   scrapeAccount,
   scrapeAllLiveAccounts,
   ingestRawEvent,
+  RAW_EVENT_DEDUPE_WINDOW_MINUTES,
   persistTransactions,
   startSession,
   stopSession,

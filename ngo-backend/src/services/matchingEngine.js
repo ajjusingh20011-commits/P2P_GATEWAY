@@ -297,6 +297,17 @@ async function triggerOrderSettlementFromRawEvent(rawEvent) {
     return null;
   }
 
+  // A re-delivery of a capture we have already seen (scraperEngine's
+  // ingestRawEvent flags it and returns the original instead of storing a
+  // second copy). Settlement is the step that actually moves money, so it gets
+  // its own guard rather than trusting the caller to have stopped: without a
+  // UTR the Tier 2 match is amount-only, so a re-posted notification would
+  // settle whichever OTHER open order happens to share the amount.
+  if (rawEvent.isDuplicate) {
+    console.warn(`${tag}: SKIPPED — duplicate of an already-ingested capture, no second settlement attempted`);
+    return null;
+  }
+
   const target = normalizeAmount(rawEvent.amount);
   if (Number.isNaN(target) || target <= 0) {
     console.warn(`${tag}: SKIPPED — unusable amount ${JSON.stringify(rawEvent.amount)}`);
