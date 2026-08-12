@@ -33,6 +33,32 @@ const smartMerge = require('./smartMerge');
 
 const MATCH_TIER = { EXACT_UTR: 0, UTR_MISMATCH: 1, AMOUNT_ONLY: 2 };
 
+/**
+ * Every UPI belonging to a trader, straight from the gateway's own
+ * payment_details — the authoritative list.
+ *
+ * ngo-backend used to resolve this itself from its Mongo `Account` collection,
+ * which holds Web Login accounts only. An APK-linked UPI has no Account
+ * document at all, so a payment that landed on one was matched against the
+ * wrong UPI set (or, for a pure-APK trader, an empty one) and could never
+ * settle. See BUG-30. Resolving here removes the cross-database guess: this
+ * service owns payment_details, so it is the only place that can answer
+ * "which UPIs does trader X actually collect on?" correctly.
+ *
+ * Deliberately NOT filtered on is_active_detail: an order is routed while the
+ * account is switched on, but the trader may switch it off before the payment
+ * notification lands. The money still arrived and the order is still open —
+ * filtering here would strand it. Settlement is already constrained by the
+ * order's own status + amount.
+ */
+async function upiIdsForTrader(traderId) {
+  const details = await db.PaymentDetail.findAll({
+    where: { trader_id: traderId },
+    attributes: ['upi_id'],
+  });
+  return details.map((d) => d.upi_id).filter(Boolean);
+}
+
 /** Find every open order for any of the given UPI ids at this exact amount. */
 async function findCandidateOrders(upiIds, amount) {
   return db.Order.findAll({
@@ -65,9 +91,13 @@ function pickClosestByTime(candidates, eventTimestamp) {
 
 /**
  * @param {object} event
- * @param {string[]|string} event.upiIds - one UPI (scraper: the account's
- *   own upi_id) or several (APK notification: every UPI belonging to the
- *   NGO the device reported for, since a Device isn't tied to one Account).
+ * @param {string[]|string} [event.upiIds] - the account's own upi_id, when the
+ *   source knows exactly which account received the money (scraper). Omitted
+ *   by the APK path, which only knows the device's trader.
+ * @param {number|string} [event.traderId] - resolved to that trader's full UPI
+ *   list here (see upiIdsForTrader). Used when upiIds isn't supplied; a Device
+ *   is tied to a trader, not to one account, so the APK path genuinely cannot
+ *   name the receiving UPI and lets pickClosestByTime disambiguate instead.
  * @param {number|string} event.amount
  * @param {string} [event.utr] - receiver-side UTR, if the source has one.
  * @param {string|Date} [event.eventTimestamp]
@@ -77,13 +107,23 @@ function pickClosestByTime(candidates, eventTimestamp) {
  *   as smartMerge's `engine` tag and the discrepancy log's `source`.
  * @returns {Promise<{matched: boolean, reason?: string, tier?: number, order_id?: number}>}
  */
-async function matchAndSettle({ upiIds, amount, utr, eventTimestamp, payerName, payerUpi, source }) {
-  const normalizedUpiIds = (Array.isArray(upiIds) ? upiIds : [upiIds]).filter(Boolean);
+async function matchAndSettle({ upiIds, traderId, amount, utr, eventTimestamp, payerName, payerUpi, source }) {
+  let normalizedUpiIds = (Array.isArray(upiIds) ? upiIds : [upiIds]).filter(Boolean);
   const normalizedAmount = Number(amount);
+  const normalizedTraderId = Number(traderId);
+
+  if (!normalizedUpiIds.length && Number.isFinite(normalizedTraderId)) {
+    normalizedUpiIds = await upiIdsForTrader(normalizedTraderId);
+    if (!normalizedUpiIds.length) {
+      logger.warn(`matchingEngineV2: trader ${normalizedTraderId} has no payment_details at all — nothing to match on (source=${source || 'unknown'})`);
+      return { matched: false, reason: 'no_accounts_for_trader', upis_checked: [] };
+    }
+    logger.info(`matchingEngineV2: resolved ${normalizedUpiIds.length} upi(s) for trader ${normalizedTraderId} — ${normalizedUpiIds.join(',')}`);
+  }
 
   if (!normalizedUpiIds.length || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
-    logger.warn(`matchingEngineV2: invalid event (upiIds=${JSON.stringify(upiIds)}, amount=${amount}) — treating as orphan`);
-    return { matched: false, reason: 'invalid_input' };
+    logger.warn(`matchingEngineV2: invalid event (upiIds=${JSON.stringify(upiIds)}, traderId=${JSON.stringify(traderId)}, amount=${amount}) — treating as orphan`);
+    return { matched: false, reason: 'invalid_input', upis_checked: normalizedUpiIds };
   }
 
   const candidates = await findCandidateOrders(normalizedUpiIds, normalizedAmount);
@@ -92,7 +132,7 @@ async function matchAndSettle({ upiIds, amount, utr, eventTimestamp, payerName, 
     // Expected/normal — an unrelated personal payment, or the order this
     // belonged to already expired. Not an error.
     logger.info(`matchingEngineV2: orphan event — no open order for upi(s)=${normalizedUpiIds.join(',')} amount=${normalizedAmount} source=${source || 'unknown'}`);
-    return { matched: false, reason: 'orphan' };
+    return { matched: false, reason: 'orphan', upis_checked: normalizedUpiIds };
   }
 
   const order = pickClosestByTime(candidates, eventTimestamp);
@@ -152,4 +192,4 @@ async function matchAndSettle({ upiIds, amount, utr, eventTimestamp, payerName, 
   return { matched: true, tier, order_id: order.id };
 }
 
-module.exports = { matchAndSettle, findCandidateOrders, pickClosestByTime, MATCH_TIER };
+module.exports = { matchAndSettle, findCandidateOrders, pickClosestByTime, upiIdsForTrader, MATCH_TIER };

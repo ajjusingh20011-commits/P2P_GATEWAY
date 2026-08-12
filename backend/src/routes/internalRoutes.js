@@ -35,12 +35,20 @@ router.get('/upi-check', asyncHandler(async (req, res) => {
 // POST /api/internal/match-settlement — called by ngo-backend for every
 // receiver-side payment event (APK notification, scraped transaction) to
 // find and settle the matching open order. See services/matchingEngineV2.js.
-// Body: { upi_ids: string[]|string, amount, utr?, event_time?, payer_name?, payer_upi?, source }
+// Body: { upi_ids?: string[]|string, trader_id?, amount, utr?, event_time?, payer_name?, payer_upi?, source }
+//
+// One of upi_ids / trader_id is required. The APK path sends trader_id and
+// lets matchingEngineV2 resolve the UPI list from payment_details here — it
+// used to send a list resolved from ngo-backend's Mongo Account collection,
+// which only covers Web Login accounts and so never contained an APK-linked
+// UPI (BUG-30). The scraper still sends upi_ids: it knows the exact receiving
+// account, which is strictly more precise.
 router.post('/match-settlement', asyncHandler(async (req, res) => {
-  const { upi_ids, amount, utr, event_time, payer_name, payer_upi, source } = req.body || {};
+  const { upi_ids, trader_id, amount, utr, event_time, payer_name, payer_upi, source } = req.body || {};
 
   const result = await matchingEngineV2.matchAndSettle({
     upiIds: upi_ids,
+    traderId: trader_id,
     amount,
     utr,
     eventTimestamp: event_time,

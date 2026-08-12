@@ -3,7 +3,6 @@ const { internalAuthHeaders } = require('../middleware/internalAuth');
 const Webhook = require('../models/Webhook');
 const Transaction = require('../models/Transaction');
 const NGO = require('../models/NGO');
-const Account = require('../models/Account');
 const ledgerService = require('./ledgerService');
 const { isWithinMinutes } = require('../utils/timeHelper');
 const {
@@ -260,10 +259,13 @@ async function callMatchSettlement(payload) {
     });
     const d = res.data || {};
     // The single line that says whether a real payment closed a real order.
+    // `upis_checked` comes back from the gateway, so the UPI list is visible
+    // here even though it is now resolved on that side from trader_id.
+    const upis = (d.upis_checked || payload.upi_ids || []).join(',');
     console.log(
       d.matched
         ? `match: SETTLED order ${d.order_id} (tier ${d.tier}, source ${payload.source})`
-        : `match: NOT settled — reason=${d.reason || 'unknown'} amount=${payload.amount} upis=${(payload.upi_ids || []).join(',')} source=${payload.source}`
+        : `match: NOT settled — reason=${d.reason || 'unknown'} amount=${payload.amount} upis=${upis || '(none resolved)'} source=${payload.source}`
     );
     return d;
   } catch (e) {
@@ -275,10 +277,9 @@ async function callMatchSettlement(payload) {
 /**
  * Triggered from POST /api/apk/event for a PAYMENT-category RawEvent. A
  * Device is only tied to one trader, not to one specific Account/UPI (a
- * trader can run several UPI accounts on the same phone/app), so this
- * resolves every UPI belonging to the event's trader and lets the backend's
- * timing-based disambiguation pick the right order if more than one is
- * amount-eligible.
+ * trader can run several UPI accounts on the same phone/app), so this sends
+ * the trader id and lets the gateway expand it to that trader's real UPI list
+ * and disambiguate by timing if more than one order is amount-eligible.
  *
  * Keyed on rawEvent.traderId (RawEvent.js), not ngoId — devices/accounts are
  * genuinely trader-owned now (confirmed clean, no orphaned rows without a
@@ -302,19 +303,16 @@ async function triggerOrderSettlementFromRawEvent(rawEvent) {
     return null;
   }
 
-  const upiIds = (await Account.find({ traderId: rawEvent.traderId }).distinct('upiId')).filter(Boolean);
-  if (!upiIds.length) {
-    // NOTE: Account holds Web Login accounts only. An APK-linked UPI lives in
-    // the gateway's MySQL payment_details and has no Account document, so a
-    // pure-APK trader resolves to zero UPIs here and no match is ever
-    // attempted. See BUG-30.
-    console.warn(`${tag}: NO MATCH ATTEMPTED — trader ${rawEvent.traderId} has no ngo Account documents, so there are no UPIs to match on. An APK-only account will always hit this.`);
-    return null;
-  }
-
-  console.log(`${tag}: attempting — trader=${rawEvent.traderId} amount=${target} utr=${rawEvent.utr || '(none)'} upis=${upiIds.join(',')}`);
+  // The trader id is sent as-is; the gateway resolves it to that trader's UPI
+  // list from payment_details. This used to resolve the list here from the
+  // local Account collection, which holds Web Login accounts only — an
+  // APK-linked UPI has no Account document, so the matcher was handed the
+  // wrong UPIs, or none at all, and a real payment never settled (BUG-30).
+  // This service simply cannot answer that question: payment_details lives in
+  // the gateway's MySQL database.
+  console.log(`${tag}: attempting — trader=${rawEvent.traderId} amount=${target} utr=${rawEvent.utr || '(none)'}`);
   return callMatchSettlement({
-    upi_ids: upiIds,
+    trader_id: rawEvent.traderId,
     amount: target,
     utr: rawEvent.utr || '',
     event_time: rawEvent.createdAt || rawEvent.utcTimestamp || new Date().toISOString(),

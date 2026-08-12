@@ -421,6 +421,15 @@ clicked "I've paid"). It requires *both* to exist. Feeds the NGO donation ledger
 sufficient on its own — no donor-webhook prerequisite. That was the point of v2: a payment
 reported only by an APK notification, with no scraper running, previously never settled.
 
+**Which UPIs it matches on.** The scraper knows the exact receiving account and sends
+`upi_ids`. The APK path can't — a `Device` belongs to a trader, not to one account — so it
+sends `trader_id`, and `upiIdsForTrader()` expands it from `payment_details` on the gateway
+side. It used to expand it on the `ngo-backend` side from the Mongo `Account` collection,
+which holds **Web Login accounts only**: an APK-linked UPI has no `Account` document, so
+those payments were matched against the wrong UPI set (or an empty one, for a pure-APK
+trader) and never settled. `payment_details` lives in the gateway's MySQL database, so the
+gateway is the only side that can answer this correctly.
+
 It finds every open order (`ACTIVE_STATUSES` = `pending`, `checkout_open`, `claimed_paid`,
 `under_review`) matching `{upi_id ∈ upiIds, amount_inr = amount}`, then
 `pickClosestByTime()` disambiguates by whichever order's `created_at` is nearest the event
