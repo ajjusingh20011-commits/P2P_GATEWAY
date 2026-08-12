@@ -30,6 +30,7 @@ const axios = require('axios');
 
 const db = require('../models');
 const logger = require('../utils/logger');
+const accountScore = require('../services/accountScore');
 const { internalAuthHeaders } = require('../services/ngoServiceAuth');
 
 const SYNC_INTERVAL_MS = 15 * 1000;
@@ -100,6 +101,16 @@ async function syncOnce() {
     if (changed) {
       updated += 1;
       logger.info(`connectionLiveness: payment_detail ${r.id} connection_alive ${current.connection_alive} -> ${r.alive}`);
+      // Alive -> dead is a real outage on an account that was serving orders.
+      // Anything still open on it could not be confirmed, which is a service
+      // failure to the trader's own customer, so it is scored against the
+      // account's live session rather than quietly ignored. Only this exact
+      // transition counts: an account that was already dead, or that was never
+      // linked, has no session outage to attribute.
+      if (current.connection_alive === true && r.alive === false) {
+        // eslint-disable-next-line no-await-in-loop
+        await accountScore.markOpenOrdersFailed(r.id);
+      }
     }
   }
 

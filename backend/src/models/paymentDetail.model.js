@@ -70,13 +70,28 @@ module.exports = (sequelize) => {
       connection_alive: { type: DataTypes.BOOLEAN, allowNull: true, defaultValue: null },
       connection_checked_at: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
 
-      // Trader's explicit "I confirm this account's payments by hand" opt-in.
-      // The ONLY thing that keeps an account with no linked connection
-      // (connection_alive = null) eligible for routing — see
-      // routingEngine.pickEligibleAccount. Does not override a confirmed-dead
-      // connection: `false` still wins, because an account that HAS a
-      // connection and lost it is a fault to fix, not a manual workflow.
+      // RETAINED BUT INERT. Was the trader's "I confirm this account's
+      // payments by hand" opt-in, and used to keep an account with no linked
+      // connection eligible for routing. That is no longer allowed for the
+      // connection-based platforms this system serves: pickEligibleAccount now
+      // requires connection_alive === true and nothing else, and the UI that
+      // set this flag is gone. Column kept rather than dropped so existing
+      // rows are not rewritten; nothing reads it for routing.
       manually_confirmed: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+
+      // When this account last ENTERED the live pool. The success score is
+      // scoped to the current session and resets here, so an account that fell
+      // below the routing threshold recovers by being toggled off and on.
+      // NULL = never entered; scores nothing and is exempt from the threshold.
+      live_session_started_at: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
+
+      // The EXACT session boundary: orders with a higher id belong to the
+      // current session. `live_session_started_at` is only for display —
+      // both it and orders.created_at are second-granular DATETIMEs, so an
+      // order created in the same second as a toggle-on landed on an
+      // ambiguous side and a score reset did not reliably clear. Order ids
+      // are monotonic, so this partitions exactly, with no clock involved.
+      live_session_start_order_id: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
     },
     {
       sequelize,

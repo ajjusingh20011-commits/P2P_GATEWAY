@@ -20,8 +20,10 @@ function rateColor(rate) {
 function deriveMetrics(d) {
   const successful = d.usage?.orders_confirmed ?? 0;
   const total = d.usage?.orders_total ?? 0;
-  const hasUsage = total > 0;
-  const rate = hasUsage ? Math.round((successful / total) * 100) : 0;
+  // Server-computed (accountScore.computeRate) — the zero-success branch is
+  // 50/total, which cannot be re-derived from these two counts.
+  const rate = d.usage?.success_rate ?? 0;
+  const hasUsage = d.usage?.success_rate != null;
   return { successful, total, hasUsage, rate };
 }
 

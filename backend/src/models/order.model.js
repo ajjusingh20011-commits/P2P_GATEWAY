@@ -63,6 +63,13 @@ module.exports = (sequelize) => {
       utr_number: { type: DataTypes.STRING(50), allowNull: true },
       customer_confirmed_at: { type: DataTypes.DATE, allowNull: true },
 
+      // Set when the assigned account's connection died while this order was
+      // still open. Counts as an unsuccessful outcome for the account's
+      // session score and stays that way even if the order later settles —
+      // the customer already experienced the outage. Separate from `status`
+      // precisely because the final status may end up 'success'.
+      disconnect_failed: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+
       // Per-order fee breakdown, filled at confirmation time (USDT).
       merchant_fee_usdt: { type: DataTypes.DECIMAL(20, 8), allowNull: true },
       merchant_receives_usdt: { type: DataTypes.DECIMAL(20, 8), allowNull: true },

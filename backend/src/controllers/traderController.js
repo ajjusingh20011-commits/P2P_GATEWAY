@@ -17,6 +17,7 @@ const balanceService = require('../services/balanceService');
 const rateService = require('../services/rateService');
 const { computeWindowUsage } = require('../services/usageWindows');
 const { internalAuthHeaders } = require('../services/ngoServiceAuth');
+const accountScore = require('../services/accountScore');
 
 /** Load the Trader row for the current user, or 404. */
 async function currentTrader(req, res) {
@@ -98,7 +99,11 @@ const dashboard = asyncHandler(async (req, res) => {
     today_volume_inr: volume || 0,
     ftd_today: ftdToday,
     std_today: stdToday,
-    success_rate: closedToday ? +((confirmedToday / closedToday) * 100).toFixed(1) : 100,
+    // Same formula as the per-account score (accountScore.computeRate), so the
+    // panel never shows two differently-derived rates. Scoping differs by
+    // design: this one is today-wide for the trader, the per-account one is
+    // scoped to that account's current live session.
+    success_rate: accountScore.computeRate(confirmedToday, closedToday),
     is_online: trader.is_online,
     daily_limit: trader.daily_limit,
     current_daily_used: trader.current_daily_used,
@@ -150,7 +155,7 @@ const stats = asyncHandler(async (req, res) => {
     period,
     volume_inr: volume || 0,
     trades: totalOrders,
-    success_rate: closedOrders ? +((confirmedOrders / closedOrders) * 100).toFixed(1) : 100,
+    success_rate: accountScore.computeRate(confirmedOrders, closedOrders),
   });
 });
 
@@ -307,17 +312,13 @@ const listPaymentDetails = asyncHandler(async (req, res) => {
 
   const withUsage = await Promise.all(
     details.map(async (d) => {
-      const [windowUsage, ordersTotal, ordersConfirmed] = await Promise.all([
+      const [windowUsage, score] = await Promise.all([
         computeWindowUsage(d.id, d.monthly_start_date, { statusWhere: 'success' }),
-        // Success-rate counts (all-time, COUNTS not amounts): confirmed / total.
-        // Both gated on CUSTOMER_CLAIMED — see the constant. These feed the
-        // per-account "Success rate" column and the Live pool's average, so
-        // they must use the same rule as the dashboard figure or the panel
-        // would show two different success rates for the same trader.
-        // `orders_total` here is the success-rate DENOMINATOR, not the
-        // account's total order count — nothing else reads it.
-        db.Order.count({ where: { payment_detail_id: d.id, ...CUSTOMER_CLAIMED } }),
-        db.Order.count({ where: { payment_detail_id: d.id, status: 'success', ...CUSTOMER_CLAIMED } }),
+        // Session-scoped score (services/accountScore.js): the account's
+        // performance since it last entered the live pool, not a lifetime
+        // record. Returns the spec's formula, including the 50/y branch when
+        // there are no successes, and null when nothing is scored yet.
+        accountScore.sessionScore(d),
       ]);
       return {
         ...d.toJSON(),
@@ -330,8 +331,14 @@ const listPaymentDetails = asyncHandler(async (req, res) => {
           daily_amount_total: windowUsage.daily_amount_total,
           weekly_amount_total: windowUsage.weekly_amount_total,
           monthly_amount_total: windowUsage.monthly_amount_total,
-          orders_total: ordersTotal,
-          orders_confirmed: ordersConfirmed,
+          // Success-rate figures for this account's CURRENT live session.
+          orders_total: score.scored,
+          orders_confirmed: score.successes,
+          // The spec's rate, computed server-side so the panel cannot derive
+          // a different number from the same counts (the 50/y branch is not
+          // recoverable from confirmed/total alone).
+          success_rate: score.rate,
+          session_started_at: score.sessionStartedAt,
         },
       };
     })
@@ -501,8 +508,17 @@ const updatePaymentDetail = asyncHandler(async (req, res) => {
     }
   }
 
+  // Entering the live pool starts a FRESH scoring session: the previous
+  // score is discarded. This is deliberate and is the only recovery path for
+  // an account that fell below the routing threshold — it stops receiving
+  // orders, so its score can never improve on its own. Only a genuine
+  // off -> on transition counts; re-saving an already-on account must not
+  // wipe the score it has accumulated this session.
+  const enteringPool = patch.is_active_detail === true && detail.is_active_detail === false;
+
   try {
     await detail.update(patch);
+    if (enteringPool) await accountScore.startSession(detail.id);
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') {
       return fail(res, 422, UPI_TAKEN_MESSAGE);
