@@ -9,6 +9,7 @@ import { ACCOUNT_TYPES } from '../utils/mock';
 import { ACCOUNT_STATE, STATE_META, accountState, isLive } from '../utils/accountState';
 import { traderApi } from '../services/api';
 import { toast } from '../components/Toaster';
+import DevicePicker, { useDevices, deviceLabel } from '../components/DevicePicker';
 import ConfirmModal from '../components/ConfirmModal';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
@@ -438,7 +439,12 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
   const upiValid = upiHasAt(form.upi_id);
   const upiInvalid = form.upi_id.length > 0 && !upiValid;
   const orgValid = form.organization_name.trim().length > 0;
-  const step2Valid = nameValid && upiValid && orgValid;
+  // BUG-28: a device is REQUIRED, not optional. An APK account exists to have
+  // payments detected by a paired phone; saving one without a device produced
+  // exactly the "added but never linked" accounts that then sat in the pool
+  // unable to confirm anything. As mandatory as the UPI ID.
+  const deviceValid = !!form.ngo_device_id;
+  const step2Valid = nameValid && upiValid && orgValid && deviceValid;
 
   const save = async () => {
     setSaving(true);
@@ -514,7 +520,9 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
       {step === 2 && (
         <div className="space-y-4">
           <div>
-            <p className="mb-1 text-sm font-medium" style={{ color: 'var(--text)' }}>Select a paired smartphone</p>
+            <p className="mb-1 text-sm font-medium" style={{ color: 'var(--text)' }}>
+              Select a paired smartphone <span style={{ color: '#ef4444' }}>*</span>
+            </p>
             <p className="mb-3 text-xs" style={{ color: 'var(--muted)' }}>The APK on this device will detect payment notifications.</p>
             {showDeviceSearch && !devicesLoading && (
               <div className="mb-2">
@@ -568,11 +576,17 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
                 </p>
               )}
               {!devicesLoading && ngoDevices.length === 0 && (
-                <p className="rounded-lg px-3 py-2.5 text-xs" style={{ border: '1px dashed var(--cardborder)', color: 'var(--muted)' }}>
-                  No paired devices yet — you can still save this detail and link a device later.
+                <p className="rounded-lg px-3 py-2.5 text-xs" style={{ border: '1px dashed rgba(239,68,68,.4)', color: '#ef4444' }}>
+                  No paired devices yet. An APK account cannot detect payments without one —
+                  pair a smartphone first, then come back and select it here.
                 </p>
               )}
             </div>
+            {!devicesLoading && ngoDevices.length > 0 && !deviceValid && (
+              <p className="mt-2 text-xs font-medium" style={{ color: '#ef4444' }}>
+                Select a device to continue — this account can&rsquo;t detect payments without one.
+              </p>
+            )}
             <button
               type="button"
               onClick={() => navigate('/smartphones')}
@@ -1319,10 +1333,31 @@ const isExhausted = (d) => {
 // Active for the trader but not participating in offers (admin flag off).
 const notLinked = (d) => !!d.is_active_detail && d.is_active === false;
 
-// Connection type of a payment detail: 'web' when it came from a Web Login
-// (ngo-backend connectionType === 'web'), otherwise 'apk' (the default for
-// trader-native details, which have no connectionType field).
-const connType = (d) => (d && d.connectionType === 'web' ? 'web' : 'apk');
+// Connection type of a payment detail. A MySQL payment_details row has no
+// connectionType column at all, so reading d.connectionType was permanently
+// undefined and every account resolved to 'apk' — which is why a disconnected
+// Web Login account was told to "link a device". Resolve it the way the rest
+// of the app does: an account is web when a Web Login Account owns the same
+// UPI. Matched on upi_id because Account.gatewayPaymentDetailId is dangling in
+// real data (see mirroredDetailIds).
+function resolveConnType(d, ngoAccounts = []) {
+  if (!d) return 'apk';
+  if (d.__ngo || d.connectionType === 'web') return 'web';
+  const upi = String(d.upi_id || '').trim().toLowerCase();
+  if (!upi) return 'apk';
+  const owner = ngoAccounts.find((a) => String(a.upiId || '').trim().toLowerCase() === upi);
+  return owner && owner.connectionType === 'web' ? 'web' : 'apk';
+}
+
+/** The Web Login account that owns this payment detail's UPI, if any. */
+const webOwnerOf = (d, ngoAccounts = []) => ngoAccounts.find(
+  (a) => String(a.upiId || '').trim().toLowerCase() === String(d?.upi_id || '').trim().toLowerCase()
+);
+
+// Kept for the few call sites that only have the row (no ngoAccounts in
+// scope); those are display-only and default to APK, which is correct for a
+// trader-native detail.
+const connType = (d) => (d && (d.__ngo || d.connectionType === 'web') ? 'web' : 'apk');
 
 // A Web Login account is mirrored into MySQL payment_details for the routing
 // engine, so the SAME real account exists on both sides. Returns the ids of
@@ -1474,11 +1509,72 @@ const ngoStatusMeta = (status, statusReason) => {
 // — the two were rendering the same `details` array twice. Every handler
 // below is unchanged from those two components, only relocated.
 // ---------------------------------------------------------------------------
+/**
+ * Link a paired device to an EXISTING payment detail, in place.
+ *
+ * BUG-27: the previous "Link a device" action navigated to the Smartphones
+ * page, which lists devices but offers no way to attach one to the account the
+ * trader was looking at — a dead end with no route back. This reuses the same
+ * picker the Add Payment Detail wizard uses and writes ngo_device_id straight
+ * onto this detail, so the fix happens where the problem is reported.
+ */
+function LinkDeviceModal({ detail, onClose, onLinked }) {
+  const navigate = useNavigate();
+  const { devices, loading } = useDevices();
+  const [selected, setSelected] = useState(detail?.ngo_device_id ? String(detail.ngo_device_id) : '');
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      await traderApi.updatePaymentDetail(detail.id, { ngo_device_id: selected });
+      const dev = devices.find((x) => String(x.id) === String(selected));
+      toast(
+        dev && dev.online
+          ? `Linked to ${deviceLabel(dev)} — it should start receiving orders shortly`
+          : `Linked to ${dev ? deviceLabel(dev) : 'the device'}. It is offline right now, so orders will not route until it comes back online.`,
+        dev && dev.online ? 'success' : 'info'
+      );
+      await onLinked();
+      onClose();
+    } catch (e) {
+      toast(apiError(e), 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal open title="Link a device" onClose={onClose} width={460}
+      subtitle={`${detail.account_name || 'Untitled'} · ${detail.upi_id || ''}`}>
+      <p className="mb-3 text-xs" style={{ color: 'var(--muted)' }}>
+        The APK on the selected phone detects payments arriving on this UPI. Orders
+        are only routed here while that device is genuinely online.
+      </p>
+      <DevicePicker
+        devices={devices}
+        loading={loading}
+        selectedId={selected}
+        onSelect={setSelected}
+        onPairNew={() => navigate('/smartphones')}
+        emptyMessage="No paired devices yet — pair a smartphone first, then link it here."
+      />
+      <div className="mt-5 flex items-center justify-between">
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button onClick={save} disabled={!selected || saving}>
+          {saving ? 'Linking…' : 'Link device'}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 function AccountsColumn({
   details, onToggle, onBulkToggle, onLink, onEdit, onAdd,
   ngoAccounts = [], onToggleNGO, onDeleteNGO, onRetryNGO,
   otpValues, onOtpChange, onSubmitOtp, otpBusyId,
-  linkBlocked = {}, linkChecking = null, onReconnect, ngoToggleBusyId,
+  linkBlocked = {}, linkChecking = null, onReconnect, onLinkDevice, ngoToggleBusyId,
   deviceLiveMap = {}, ngoAliveMap = {}, deviceNames = {},
 }) {
   const [query, setQuery] = useState('');
@@ -1566,6 +1662,8 @@ function AccountsColumn({
     // than saying it was not connected.
     const state = accountState(d);
     const meta = STATE_META[state];
+    const kind = resolveConnType(d, ngoAccounts);
+    const webOwner = webOwnerOf(d, ngoAccounts);
     return (
       <div
         key={d.id}
@@ -1674,20 +1772,24 @@ function AccountsColumn({
             className="mt-2 flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs"
             style={{ border: `1px solid ${meta.hex}55`, background: `${meta.hex}14` }}
           >
+            {/* Wording follows how this account is ACTUALLY set up. A web
+                account was never told to "link a device", and an APK one is
+                never pointed at a Web Login it doesn't have. */}
             <span style={{ color: meta.hex }}>
-              {state === ACCOUNT_STATE.RECONNECT
-                ? 'Was connected, not responding now — orders are not being routed here.'
-                : 'Not connected — link a device or Web Login first.'}
+              {kind === 'web'
+                ? `Session disconnected — reconnect your ${platformLabel(webOwner?.platform) || 'provider'} login.`
+                : state === ACCOUNT_STATE.RECONNECT
+                  ? 'Device not responding — reconnect the paired phone.'
+                  : 'Not connected — link a device.'}
             </span>
             <button
-              onClick={() => onReconnect({
-                kind: connType(d) === 'web' ? 'web' : 'apk',
-                account: ngoAccounts.find((a) => String(a.upiId || '').trim().toLowerCase() === String(d.upi_id || '').trim().toLowerCase()) || null,
-              })}
+              onClick={() => (kind === 'web'
+                ? onReconnect({ kind: 'web', account: webOwner || null })
+                : onLinkDevice(d))}
               className="whitespace-nowrap rounded-md px-2 py-0.5 font-medium"
               style={{ border: `1px solid ${meta.hex}88`, color: meta.hex }}
             >
-              {state === ACCOUNT_STATE.RECONNECT ? 'Reconnect' : 'Link a device'}
+              {kind === 'web' ? 'Reconnect' : (state === ACCOUNT_STATE.RECONNECT ? 'Change device' : 'Link a device')}
             </button>
           </div>
         )}
@@ -1814,8 +1916,11 @@ function AccountsColumn({
             className="mt-2 flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs"
             style={{ border: '1px solid rgba(245,158,11,.35)', background: 'rgba(245,158,11,.12)' }}
           >
+            {/* BUG-26: a Web Login row talks about its session, never about
+                devices. This is the row a mirrored web account actually
+                renders as, so the wording has to be right here too. */}
             <span style={{ color: '#f59e0b' }}>
-              Was connected, not responding now — orders are not being routed here.
+              Session disconnected — reconnect your {platformLabel(a.platform)} login.
             </span>
             <button
               onClick={() => onReconnect({ kind: 'web', account: a })}
@@ -2446,6 +2551,9 @@ export default function Offers() {
   // Web-login: jump straight into the existing per-row OTP/reconnect flow.
   // APK: there's no "reconnect" action on this page at all — send the
   // trader to the Smartphones pairing flow, the real reconnect surface.
+  // BUG-27: linking happens in place, on the row that reported the problem.
+  const [linkingDetail, setLinkingDetail] = useState(null);
+
   const reconnectFromBlock = (blocked) => {
     if (blocked.kind === 'web' && blocked.account) {
       retryConnectNGO(blocked.account);
@@ -2541,6 +2649,7 @@ export default function Offers() {
             linkBlocked={linkBlocked}
             linkChecking={linkChecking}
             onReconnect={reconnectFromBlock}
+            onLinkDevice={(d) => setLinkingDetail(d)}
             onEdit={setEditing}
             onAdd={openAdd}
             ngoAccounts={ngoAccounts}
@@ -2575,6 +2684,16 @@ export default function Offers() {
           onSaved={() => Promise.all([load(), loadNGOAccounts()])}
           onDeleted={load}
           deviceLiveMap={deviceLiveMap}
+        />
+      )}
+      {linkingDetail && (
+        <LinkDeviceModal
+          detail={linkingDetail}
+          onClose={() => setLinkingDetail(null)}
+          // Reload details AND re-run the liveness poll: linking a device
+          // changes connection_alive on the next backend sync, and the row
+          // should stop saying "Not connected" as soon as it does.
+          onLinked={load}
         />
       )}
     </div>

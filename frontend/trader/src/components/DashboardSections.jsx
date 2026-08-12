@@ -612,14 +612,14 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
   const needsReconnect = all.filter((d) => accountState(d) === ACCOUNT_STATE.RECONNECT);
   // The table lists everything routing could touch, each row labelled with its
   // real state, so a "Reconnect needed" account is visible instead of absent.
-  // Both gates, matching routing. `is_active` is the admin/linkage flag and
-  // `is_active_detail` the trader's own switch; pickEligibleAccount requires
-  // both. This filtered on the trader's switch alone, so an account the admin
-  // had unlinked (is_active = 0) still rendered as a Live-pool row while
-  // routing would never send it anything — an account that looks present and
-  // is permanently unreachable. The tile count was already correct (isLive
-  // checks both); only this row list was wrong.
-  const shown = all.filter((d) => d.is_active !== false && d.is_active_detail !== false);
+  // The table lists exactly what its own subtitle promises: accounts with a
+  // confirmed connection right now. It previously listed anything toggled on,
+  // so a disconnected account appeared as a Live-pool row carrying a red
+  // "No link" badge while the tiles directly above correctly read "0 live" —
+  // the table contradicted itself. Disconnected accounts are surfaced by the
+  // needs-reconnect count below and are actionable on their own row in
+  // Payment details, which is where the fix actually lives.
+  const shown = live;
 
   // Activity aggregates describe the rows the table actually lists (`shown`),
   // not just the live subset — otherwise a pool with real orders on a
@@ -683,7 +683,21 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
           <span />
         </div>
         {shown.length === 0 ? (
-          <p style={{ padding: '22px', color: 'var(--muted)', fontSize: 13, margin: 0, textAlign: 'center' }}>No accounts are switched on right now.</p>
+          <div style={{ padding: '22px', textAlign: 'center' }}>
+            <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>No accounts have a confirmed connection right now.</p>
+            {needsReconnect.length > 0 && (
+              <p style={{ color: 'var(--muted)', fontSize: 12, margin: '6px 0 0' }}>
+                {needsReconnect.length} account{needsReconnect.length === 1 ? '' : 's'} need reconnecting —
+                {' '}
+                <button
+                  onClick={() => navigate('/offers')}
+                  style={{ background: 'none', border: 0, padding: 0, color: 'var(--accent)', fontWeight: 700, cursor: 'pointer', fontSize: 12 }}
+                >
+                  fix in Payment details
+                </button>
+              </p>
+            )}
+          </div>
         ) : (
           shown.map((d) => {
             const type = ACCOUNT_TYPES[d.account_type] || { label: d.account_type };
