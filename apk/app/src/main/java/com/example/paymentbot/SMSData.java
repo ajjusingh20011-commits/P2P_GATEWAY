@@ -25,6 +25,22 @@ public class SMSData {
     public String body;
     /** Capture source: "SMS", "NOTIFICATION", or "UNKNOWN". */
     public String source = "UNKNOWN";
+    /**
+     * The real Android package the notification came from, e.g.
+     * "com.google.android.apps.nbu.paisa.merchant". Only set for notification
+     * captures — an SMS has a sender address, not a package.
+     *
+     * NotificationService has always had this from the StatusBarNotification
+     * and threw it away after deriving a name from it, so the Activity screen
+     * had nothing to show but the derived string ("merchant: …") and a generic
+     * emoji. Keeping the package lets that screen ask the OS for the app's own
+     * icon and label, the same way the real notification shade does.
+     */
+    public String packageName;
+    /** Friendly app name for the package above ("GPay Business"). */
+    public String appName;
+    /** Action button labels the original notification carried, if any. */
+    public String[] actions;
     public String category;
     public String utcTime;
     public String relativeTime;

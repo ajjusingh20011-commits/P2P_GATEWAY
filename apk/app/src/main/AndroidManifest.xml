@@ -1,6 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Package visibility (Android 11+, API 30). Without this the OS hides
+         other apps from us entirely and PackageManager.getApplicationIcon()
+         throws NameNotFoundException, so the Activity screen could never show
+         the source app's real icon — receiving an app's notifications does not
+         by itself make that app visible to us.
+
+         Listed one by one rather than requesting QUERY_ALL_PACKAGES: we only
+         need the payment apps NotificationService already accepts captures
+         from (its ALLOWED_PACKAGES), and the blanket permission is a
+         restricted one on Play. Keep this list in step with that one. -->
+    <queries>
+        <package android:name="com.phonepe.app"/>
+        <package android:name="com.phonepe.app.business"/>
+        <package android:name="com.google.android.apps.nbu.paisa.user"/>
+        <package android:name="com.google.android.apps.nbu.paisa.merchant"/>
+        <package android:name="net.one97.paytm"/>
+        <package android:name="com.paytm.business"/>
+        <package android:name="com.bharatpe.merchant"/>
+        <package android:name="com.bharatpe.app"/>
+        <package android:name="in.amazon.mShop.android.shopping"/>
+        <package android:name="com.freecharge.android"/>
+        <package android:name="com.airtelpeymentsbank"/>
+        <package android:name="com.snapwork.hdfc"/>
+        <package android:name="com.csam.icici.bank.imobile"/>
+        <package android:name="com.sbi.SBIFreedomPlus"/>
+        <package android:name="com.axis.mobile"/>
+        <package android:name="com.dreamplug.androidapp"/>
+        <package android:name="com.mobikwik_new"/>
+    </queries>
+
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.RECEIVE_SMS"/>
     <uses-permission android:name="android.permission.READ_SMS"/>

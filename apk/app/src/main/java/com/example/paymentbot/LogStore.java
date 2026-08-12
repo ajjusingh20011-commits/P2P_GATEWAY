@@ -25,7 +25,12 @@ final class LogStore extends SQLiteOpenHelper {
 
     private static final String TAG = "PaymentBot";
     private static final String DB_NAME = "paymentbot_logs.db";
-    private static final int DB_VERSION = 1;
+    // 2: added the source app columns below. Without them a capture lost its
+    // app identity the moment the process died — the feed would show the real
+    // icon and name while the app stayed open, then fall back to the generic
+    // badge for the same rows after a restart, which is worse than being
+    // consistently generic.
+    private static final int DB_VERSION = 2;
 
     private static final String TABLE = "logs";
     private static final String COL_ID = "_id";
@@ -34,6 +39,17 @@ final class LogStore extends SQLiteOpenHelper {
     private static final String COL_SENDER = "sender";
     private static final String COL_BODY = "body";
     private static final String COL_CATEGORY = "category";
+    // The real Android package the notification came from, its resolved app
+    // name, and the action labels it carried — see SMSData.
+    private static final String COL_PACKAGE = "package_name";
+    private static final String COL_APP_NAME = "app_name";
+    private static final String COL_ACTIONS = "actions";
+    /**
+     * Action labels are few and short, so a delimited column beats a second
+     * table. Unit Separator rather than a comma or pipe: a real action label
+     * ("Pay & settings", "All payments") can contain either of those.
+     */
+    private static final String ACTIONS_SEPARATOR = "\u001F";
 
     // Retention cap on the persisted table — generous relative to the
     // in-memory feed's 200-row rolling window (MainActivity.MAX_ENTRIES),
@@ -62,14 +78,34 @@ final class LogStore extends SQLiteOpenHelper {
                 + COL_SOURCE + " TEXT, "
                 + COL_SENDER + " TEXT, "
                 + COL_BODY + " TEXT, "
-                + COL_CATEGORY + " TEXT)");
+                + COL_CATEGORY + " TEXT, "
+                + COL_PACKAGE + " TEXT, "
+                + COL_APP_NAME + " TEXT, "
+                + COL_ACTIONS + " TEXT)");
         db.execSQL("CREATE INDEX idx_logs_timestamp ON " + TABLE + "(" + COL_TIMESTAMP + ")");
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE);
-        onCreate(db);
+        // Additive migration rather than the previous drop-and-recreate: this
+        // table is the trader's own capture history and the only local record
+        // that a payment was ever seen, so an app update must not wipe it just
+        // to add three columns. Older rows simply have them null, and the feed
+        // falls back to the generic badge for those.
+        if (oldVersion < 2) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE + " ADD COLUMN " + COL_PACKAGE + " TEXT");
+                db.execSQL("ALTER TABLE " + TABLE + " ADD COLUMN " + COL_APP_NAME + " TEXT");
+                db.execSQL("ALTER TABLE " + TABLE + " ADD COLUMN " + COL_ACTIONS + " TEXT");
+            } catch (Exception e) {
+                // A partially-applied upgrade would otherwise leave the store
+                // unusable; recreating loses history, but only as a last
+                // resort rather than as the routine path.
+                Log.e(TAG, "LogStore upgrade to v2 failed, recreating: " + e.getMessage());
+                db.execSQL("DROP TABLE IF EXISTS " + TABLE);
+                onCreate(db);
+            }
+        }
     }
 
     /** Synchronous write — call from a background thread, never the UI thread. */
@@ -83,6 +119,10 @@ final class LogStore extends SQLiteOpenHelper {
             values.put(COL_SENDER, data.sender);
             values.put(COL_BODY, data.body);
             values.put(COL_CATEGORY, data.category);
+            values.put(COL_PACKAGE, data.packageName);
+            values.put(COL_APP_NAME, data.appName);
+            values.put(COL_ACTIONS, data.actions == null || data.actions.length == 0
+                    ? null : android.text.TextUtils.join(ACTIONS_SEPARATOR, data.actions));
             db.insert(TABLE, null, values);
             trim(db);
         } catch (Exception e) {
@@ -106,7 +146,8 @@ final class LogStore extends SQLiteOpenHelper {
         List<SMSData> out = new ArrayList<>();
         try (SQLiteDatabase db = getReadableDatabase();
              Cursor c = db.query(TABLE,
-                     new String[]{COL_TIMESTAMP, COL_SOURCE, COL_SENDER, COL_BODY, COL_CATEGORY},
+                     new String[]{COL_TIMESTAMP, COL_SOURCE, COL_SENDER, COL_BODY, COL_CATEGORY,
+                             COL_PACKAGE, COL_APP_NAME, COL_ACTIONS},
                      null, null, null, null,
                      COL_ID + " DESC", String.valueOf(limit))) {
             while (c.moveToNext()) {
@@ -116,6 +157,11 @@ final class LogStore extends SQLiteOpenHelper {
                 if (category != null) {
                     d.category = category;
                 }
+                d.packageName = c.getString(5);
+                d.appName = c.getString(6);
+                String actions = c.getString(7);
+                d.actions = actions == null || actions.isEmpty()
+                        ? null : actions.split(ACTIONS_SEPARATOR);
                 out.add(d);
             }
         } catch (Exception e) {

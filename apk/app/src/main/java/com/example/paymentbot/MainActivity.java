@@ -1440,13 +1440,28 @@ public class MainActivity extends AppCompatActivity {
         int iconSize = dp(36);
         LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(iconSize, iconSize);
         iconLp.rightMargin = dp(12);
-        iconCircle.setBackground(circle(withAlpha(accent, 0x1F)));
-        TextView iconView = new TextView(this);
-        iconView.setText(icon);
-        iconView.setTextSize(16);
-        iconView.setGravity(Gravity.CENTER);
-        iconCircle.addView(iconView, new android.widget.FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // The source app's own icon, straight from the OS, so a row is
+        // recognisable at a glance the way the notification itself is. Every
+        // notification row used to get the same generic bell, which told the
+        // trader nothing about which account the money landed in. Falls back
+        // to the emoji when there is no package to ask about (SMS, screen
+        // captures) or the app has since been uninstalled.
+        android.graphics.drawable.Drawable appIcon = appIconFor(data.packageName);
+        if (appIcon != null) {
+            android.widget.ImageView iconImage = new android.widget.ImageView(this);
+            iconImage.setImageDrawable(appIcon);
+            iconCircle.addView(iconImage, new android.widget.FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        } else {
+            iconCircle.setBackground(circle(withAlpha(accent, 0x1F)));
+            TextView iconView = new TextView(this);
+            iconView.setText(icon);
+            iconView.setTextSize(16);
+            iconView.setGravity(Gravity.CENTER);
+            iconCircle.addView(iconView, new android.widget.FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
         card.addView(iconCircle, iconLp);
 
         LinearLayout content = new LinearLayout(this);
@@ -1471,6 +1486,21 @@ public class MainActivity extends AppCompatActivity {
         detailView.setPadding(0, dp(2), 0, 0);
         content.addView(detailView);
 
+        // The buttons the real notification offered ("All payments",
+        // "Settings"). Shown as labels, not controls — this is a record of
+        // what was captured, and tapping through to another app from a log
+        // entry would be inventing behaviour the capture never had.
+        if (data.actions != null && data.actions.length > 0) {
+            TextView actionsView = new TextView(this);
+            actionsView.setText(android.text.TextUtils.join("  ·  ", data.actions));
+            actionsView.setTextColor(TIME_GREY);
+            actionsView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+            actionsView.setMaxLines(1);
+            actionsView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            actionsView.setPadding(0, dp(3), 0, 0);
+            content.addView(actionsView);
+        }
+
         card.addView(content);
 
         TextView timeView = new TextView(this);
@@ -1492,6 +1522,14 @@ public class MainActivity extends AppCompatActivity {
      */
     private static String eventTitle(SMSData data) {
         boolean isScreen = "Screen".equals(data.sender) || (data.source != null && !"SMS".equals(data.source) && !"NOTIFICATION".equals(data.source));
+        // The app the notification actually came from, titled the way the
+        // notification shade titles it. This used to read "Payment
+        // notification detected" over a detail line beginning "merchant:" —
+        // our own capture vocabulary plus a package fragment, neither of which
+        // identifies the account the money arrived in.
+        if (data.appName != null && !data.appName.isEmpty()) {
+            return data.appName;
+        }
         if ("NOTIFICATION".equals(data.source)) {
             if (SMSData.CATEGORY_PAYMENT.equals(data.category)) return "Payment notification detected";
             return "Notification detected";
@@ -1509,11 +1547,38 @@ public class MainActivity extends AppCompatActivity {
 
     /** Short detail line: sender + amount if extracted, else the body text. */
     private static String eventDetail(SMSData data) {
+        // For a notification we know the app of, the title already names the
+        // app, so this is the notification's own text and nothing else — the
+        // sender string would only repeat the app name and re-add the
+        // "merchant:" prefix this row exists to get rid of.
+        if (data.appName != null && !data.appName.isEmpty()
+                && data.body != null && !data.body.isEmpty()) {
+            return data.body;
+        }
         String sender = orDash(data.sender);
         if (data.amount != null && !data.amount.isEmpty()) {
             return sender + " · ₹" + data.amount;
         }
         return sender + (data.body != null && !data.body.isEmpty() ? " · " + data.body : "");
+    }
+
+    /**
+     * The source app's launcher icon, asked of the OS by package name.
+     * Returns null when there is no package (SMS/screen captures) or the app
+     * is not installed, so the caller can fall back to the generic badge.
+     */
+    private android.graphics.drawable.Drawable appIconFor(String packageName) {
+        if (packageName == null || packageName.isEmpty()) {
+            return null;
+        }
+        try {
+            return getPackageManager().getApplicationIcon(packageName);
+        } catch (Exception e) {
+            // Uninstalled since capture, or not visible to us under the
+            // package-visibility rules on API 30+. Not an error worth a log
+            // line on a display path that has a working fallback.
+            return null;
+        }
     }
 
     private static int categoryColor(String category) {

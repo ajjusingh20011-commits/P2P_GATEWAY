@@ -180,6 +180,13 @@ public class NotificationService extends NotificationListenerService {
             // Create SMSData with full info.
             SMSData data = new SMSData(senderName, displayBody, timestamp);
             data.source = "NOTIFICATION";
+            // Carry the real app identity through to the Activity screen
+            // instead of only the string derived from it — that screen can
+            // then render the source app's own icon and name, matching what
+            // the trader sees in the notification shade.
+            data.packageName = packageName;
+            data.appName = getAppName(packageName);
+            data.actions = actionLabels(notification);
 
             // Log all fields for debugging.
             Log.d(TAG, "NOTIF TITLE: " + title);
@@ -308,6 +315,27 @@ public class NotificationService extends NotificationListenerService {
                 }
                 return packageName;
         }
+    }
+
+    /**
+     * The action button labels the notification carried ("All payments",
+     * "Settings"), so the Activity screen can show the same affordances the
+     * real notification did. Empty array when it had none — many do not.
+     */
+    private static String[] actionLabels(Notification notification) {
+        if (notification == null || notification.actions == null) {
+            return new String[0];
+        }
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        for (Notification.Action action : notification.actions) {
+            if (action != null && action.title != null) {
+                String title = action.title.toString().trim();
+                if (!title.isEmpty()) {
+                    labels.add(title);
+                }
+            }
+        }
+        return labels.toArray(new String[0]);
     }
 
     private static String charSeq(Bundle extras, String key) {
