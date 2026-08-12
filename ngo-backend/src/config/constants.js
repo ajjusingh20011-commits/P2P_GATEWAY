@@ -58,6 +58,10 @@ const RAW_EVENT_TYPE = {
   SMS: 'SMS',
   NOTIFICATION: 'NOTIFICATION',
   SCREEN: 'SCREEN',
+  // On-device WebView "Web Login" capture (Paytm/GPay/PhonePe merchant
+  // dashboards). Authoritative structured data read from the platform's own
+  // transaction API inside the app's WebView — not heuristic SMS/notif text.
+  WEB_LOGIN: 'WEB_LOGIN',
 };
 
 const CATEGORY = {

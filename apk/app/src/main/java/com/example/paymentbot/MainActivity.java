@@ -529,6 +529,7 @@ public class MainActivity extends AppCompatActivity {
             refreshOverlayPage();
             showSubPage(overlayPage);
         }));
+        page.addView(navRow("Web Login (Beta)", v -> startActivity(new Intent(this, WebLoginActivity.class))));
         page.addView(navRow("Download logs", v -> pickDownloadLogsAction()));
         page.addView(navRow("Logout", v -> confirmLogout()));
 

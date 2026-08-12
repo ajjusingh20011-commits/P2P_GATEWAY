@@ -73,6 +73,11 @@
             android:screenOrientation="portrait"/>
 
         <activity
+            android:name=".WebLoginActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"/>
+
+        <activity
             android:name=".UpdateAvailableActivity"
             android:exported="false"
             android:screenOrientation="portrait"/>

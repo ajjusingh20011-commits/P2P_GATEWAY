@@ -346,7 +346,18 @@ router.post('/event', async (req, res, next) => {
     device.lastSeen = new Date();
     await device.save();
 
-    const { type, sender, body, category, amount, utr, utcTimestamp } = req.body;
+    const {
+      type, sender, body, category, amount, utr, utcTimestamp,
+      // Web Login (on-device WebView) additive fields. `source` distinguishes
+      // this capture path; payerName/payerUpiId are the structured values the
+      // platform's own transaction API returned, so they don't have to be
+      // re-parsed out of free text the way SMS/notification captures are.
+      source, payerName, payerUpiId,
+    } = req.body;
+
+    // A web-login source is authoritative structured data read from the
+    // merchant dashboard's own API inside the app WebView.
+    const isWebLogin = typeof source === 'string' && source.startsWith('web_login');
 
     const rawEvent = await scraperEngine.ingestRawEvent({
       deviceId: device.deviceId,
@@ -359,6 +370,7 @@ router.post('/event', async (req, res, next) => {
       amount: amount || '',
       utr: utr || '',
       utcTimestamp: utcTimestamp || new Date().toISOString(),
+      source: source || '',
     });
 
     const io = req.app.get('io');
@@ -417,12 +429,25 @@ router.post('/event', async (req, res, next) => {
     // all removed; rows created while it was on carry that suffix and are
     // cleaned up separately.
     if (device.traderId != null) {
-      const verdict = detectRealPayment({
-        type: rawEvent.type,
-        sender: rawEvent.sender,
-        body: rawEvent.body,
-        amount: rawEvent.amount,
-      });
+      // Web Login rows are authoritative structured data from the platform's
+      // own API — they skip the text heuristic (which looks for a
+      // "received/credited" signal that structured data doesn't contain) and
+      // use the fields the app already extracted. Everything else still goes
+      // through detectRealPayment exactly as before.
+      const verdict = isWebLogin
+        ? {
+            isRealPayment: !!rawEvent.amount,
+            reason: 'web_login structured capture',
+            amount: rawEvent.amount,
+            payerName: payerName || '',
+            payerUpiId: payerUpiId || '',
+          }
+        : detectRealPayment({
+            type: rawEvent.type,
+            sender: rawEvent.sender,
+            body: rawEvent.body,
+            amount: rawEvent.amount,
+          });
 
       if (verdict.isRealPayment) {
         // Dedupe on (traderId, utr) — same reasoning as
@@ -452,7 +477,9 @@ router.post('/event', async (req, res, next) => {
             ngoId: device.ngoId || null,
             traderId: device.traderId,
             accountId: null, // no Account document for an APK-sourced capture
-            platform: rawEvent.type === RAW_EVENT_TYPE.NOTIFICATION ? 'apk-notification' : 'apk-sms',
+            platform: isWebLogin
+              ? source // e.g. "web_login_paytm"
+              : (rawEvent.type === RAW_EVENT_TYPE.NOTIFICATION ? 'apk-notification' : 'apk-sms'),
             amount: verdict.amount,
             payerName: verdict.payerName || '',
             payerUpiId: verdict.payerUpiId || '',
