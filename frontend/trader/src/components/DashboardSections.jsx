@@ -609,10 +609,6 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
   // genuinely-connected accounts. See utils/accountState.js.
   const all = details || [];
   const live = all.filter(isLive);
-  // Manually-confirmed accounts with no connection do still receive orders, so
-  // they are surfaced separately rather than folded into "live" (which would
-  // overstate real connectivity) or hidden (which would understate the pool).
-  const manual = all.filter((d) => accountState(d) === ACCOUNT_STATE.MANUAL && d.is_active !== false);
   const needsReconnect = all.filter((d) => accountState(d) === ACCOUNT_STATE.RECONNECT);
   // The table lists everything routing could touch, each row labelled with its
   // real state, so a "Reconnect needed" account is visible instead of absent.
@@ -622,9 +618,11 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
   // not just the live subset — otherwise a pool with real orders on a
   // manually-confirmed account would report zero.
   const liveOrdersToday = shown.reduce((sum, d) => sum + (Number(d.usage?.used_today) || 0), 0);
-  const withUsage = shown.filter((d) => (d.usage?.orders_total || 0) > 0);
+  // Averaged over accounts that have a real scored session; an account with
+  // nothing scored yet has no rate and must not be averaged in as a zero.
+  const withUsage = shown.filter((d) => d.usage?.success_rate != null);
   const avgSuccess = withUsage.length
-    ? Math.round(withUsage.reduce((sum, d) => sum + (d.usage.orders_confirmed / d.usage.orders_total) * 100, 0) / withUsage.length)
+    ? Math.round(withUsage.reduce((sum, d) => sum + d.usage.success_rate, 0) / withUsage.length)
     : null;
 
   return (
@@ -635,7 +633,6 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
           <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0 }}>Live pool</h3>
           <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0 0' }}>
             Accounts with a confirmed connection right now
-            {manual.length > 0 && ` · ${manual.length} manually confirmed`}
             {needsReconnect.length > 0 && ` · ${needsReconnect.length} need reconnecting`}
           </p>
         </div>
@@ -704,8 +701,10 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
             const state = accountState(d);
             const meta = STATE_META[state];
             const hasLimit = !!(d.max_per_day || d.daily_limit_amount);
-            const total = d.usage?.orders_total || 0;
-            const rate = total ? Math.round((d.usage.orders_confirmed / total) * 100) : null;
+            // Server-computed: the 50/y branch for a zero-success account is
+            // not recoverable from confirmed/total, so the rate must not be
+            // re-derived here.
+            const rate = d.usage?.success_rate ?? null;
             return (
               <div key={d.id} className="tradeLedgerRow" style={{ gridTemplateColumns: LIVE_POOL_GRID }}>
                 <button

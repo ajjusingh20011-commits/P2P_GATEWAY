@@ -20,6 +20,7 @@ const { Op } = require('sequelize');
 const config = require('../config');
 const db = require('../models');
 const logger = require('../utils/logger');
+const accountScore = require('./accountScore');
 const { connection, isRedisAvailable } = require('../loaders/redis');
 const { emitToTrader, emitToAdmin, emitToMerchant, emitToOrder, broadcast } = require('../websocket');
 const upiService = require('./upiService');
@@ -110,29 +111,33 @@ async function pickEligibleAccount(trader, amount) {
     // Trader-facing on/off switch (Offers page toggle) — distinct from the
     // admin `is_active` linkage flag above; both must pass.
     if (!account.is_active_detail) continue;
-    // Connection liveness. Mirrored from ngo-backend's real signals (APK
+    // Connection liveness, mirrored from ngo-backend's real signals (APK
     // heartbeat freshness / SessionStore.isSessionAlive) by
     // jobs/connectionLiveness.js — read locally so the checkout path never
     // makes a cross-service call.
     //
-    //   false - a connection IS linked and IS confirmed dead. Always skipped;
-    //           manually_confirmed does not override this, because a
-    //           connection that existed and died is a fault to fix, not a
-    //           manual workflow.
-    //   true  - linked and alive. Routes.
-    //   null  - NOTHING is linked to this UPI: no APK device, no web session.
-    //           Such an account can never observe an incoming payment, so it
-    //           routes only when the trader has explicitly taken on confirming
-    //           it by hand (manually_confirmed). Two live accounts were
-    //           silently in this state, which is the bug this branch closes.
-    if (account.connection_alive === false) {
-      logger.info(`routing: account ${account.upi_id} has a dead connection — skipping`);
+    // Only a CONFIRMED-LIVE connection is eligible. `true` is the sole passing
+    // value: `false` (linked, confirmed dead) and `null` (nothing linked at
+    // all) are both rejected.
+    //
+    // manually_confirmed no longer grants eligibility. It was added so a
+    // trader could vouch for an account they watched by hand, but that
+    // reintroduced exactly the hole the liveness work closed: an account with
+    // no APK and no web session cannot observe an incoming payment, so an
+    // order routed to it strands until someone notices. For the
+    // connection-based platforms this system actually serves (GPay, Paytm,
+    // PhonePe, BharatPe, Airtel) there is no manual fallback and no exception.
+    // The column is retained but has no routing effect.
+    if (account.connection_alive !== true) {
+      logger.info(`routing: account ${account.upi_id} has no confirmed-live connection (connection_alive=${account.connection_alive}) — skipping`);
       continue;
     }
-    if (account.connection_alive == null && !account.manually_confirmed) {
-      logger.info(`routing: account ${account.upi_id} has no linked connection and is not marked manually confirmed — skipping`);
-      continue;
-    }
+
+    // Session success score. An account performing below the threshold stops
+    // receiving new orders until the trader toggles it off and on, which
+    // starts a fresh session and clears the score (services/accountScore.js).
+    // eslint-disable-next-line no-await-in-loop
+    if (await accountScore.isBelowThreshold(account)) continue;
 
     if (Number(account.min_amount) > 0 && Number(amount) < Number(account.min_amount)) continue;
     if (Number(account.max_amount) > 0 && Number(amount) > Number(account.max_amount)) continue;

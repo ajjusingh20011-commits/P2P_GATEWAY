@@ -1088,7 +1088,6 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
     bank_name: detail.bank_name ?? '',
     smartphone_id: detail.smartphone_id ?? '',
     is_active_detail: detail.is_active_detail ?? true,
-    manually_confirmed: !!detail.manually_confirmed,
     min_amount: detail.min_amount ?? '',
     max_amount: detail.max_amount ?? '',
     monthly_limit: detail.monthly_limit ?? '',
@@ -1131,10 +1130,6 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
         upi_id: form.upi_id,
         bank_name: form.bank_name || '',
         organization_name: form.organization_name,
-        // Trader-native details only — a Web Login account has a real session
-        // to confirm against, so the manual opt-in never applies to it and
-        // ngo-backend has no such field to receive.
-        ...(detail.__ngo ? {} : { manually_confirmed: !!form.manually_confirmed }),
       });
       let syncFailed = false;
       if (detail.__ngo) {
@@ -1258,34 +1253,6 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
       </div>
       <LimitsForm form={form} set={set} caps={caps} setCaps={setCaps} usage={detail.usage} />
 
-      {/* Manual-confirmation opt-in. An account with no APK device and no web
-          session cannot observe an incoming payment, so routing now skips it
-          unless the trader explicitly takes that job on — this toggle is the
-          only thing that keeps such an account in the pool
-          (routingEngine.pickEligibleAccount). Hidden for web accounts, which
-          always have a real session to confirm against. */}
-      {!detail.__ngo && (
-        <div
-          className="mt-4 flex items-center justify-between gap-3 rounded-lg p-3"
-          style={hasNoConnection(detail) && !form.manually_confirmed
-            ? { border: '1px solid rgba(245,158,11,.4)', background: 'rgba(245,158,11,.08)' }
-            : { border: '1px solid var(--cardborder)', background: 'var(--hover)' }}
-        >
-          <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="h-4 w-4 flex-shrink-0" style={{ color: form.manually_confirmed ? '#22c55e' : 'var(--muted)' }} />
-            <div>
-              <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>I confirm this account&rsquo;s payments manually</p>
-              <p className="text-xs" style={{ color: 'var(--muted)' }}>
-                {hasNoConnection(detail)
-                  ? 'No device or web session is linked, so payments here can only be confirmed by hand. Without this, the account will not receive orders.'
-                  : 'Keeps this account receiving orders even when no device or web session is linked to it.'}
-              </p>
-            </div>
-          </div>
-          <Toggle checked={!!form.manually_confirmed} onChange={(v) => set('manually_confirmed', v)} />
-        </div>
-      )}
-
       {/* NGO/web accounts do have a real delete endpoint, but it's exposed
           from the trash icon on their row in AccountsColumn instead of here
           — this modal's delete only covers trader-native details. */}
@@ -1388,10 +1355,6 @@ function distinctAccounts(details = [], ngoAccounts = [], detailPredicate = () =
   return natives.length + ngoAccounts.filter(ngoPredicate).length;
 }
 
-// No APK device and no Web Login session backs this payment detail, so nothing
-// can observe a payment arriving on it. `connection_alive` is null in exactly
-// this case (jobs/connectionLiveness.js), which is what routing keys on.
-const hasNoConnection = (d) => !!d && !d.__ngo && connType(d) !== 'web' && d.connection_alive == null;
 
 // Small badge: android robot (teal) for APK, globe (coral) for Web Login.
 function ConnTypeIcon({ type, size = 24 }) {
@@ -1918,7 +1881,6 @@ function AccountsColumn({
         <div className="mt-4 space-y-3">
           {providerGroups.map((g) => {
             const open = isOpen(g.mapKey);
-            const anyActive = g.nativeItems.some((d) => d.is_active_detail);
             const activeCount = g.nativeItems.filter((d) => d.is_active_detail).length;
             const liveCount = g.ngoItems.filter((a) => a.status === 'live').length;
             const totalCount = g.nativeItems.length + g.ngoItems.length;
@@ -1937,11 +1899,21 @@ function AccountsColumn({
                     <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{g.label}</p>
                     <p className="text-xs" style={{ color: 'var(--muted)' }}>{totalCount} account{totalCount === 1 ? '' : 's'} · {totalActiveLike} active</p>
                   </div>
-                  {g.nativeItems.length > 0 && (
-                    <span onClick={(e) => e.stopPropagation()} aria-label="Toggle all in group">
-                      <Toggle checked={anyActive} onChange={(v) => onBulkToggle(g.nativeItems, v)} />
-                    </span>
-                  )}
+                  {/* The group-level Toggle that used to sit here is gone.
+                      Two real defects, either one disqualifying:
+
+                      1. Its checked state was `some(is_active_detail)`, so in
+                         any mixed group it rendered ON and a click could only
+                         ever turn everything OFF — there was no way to
+                         bulk-enable a partially-enabled group at all.
+                      2. More seriously, it wrote is_active_detail directly and
+                         bypassed linkIfLive, the readiness check the per-row
+                         toggle runs before admitting an account. That is
+                         exactly the "enters the pool without a confirmed live
+                         connection" path the liveness work exists to close.
+
+                      Per-account toggles cover the same ground and enforce the
+                      check, so this is a removal rather than a rewrite. */}
                   {g.nativeItems.length > 0 && (
                     <div className="relative" onClick={(e) => e.stopPropagation()}>
                       <button
@@ -1958,13 +1930,11 @@ function AccountsColumn({
                           className="absolute right-0 z-10 mt-1 w-40 rounded-lg py-1"
                           style={{ border: '1px solid var(--cardborder)', background: 'var(--card)', boxShadow: 'var(--shadow)' }}
                         >
-                          <button
-                            onClick={() => { onBulkToggle(g.nativeItems, true); setMenu(null); }}
-                            className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"
-                            style={{ color: 'var(--text)' }}
-                          >
-                            Enable all
-                          </button>
+                          {/* "Enable all" removed for the same reason as the
+                              group toggle: bulk-enabling skips the per-account
+                              liveness check. "Disable all" stays — turning
+                              accounts OFF can never admit an unconnected
+                              account, so it bypasses no safety gate. */}
                           <button
                             onClick={() => { onBulkToggle(g.nativeItems, false); setMenu(null); }}
                             className="tf-row-hover block w-full px-3 py-1.5 text-left text-xs"

@@ -15,7 +15,6 @@
 export const ACCOUNT_STATE = {
   LIVE: 'live',
   RECONNECT: 'reconnect',
-  MANUAL: 'manual',
   NEVER: 'never',
   OFF: 'off',
 };
@@ -34,12 +33,6 @@ export const STATE_META = {
     short: 'Reconnect',
     hex: '#f59e0b',
     title: 'This account was connected but its device or web session is not responding now',
-  },
-  [ACCOUNT_STATE.MANUAL]: {
-    label: 'Manual',
-    short: 'Manual',
-    hex: '#3b82f6',
-    title: 'No connection linked — you confirm this account’s payments by hand, so it still receives orders',
   },
   [ACCOUNT_STATE.NEVER]: {
     label: 'Not connected',
@@ -71,9 +64,11 @@ export function accountState(d) {
   if (d.is_active_detail === false) return ACCOUNT_STATE.OFF;
   if (d.connection_alive === true) return ACCOUNT_STATE.LIVE;
   if (d.connection_alive === false) return ACCOUNT_STATE.RECONNECT;
-  // Nothing linked: routing only accepts it on an explicit manual opt-in
-  // (routingEngine.pickEligibleAccount), so the two cases are not the same.
-  return d.manually_confirmed ? ACCOUNT_STATE.MANUAL : ACCOUNT_STATE.NEVER;
+  // Nothing linked. There is no manual fallback any more: routing accepts
+  // connection_alive === true and nothing else, so an unlinked account is
+  // simply not connected regardless of any historical manually_confirmed
+  // value on the row.
+  return ACCOUNT_STATE.NEVER;
 }
 
 // An ngo (Web Login) account carries its own real session status rather than
@@ -93,14 +88,10 @@ export const isLive = (d) => !!d && d.is_active !== false && accountState(d) ===
 
 /**
  * What routing will actually accept — mirrors pickEligibleAccount's connection
- * branch. Broader than isLive because a manually-confirmed account with no
- * connection does still receive orders; kept distinct so a "Live" count never
- * quietly includes one.
+ * branch, which now requires a confirmed-live connection and nothing else.
+ * Identical to isLive since manual eligibility was removed; kept as its own
+ * name because the two answer different questions and could diverge again.
  */
-export const isRoutable = (d) => {
-  if (!d || d.is_active === false) return false;
-  const s = accountState(d);
-  return s === ACCOUNT_STATE.LIVE || s === ACCOUNT_STATE.MANUAL;
-};
+export const isRoutable = (d) => isLive(d);
 
 export const countBy = (details, pred) => (details || []).filter(pred).length;
