@@ -612,7 +612,14 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
   const needsReconnect = all.filter((d) => accountState(d) === ACCOUNT_STATE.RECONNECT);
   // The table lists everything routing could touch, each row labelled with its
   // real state, so a "Reconnect needed" account is visible instead of absent.
-  const shown = all.filter((d) => d.is_active_detail !== false);
+  // Both gates, matching routing. `is_active` is the admin/linkage flag and
+  // `is_active_detail` the trader's own switch; pickEligibleAccount requires
+  // both. This filtered on the trader's switch alone, so an account the admin
+  // had unlinked (is_active = 0) still rendered as a Live-pool row while
+  // routing would never send it anything — an account that looks present and
+  // is permanently unreachable. The tile count was already correct (isLive
+  // checks both); only this row list was wrong.
+  const shown = all.filter((d) => d.is_active !== false && d.is_active_detail !== false);
 
   // Activity aggregates describe the rows the table actually lists (`shown`),
   // not just the live subset — otherwise a pool with real orders on a

@@ -101,10 +101,16 @@ async function hasSameAmountActiveOrder(paymentDetailId, amount) {
   return n > 0;
 }
 
-/** First eligible account under a trader for `amount`, or null. */
-async function pickEligibleAccount(trader, amount) {
+/**
+ * EVERY eligible account under a trader for `amount`, each carrying its
+ * session success rate so callers can rank rather than take whatever came
+ * first. Returns [{ account, rate }]; `rate` is null for an account with no
+ * scored orders yet.
+ */
+async function eligibleAccountsFor(trader, amount) {
   const accounts = trader.paymentDetails || [];
   const now = new Date();
+  const eligible = [];
 
   for (const account of accounts) {
     if (!account.is_active) continue;
@@ -133,11 +139,16 @@ async function pickEligibleAccount(trader, amount) {
       continue;
     }
 
-    // Session success score. An account performing below the threshold stops
-    // receiving new orders until the trader toggles it off and on, which
-    // starts a fresh session and clears the score (services/accountScore.js).
+    // Session success score, used for BOTH the threshold gate and the ranking
+    // below — computed once here rather than queried twice. An account below
+    // the threshold stops receiving new orders until the trader toggles it off
+    // and on, which starts a fresh session (services/accountScore.js).
     // eslint-disable-next-line no-await-in-loop
-    if (await accountScore.isBelowThreshold(account)) continue;
+    const { rate } = await accountScore.sessionScore(account);
+    if (rate !== null && rate < accountScore.MIN_SUCCESS_RATE) {
+      logger.info(`routing: account ${account.upi_id} below success threshold (${rate}%) — skipping`);
+      continue;
+    }
 
     if (Number(account.min_amount) > 0 && Number(amount) < Number(account.min_amount)) continue;
     if (Number(account.max_amount) > 0 && Number(amount) > Number(account.max_amount)) continue;
@@ -180,9 +191,45 @@ async function pickEligibleAccount(trader, amount) {
       if (account.monthly_limit != null && usage.monthly_amount_total + Number(amount) > Number(account.monthly_limit)) continue;
     }
 
-    return account;
+    eligible.push({ account, rate });
   }
-  return null;
+  return eligible;
+}
+
+/**
+ * Ranking for BUG-24. Highest success rate wins; raw id order no longer
+ * overrides a genuine performance difference.
+ *
+ * An account with no scored orders yet (rate null) ranks FIRST. It is newly
+ * live and has no evidence against it, and it must actually receive traffic to
+ * earn a score — otherwise a scored account would monopolise orders and
+ * nothing new could ever get its first one. That matters more than it sounds:
+ * the BUG-23 reset makes every recovered account unscored, so ranking them
+ * last would starve exactly the accounts a trader has just fixed.
+ *
+ * Ties fall back to the previous behaviour, lowest trader id then lowest
+ * account id, so ordering stays deterministic.
+ */
+function rankCandidates(candidates) {
+  return [...candidates].sort((a, b) => {
+    const aFresh = a.rate === null;
+    const bFresh = b.rate === null;
+    if (aFresh !== bFresh) return aFresh ? -1 : 1;
+    if (!aFresh && a.rate !== b.rate) return b.rate - a.rate;
+    if (a.trader.id !== b.trader.id) return a.trader.id - b.trader.id;
+    return a.account.id - b.account.id;
+  });
+}
+
+/**
+ * Best single account under one trader. Kept for callers that have already
+ * chosen the trader (assignTraderToOrder); it now returns the trader's BEST
+ * eligible account rather than the first one that happened to pass.
+ */
+async function pickEligibleAccount(trader, amount) {
+  const eligible = await eligibleAccountsFor(trader, amount);
+  if (!eligible.length) return null;
+  return rankCandidates(eligible.map((e) => ({ ...e, trader })))[0].account;
 }
 
 /** Online, active, funded traders that accept `depositType`, with their accounts. */
@@ -207,17 +254,33 @@ async function findAvailableTrader(amountInr, depositType = 'STD') {
   const traders = await eligibleTraders(depositType);
   logger.info(`routing: findAvailableTrader(₹${amount}, ${depositType}) — ${traders.length} eligible trader(s)`);
 
+  // Gather EVERY eligible trader+account pair before choosing, rather than
+  // returning the first that passes. Ranking only within a trader would still
+  // let an earlier-registered trader's weakest account beat a later trader's
+  // best, which is the behaviour being replaced.
+  const candidates = [];
   for (const trader of traders) {
+    // Trader's own daily cap. Applies to the trader as a whole, so it is
+    // checked once here rather than per account.
     if (Number(trader.daily_limit) > 0 && Number(trader.current_daily_used) + amount > Number(trader.daily_limit)) continue;
     // eslint-disable-next-line no-await-in-loop
-    const account = await pickEligibleAccount(trader, amount);
-    if (account) {
-      logger.info(`routing: selected trader ${trader.id}, account ${account.upi_id}`);
-      return { trader, paymentDetail: account };
-    }
+    const accounts = await eligibleAccountsFor(trader, amount);
+    for (const entry of accounts) candidates.push({ ...entry, trader });
   }
-  logger.warn(`routing: no eligible trader/account for ₹${amount} ${depositType}`);
-  return null;
+
+  if (!candidates.length) {
+    logger.warn(`routing: no eligible trader/account for ₹${amount} ${depositType}`);
+    return null;
+  }
+
+  const ranked = rankCandidates(candidates);
+  const best = ranked[0];
+  if (ranked.length > 1) {
+    const shown = ranked.slice(0, 4).map((c) => `${c.account.upi_id}=${c.rate === null ? 'new' : `${c.rate}%`}`).join(', ');
+    logger.info(`routing: ${ranked.length} eligible account(s), ranked by success rate: ${shown}`);
+  }
+  logger.info(`routing: selected trader ${best.trader.id}, account ${best.account.upi_id} (success rate ${best.rate === null ? 'unscored' : `${best.rate}%`})`);
+  return { trader: best.trader, paymentDetail: best.account };
 }
 
 /* --------------------------- assignment (reassign) ------------------------ */
