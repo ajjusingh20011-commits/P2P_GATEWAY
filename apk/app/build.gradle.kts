@@ -10,8 +10,8 @@ android {
         applicationId = "com.example.paymentbot"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         // Room schema export — not used for migrations yet (the app is
         // pre-install-base, so destructive fallback is acceptable), but
