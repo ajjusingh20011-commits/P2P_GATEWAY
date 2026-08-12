@@ -258,9 +258,16 @@ async function callMatchSettlement(payload) {
       timeout: 5000,
       headers: internalAuthHeaders(),
     });
-    return res.data;
+    const d = res.data || {};
+    // The single line that says whether a real payment closed a real order.
+    console.log(
+      d.matched
+        ? `match: SETTLED order ${d.order_id} (tier ${d.tier}, source ${payload.source})`
+        : `match: NOT settled — reason=${d.reason || 'unknown'} amount=${payload.amount} upis=${(payload.upi_ids || []).join(',')} source=${payload.source}`
+    );
+    return d;
   } catch (e) {
-    console.error('matchingEngineV2 callMatchSettlement failed:', e.message);
+    console.error(`match: FAILED to reach the gateway matcher — ${e.message} (amount=${payload.amount} source=${payload.source})`);
     return null;
   }
 }
@@ -279,14 +286,33 @@ async function callMatchSettlement(payload) {
  * account's payment settle a DIFFERENT trader's order sharing the same NGO.
  */
 async function triggerOrderSettlementFromRawEvent(rawEvent) {
-  if (!rawEvent || rawEvent.traderId == null) return null;
+  // Every exit below logs. This function used to return silently at three
+  // separate guards, so a real payment that failed to auto-match left no trace
+  // anywhere and could only be diagnosed by cross-referencing database
+  // timestamps by hand.
+  const tag = `match[raw ${rawEvent?._id || '?'}]`;
+  if (!rawEvent || rawEvent.traderId == null) {
+    console.warn(`${tag}: SKIPPED — raw event has no traderId, cannot resolve any UPI to match against`);
+    return null;
+  }
 
   const target = normalizeAmount(rawEvent.amount);
-  if (Number.isNaN(target) || target <= 0) return null;
+  if (Number.isNaN(target) || target <= 0) {
+    console.warn(`${tag}: SKIPPED — unusable amount ${JSON.stringify(rawEvent.amount)}`);
+    return null;
+  }
 
   const upiIds = (await Account.find({ traderId: rawEvent.traderId }).distinct('upiId')).filter(Boolean);
-  if (!upiIds.length) return null;
+  if (!upiIds.length) {
+    // NOTE: Account holds Web Login accounts only. An APK-linked UPI lives in
+    // the gateway's MySQL payment_details and has no Account document, so a
+    // pure-APK trader resolves to zero UPIs here and no match is ever
+    // attempted. See BUG-30.
+    console.warn(`${tag}: NO MATCH ATTEMPTED — trader ${rawEvent.traderId} has no ngo Account documents, so there are no UPIs to match on. An APK-only account will always hit this.`);
+    return null;
+  }
 
+  console.log(`${tag}: attempting — trader=${rawEvent.traderId} amount=${target} utr=${rawEvent.utr || '(none)'} upis=${upiIds.join(',')}`);
   return callMatchSettlement({
     upi_ids: upiIds,
     amount: target,

@@ -96,7 +96,18 @@ function cleanPayerName(raw) {
   if (!raw) return '';
   return raw
     .replace(/[-–]\s*bal\b.*$/i, '')
-    .replace(/\s+(has|is|was|on|for|of|to|via|using)\b.*$/i, '')
+    // Words that begin the NEXT clause, so the name ends before them.
+    // `at` was missing, which is what produced payer names like
+    // "Chiranjit K B at 6" from "…from Chiranjit K B at 6:47 PM":
+    // SENDER_PATTERN's capture class allows spaces and digits, so it runs on
+    // until the colon rather than stopping at the word boundary.
+    .replace(/\s+(has|is|was|on|at|for|of|to|via|using|through|ref|utr|txn|upi)\b.*$/i, '')
+    // Belt and braces for any trailing time / date / bare-number fragment the
+    // label list above doesn't cover ("Name 6:47 PM", "Name 11 Aug", "Name 6").
+    // A real payer name does not end in digits.
+    .replace(/\s+\d[\d:./\s-]*(?:[ap]\.?m\.?)?\s*$/i, '')
+    // Separators either strip can leave dangling.
+    .replace(/[\s,.\-–:;]+$/, '')
     .trim();
 }
 
