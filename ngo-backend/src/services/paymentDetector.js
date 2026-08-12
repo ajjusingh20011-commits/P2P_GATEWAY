@@ -47,6 +47,38 @@ const NOISE_PATTERNS = [
   /refer\s*(?:&|and)\s*earn/i,
   /lucky\s*draw/i,
   /spin\s*the\s*wheel/i,
+  // Non-cash "credits". These are the dangerous ones: unlike a plain advert,
+  // they pair a real received/credited verb with a number, so nothing above
+  // catches them and the amount check passes. "You have received 10,000 Gold
+  // Coins" is a real captured example. Deliberately specific phrases rather
+  // than bare "coins"/"points", which could appear inside a payer's name.
+  /gold\s*coins?/i,
+  /reward\s*points?/i,
+  /loyalty\s*points?/i,
+  /\bvoucher\b/i,
+  /gift\s*card/i,
+  // Lending promos. "offer" above catches some, but not "Get instant funds
+  // up to ₹5,00,000" — no offer, no cashback, and a currency amount present.
+  /instant\s*(?:funds|loan|cash|credit)/i,
+  /personal\s*loan/i,
+  /credit\s*limit/i,
+  /pre[\s-]?(?:approved|qualified)/i,
+  // Recharge / bill reminders.
+  /\brecharge\b/i,
+  /plan\s*(?:expir|will\s*expire)/i,
+  /bill\s*(?:due|payment\s*due)/i,
+  /due\s*date/i,
+  // Money that moves for a reason other than a customer paying the trader. It
+  // is real money, which is exactly what makes it dangerous: a refund that
+  // happens to match an open order's amount would settle it.
+  //
+  // Deliberately NOT included: "added to your wallet" / "wallet balance". A
+  // customer payment into a merchant wallet can legitimately read that way,
+  // and a wrongly rejected real payment breaks the very settlement this change
+  // exists to fix. A self top-up slipping through is the cheaper error.
+  /wallet\s*top[\s-]?up/i,
+  /\brefund(?:ed)?\b/i,
+  /\breversal\b/i,
   // OTP / verification noise.
   /\botp\b/i,
   /one[\s-]?time\s*password/i,

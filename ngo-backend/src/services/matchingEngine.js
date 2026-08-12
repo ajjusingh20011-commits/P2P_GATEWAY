@@ -4,6 +4,7 @@ const Webhook = require('../models/Webhook');
 const Transaction = require('../models/Transaction');
 const NGO = require('../models/NGO');
 const ledgerService = require('./ledgerService');
+const { detectRealPayment } = require('./paymentDetector');
 const { isWithinMinutes } = require('../utils/timeHelper');
 const {
   WEBHOOK_STATUS,
@@ -308,9 +309,47 @@ async function triggerOrderSettlementFromRawEvent(rawEvent) {
     return null;
   }
 
-  const target = normalizeAmount(rawEvent.amount);
+  // The amount comes from the SAME classifier that creates the Transaction,
+  // not from rawEvent.amount independently.
+  //
+  // rawEvent.amount is the phone's own extraction, and it is empty for the
+  // most common notification format there is: NotificationService runs
+  // SMSReceiver.AMOUNT_PATTERNS, whose regex matches "Rs"/"INR" but NOT the ₹
+  // symbol, so every "Received ₹20 from …" arrived with amount "". Matching
+  // then skipped the event as unusable while Transaction creation — which
+  // re-parses server-side, where the ₹ IS matched — recorded the right amount.
+  // The two disagreed on the same event, and only the losing one gated
+  // settlement. Deriving both from detectRealPayment is what makes them
+  // incapable of disagreeing; the app-side regex is fixed too, but a fix that
+  // needs an APK rollout to reach a phone cannot be the one this depends on.
+  //
+  // Web Login captures are structured reads from the platform's own API and
+  // deliberately bypass the text classifier (as they do in routes/apk.js), so
+  // their amount is taken as given.
+  const isWebLogin = String(rawEvent.source || '').startsWith('web_login');
+  let target;
+
+  if (isWebLogin) {
+    target = normalizeAmount(rawEvent.amount);
+  } else {
+    const verdict = detectRealPayment({
+      type: rawEvent.type,
+      sender: rawEvent.sender,
+      body: rawEvent.body,
+      amount: rawEvent.amount,
+    });
+    // Noise the classifier rejects must not settle an order either. This used
+    // to be gated only on the presence of an amount, so a promotional message
+    // that happened to carry one could reach the matcher.
+    if (!verdict.isRealPayment) {
+      console.warn(`${tag}: SKIPPED — not a real payment (${verdict.reason})`);
+      return null;
+    }
+    target = normalizeAmount(verdict.amount);
+  }
+
   if (Number.isNaN(target) || target <= 0) {
-    console.warn(`${tag}: SKIPPED — unusable amount ${JSON.stringify(rawEvent.amount)}`);
+    console.warn(`${tag}: SKIPPED — unusable amount ${JSON.stringify(rawEvent.amount)} (device) / ${JSON.stringify(target)} (parsed)`);
     return null;
   }
 

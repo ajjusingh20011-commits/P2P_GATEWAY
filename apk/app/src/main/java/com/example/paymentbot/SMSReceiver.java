@@ -53,8 +53,14 @@ public class SMSReceiver extends BroadcastReceiver {
     // Package-visible (not private): reused by NotificationService so both
     // capture paths extract amount/UTR the same way instead of duplicating
     // the regex set.
+    //
+    // The ₹ symbol was missing here while PaymentParser.AMOUNT (used by the
+    // overlay path) and the server's own parser both had it. Bank SMS writes
+    // "Rs 500", so this looked fine for the path it was written for — but
+    // NotificationService reuses it, and UPI apps write "Received ₹20". Every
+    // one of those uploaded amount:"" and the server had to re-derive it.
     static final Pattern[] AMOUNT_PATTERNS = {
-            Pattern.compile("(?:rs\\.?|inr)\\s*([\\d,]+(?:\\.\\d+)?)", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("(?:₹|rs\\.?|inr)\\s*([\\d,]+(?:\\.\\d+)?)", Pattern.CASE_INSENSITIVE),
     };
     private static final Pattern[] BALANCE_PATTERNS = {
             Pattern.compile("(?:avl\\s*bal|available\\s*balance|bal|balance)[:\\s]*(?:rs\\.?|inr)?\\s*([\\d,]+(?:\\.\\d+)?)",
