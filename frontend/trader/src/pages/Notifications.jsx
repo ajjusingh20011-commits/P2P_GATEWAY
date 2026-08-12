@@ -40,14 +40,27 @@ function apiToRow(txn) {
     originalText = `Payment from ${txn.payerName || 'Unknown'}${txn.payerUpiId ? ` (${txn.payerUpiId})` : ''}`;
   }
 
+  // Which payment app the money actually arrived in, and how we captured it —
+  // resolved server-side (ngo-backend utils/sourceApp.js). Transaction.platform
+  // is NOT that: for APK rows it holds our own capture tag, which is why this
+  // column used to read "apk-notification" where a scraper row read "Paytm".
+  const sourceApp = txn.sourceApp || {};
+  const appKey = sourceApp.key || null;
+
   return {
     id: txn._id,
     notificationId: txn.txnId || txn._id,
     time: txn.scrapedAt || txn.createdAt || null,
     amount: txn.amount,
     currency: 'INR',
-    method: txn.platform,
-    methodBadgeColor: ACCOUNT_TYPES[txn.platform]?.color || 'default',
+    // The badge keys off the real app; the filter follows it so filtering by
+    // "GPay Business" catches APK captures and scraped rows alike.
+    method: appKey || txn.platform,
+    appLabel: sourceApp.label || txn.platform,
+    // How it reached us (Notification / SMS / Web scraper / Web login). Shown
+    // as secondary text: useful for support, never the headline.
+    channel: sourceApp.channel || '',
+    methodBadgeColor: ACCOUNT_TYPES[appKey]?.color || 'default',
     linkedAccount,
     upiId,
     originalText,
@@ -295,10 +308,13 @@ export default function Notifications() {
                     <div style={{ marginBottom: 4 }}>
                       {method ? (
                         <div style={{ display: 'inline-block' }}>
-                          <BankBadge type={n.method} label={method.label} size={28} />
+                          <BankBadge type={n.method} label={n.appLabel || method.label} size={28} />
                         </div>
                       ) : (
-                        <Badge>{n.method}</Badge>
+                        // No brand badge for this source (a bank app, or an app
+                        // we can't name) — still a real app name, rendered the
+                        // same way, never the raw capture tag.
+                        <Badge>{n.appLabel || n.method}</Badge>
                       )}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, wordBreak: 'break-all' }}>
@@ -306,8 +322,30 @@ export default function Notifications() {
                     </div>
                   </div>
 
-                  {/* 5. Description (full original text + capture type/device name) */}
+                  {/* 5. Description (source app + full original text + UTR) */}
                   <div style={{ minWidth: 0 }}>
+                    {/* Which app sent this notification. The captured text
+                        alone ("₹1,000 received from NITESH K at 9:35 pm")
+                        never says, so two accounts on the same phone were
+                        indistinguishable on this page. The channel follows it
+                        because the time INSIDE the text is the app's own
+                        rendering of when the payment happened, which is not
+                        always when the notification was posted. */}
+                    {(n.appLabel || n.channel) && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--muted)',
+                          marginBottom: 4,
+                          display: 'flex',
+                          alignItems: 'baseline',
+                          gap: 6,
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, color: 'var(--subtle)' }}>{n.appLabel}</span>
+                        {n.channel && <span>· {n.channel}</span>}
+                      </div>
+                    )}
                     <div
                       style={{
                         color: 'var(--text)',
@@ -343,7 +381,13 @@ export default function Notifications() {
                     ) : null}
                   </div>
 
-                  {/* 6. Status (Linked/Process badge + info) */}
+                  {/* 6. Status (Linked/Unlinked badge + info) */}
+                  {/* Both states get the same pill geometry and a caption, so
+                      an unmatched row reads as a deliberate state rather than
+                      an unfinished one. "Process" was a solid orange block
+                      that looked like a button but was never clickable —
+                      there is no action to take here; the row is simply a
+                      captured payment that matched no open order. */}
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                     <div
                       style={{
@@ -351,18 +395,23 @@ export default function Notifications() {
                         fontWeight: 600,
                         padding: '4px 12px',
                         borderRadius: 4,
-                        backgroundColor: n.isLinked ? '#10b981' : '#f59e0b',
-                        color: '#fff',
                         textAlign: 'center',
+                        backgroundColor: n.isLinked ? '#10b981' : 'transparent',
+                        color: n.isLinked ? '#fff' : 'var(--muted)',
+                        border: n.isLinked ? '1px solid #10b981' : '1px solid var(--cardborder)',
                       }}
                     >
-                      {n.isLinked ? 'Linked' : 'Process'}
+                      {n.isLinked ? 'Linked' : 'Unlinked'}
                     </div>
-                    {/* Real Transaction ID — only exists once matched=true (Linked);
-                        genuinely absent (not just hidden) on Process rows, since
-                        there's no real transaction ID to show for those. */}
-                    {n.isLinked && (
+                    {/* Real Transaction ID — only exists once matched=true (Linked).
+                        An unlinked row genuinely has none, so it says why it has
+                        none instead of leaving the cell to look truncated. */}
+                    {n.isLinked ? (
                       <IdReveal value={n.realId} label="Transaction ID" size={12} />
+                    ) : (
+                      <span style={{ fontSize: 10, color: 'var(--subtle)', textAlign: 'center' }}>
+                        No matching order
+                      </span>
                     )}
                   </div>
                 </div>

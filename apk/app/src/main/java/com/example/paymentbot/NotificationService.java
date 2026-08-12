@@ -250,6 +250,15 @@ public class NotificationService extends NotificationListenerService {
     /**
      * Maps a known payment/messaging app package to a friendly name. For any
      * unknown package, returns the last dot-separated segment of the package.
+     *
+     * Every entry in ALLOWED_PACKAGES is listed here deliberately: this name is
+     * the ONLY record of which app a payment arrived in that ever leaves the
+     * phone (it becomes the "&lt;app&gt;: &lt;title&gt;" sender the server stores), and
+     * the last-segment fallback below produces useless labels for exactly the
+     * business apps that matter — "com.google.android.apps.nbu.paisa.merchant"
+     * came through as "merchant", "com.bharatpe.app" as "app", and both
+     * "com.paytm.business" and "com.phonepe.app.business" as an ambiguous
+     * "business" that cannot be told apart afterwards.
      */
     private static String getAppName(String packageName) {
         if (TextUtils.isEmpty(packageName)) {
@@ -258,12 +267,38 @@ public class NotificationService extends NotificationListenerService {
         switch (packageName) {
             case "net.one97.paytm":
                 return "Paytm";
+            case "com.paytm.business":
+                return "Paytm Business";
             case "com.phonepe.app":
                 return "PhonePe";
+            case "com.phonepe.app.business":
+                return "PhonePe Business";
             case "com.google.android.apps.nbu.paisa.user":
                 return "GPay";
+            case "com.google.android.apps.nbu.paisa.merchant":
+                return "GPay Business";
             case "com.bharatpe.merchant":
                 return "BharatPe";
+            case "com.bharatpe.app":
+                return "BharatPe Business";
+            case "com.airtelpeymentsbank":
+                return "Airtel Payments Bank";
+            case "com.snapwork.hdfc":
+                return "HDFC Bank";
+            case "com.csam.icici.bank.imobile":
+                return "ICICI Bank";
+            case "com.sbi.SBIFreedomPlus":
+                return "SBI";
+            case "com.axis.mobile":
+                return "Axis Bank";
+            case "com.dreamplug.androidapp":
+                return "CRED";
+            case "com.mobikwik_new":
+                return "MobiKwik";
+            case "com.freecharge.android":
+                return "Freecharge";
+            case "in.amazon.mShop.android.shopping":
+                return "Amazon Pay";
             case "com.whatsapp":
                 return "WhatsApp";
             default:

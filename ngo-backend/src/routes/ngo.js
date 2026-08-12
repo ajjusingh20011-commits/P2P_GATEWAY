@@ -6,6 +6,7 @@ const { verifyServiceOrAdmin, resolveTraderFilter, requireTraderId } = require('
 const { ROLES, ACCOUNT_STATUS, ACCOUNT_STATUS_REASON, CONNECTION_TYPE } = require('../config/constants');
 const { encrypt } = require('../utils/encryption');
 const { assertUpiAvailable, UpiTakenError } = require('../utils/upiUniqueness');
+const { resolveSourceApp } = require('../utils/sourceApp');
 const ledgerService = require('../services/ledgerService');
 const Account = require('../models/Account');
 const Transaction = require('../models/Transaction');
@@ -295,16 +296,32 @@ router.get('/transactions', verifyServiceOrAdmin, async (req, res, next) => {
 
     const [transactions, total] = await Promise.all([
       Transaction.find(query)
-        .populate('rawEventId', ['type', 'body', 'deviceId', 'category'])
+        // `sender` added: it carries "<app name>: <notification title>", which
+        // is the only record of WHICH payment app a capture came from —
+        // Transaction.platform holds our capture tag ('apk-notification'), not
+        // the app. See utils/sourceApp.js.
+        .populate('rawEventId', ['type', 'body', 'deviceId', 'category', 'sender'])
         .sort({ scrapedAt: -1 })
         .skip(skip)
         .limit(limit),
       Transaction.countDocuments(query),
     ]);
 
+    // Resolved here rather than in the panel so every consumer gets the same
+    // answer, and so rows captured before this shipped resolve too (it reads
+    // data that was always being stored, just never surfaced).
+    const withSource = transactions.map((txn) => {
+      const obj = txn.toObject();
+      obj.sourceApp = resolveSourceApp({
+        platform: obj.platform,
+        rawSender: obj.rawEventId && obj.rawEventId.sender,
+      });
+      return obj;
+    });
+
     return res.json({
       success: true,
-      transactions,
+      transactions: withSource,
       total,
       pages: Math.ceil(total / limit),
     });
