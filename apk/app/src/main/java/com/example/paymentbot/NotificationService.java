@@ -220,8 +220,20 @@ public class NotificationService extends NotificationListenerService {
             // extracted, that's a format our regexes don't handle yet. Log it
             // locally (persistently) for review instead of silently dropping
             // it — see ParseFailure.
+            // Search the body first, then the title. The payment does not
+            // reliably live in the body: GPay alternates between
+            // title="₹7 received from …" with boilerplate in the body, and the
+            // reverse, from one post of the SAME notification to the next.
+            // Reading only the body uploaded amount:"" for half of them.
+            // BUG-40.
             String amount = SMSReceiver.firstMatch(displayBody, SMSReceiver.AMOUNT_PATTERNS);
+            if (amount.isEmpty()) {
+                amount = SMSReceiver.firstMatch(title, SMSReceiver.AMOUNT_PATTERNS);
+            }
             String utr = SMSReceiver.firstMatch(displayBody, SMSReceiver.UTR_PATTERNS);
+            if (utr.isEmpty()) {
+                utr = SMSReceiver.firstMatch(title, SMSReceiver.UTR_PATTERNS);
+            }
             if (amount.isEmpty() && utr.isEmpty()) {
                 ParseFailureLogger.log(this, "NOTIFICATION", senderName, displayBody, "no_amount_or_utr_matched");
             }

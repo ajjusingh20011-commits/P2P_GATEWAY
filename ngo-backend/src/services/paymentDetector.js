@@ -174,9 +174,19 @@ function detectRealPayment(evt) {
   }
 
   // Prefer the client's own extraction (PaymentParser.java runs the same
-  // amount regex on-device already) — only fall back to re-deriving from
-  // body text if the client didn't send one.
-  const amountMatch = AMOUNT_PATTERN.exec(evt.body || '');
+  // amount regex on-device already) — only fall back to re-deriving from the
+  // captured text if the client didn't send one.
+  //
+  // The body is searched first, then the sender. `sender` is
+  // "<app name>: <notification title>", and the title is where the payment
+  // sometimes lives: GPay alternates between putting "₹7 received from …" in
+  // the title with boilerplate in the body, and the reverse. Reading only the
+  // body meant a title-carried payment produced "received signal found but no
+  // usable amount" and never became a Transaction at all — a real, settled
+  // payment lost on wording alone. BUG-40.
+  const bodyAmount = AMOUNT_PATTERN.exec(evt.body || '');
+  const senderAmount = bodyAmount ? null : AMOUNT_PATTERN.exec(evt.sender || '');
+  const amountMatch = bodyAmount || senderAmount;
   const amount = (evt.amount && evt.amount.trim()) || (amountMatch ? amountMatch[1].replace(/,/g, '') : '');
   if (!amount) {
     // Transaction.amount is a required field — never create one with an
@@ -185,10 +195,13 @@ function detectRealPayment(evt) {
     return { isRealPayment: false, reason: 'received signal found but no usable amount' };
   }
 
-  const senderMatch = SENDER_PATTERN.exec(evt.body || '');
+  // Payer and UPI id follow the amount: when the payment line is in the title,
+  // so is the payer's name, and reading only the body left the Transaction
+  // attributed to nobody.
+  const senderMatch = SENDER_PATTERN.exec(evt.body || '') || SENDER_PATTERN.exec(evt.sender || '');
   const payerName = cleanPayerName(senderMatch ? senderMatch[1] : '') || (evt.sender || '').trim();
 
-  const upiMatch = UPI_ID_PATTERN.exec(evt.body || '');
+  const upiMatch = UPI_ID_PATTERN.exec(evt.body || '') || UPI_ID_PATTERN.exec(evt.sender || '');
   const payerUpiId = upiMatch ? upiMatch[1] : '';
 
   return { isRealPayment: true, reason: 'received/credited signal + usable amount', amount, payerName, payerUpiId };

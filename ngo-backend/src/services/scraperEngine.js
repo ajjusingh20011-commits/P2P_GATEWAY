@@ -176,6 +176,17 @@ async function ingestRawEvent(payload) {
     const since = new Date(Date.now() - RAW_EVENT_DEDUPE_WINDOW_MINUTES * 60 * 1000);
     const existing = await RawEvent.findOne({
       deviceId: payload.deviceId,
+      // `sender` carries the notification's TITLE ("<app name>: <title>"), and
+      // it must be part of the key. GPay moves the payment between the title
+      // and the body from one post to the next: a capture reading
+      // title="₹7 received from Chiranjit K B", body="See live notifications
+      // here…" has the same body as every boilerplate post that device has
+      // ever made, so keying on the body alone suppressed a real payment
+      // against unrelated noise — and suppression writes nothing, so the
+      // payment simply did not exist as far as the server was concerned.
+      // BUG-40, confirmed on a live device: the on-time capture at 10:56 was
+      // discarded here, and only a re-post ten minutes later got through.
+      sender: payload.sender || '',
       body: payload.body,
       amount: payload.amount || '',
       utr: payload.utr || '',
