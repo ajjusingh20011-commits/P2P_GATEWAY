@@ -425,17 +425,26 @@ router.post('/event', async (req, res, next) => {
       });
 
       if (verdict.isRealPayment) {
-        // Dedupe on (traderId, utr) — same reasoning as
-        // scraperEngine.persistTransactions()'s (accountId, utr/txnId)
-        // dedupe, adapted to the APK path's traderId-keyed ownership
-        // (there is no Account document here). Only dedupes when a UTR
-        // was actually captured; an event with no UTR at all is rare
-        // enough (and inherently unmatched to anything downstream) that
-        // skipping the dedupe check for it is the safer default over
-        // silently dropping a real payment that lacks one.
-        const existing = rawEvent.utr
-          ? await Transaction.findOne({ traderId: device.traderId, utr: rawEvent.utr })
-          : null;
+        // One RawEvent must never produce more than one Transaction, so the
+        // event's own id is the primary dedupe key. The UTR check below is
+        // kept as a second key (it also catches the same payment arriving as
+        // two genuinely different captures — an SMS and a notification for one
+        // transfer), but it cannot carry this on its own: a UPI notification
+        // has no UTR, so the guard was skipped entirely for exactly the
+        // captures that need it.
+        //
+        // That gap became visible once ingestRawEvent started returning the
+        // EXISTING RawEvent for a re-delivered capture instead of storing a
+        // second copy (see scraperEngine, BUG-31): the retry then reused the
+        // first delivery's _id and fell straight through to create a second
+        // Transaction against it. Live data showed one event with 5 rows.
+        // BUG-37.
+        const existing = await Transaction.findOne({
+          $or: [
+            { rawEventId: rawEvent._id },
+            ...(rawEvent.utr ? [{ traderId: device.traderId, utr: rawEvent.utr }] : []),
+          ],
+        });
 
         if (existing) {
           // A duplicate delivery of an event whose Transaction we already
@@ -447,6 +456,7 @@ router.post('/event', async (req, res, next) => {
             existing.p2pOrderId = settledOrderId;
             await existing.save();
           }
+          console.log(`event[${rawEvent._id}]: Transaction already exists (${existing._id}) — not creating a second one`);
         } else {
           await Transaction.create({
             ngoId: device.ngoId || null,
