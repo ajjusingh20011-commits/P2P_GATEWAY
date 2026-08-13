@@ -1,15 +1,22 @@
 package com.example.paymentbot;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.Context;
+import android.os.Build;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.core.app.NotificationCompat;
 import androidx.work.BackoffPolicy;
 import androidx.work.Constraints;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.ExistingWorkPolicy;
+import androidx.work.ForegroundInfo;
 import androidx.work.NetworkType;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.OutOfQuotaPolicy;
 import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
 import androidx.work.Worker;
@@ -42,6 +49,13 @@ public class EventUploadWorker extends Worker {
     private static final String TAG = "PaymentBot";
     private static final String IMMEDIATE_WORK_NAME = "event_upload_immediate";
     private static final String PERIODIC_WORK_NAME = "event_upload_periodic";
+
+    // Separate, minimum-importance channel for the expedited-work notification
+    // the OS requires below API 31 — deliberately not KeepAliveService's
+    // channel, so this transient entry can't be mistaken for the app having
+    // stopped monitoring.
+    private static final String UPLOAD_CHANNEL_ID = "PaymentBotUpload";
+    private static final int UPLOAD_NOTIF_ID = 1002;
 
     // Above this many failed attempts on a single row, stop retrying it —
     // otherwise one truly-undeliverable row (e.g. a permanently revoked
@@ -76,20 +90,67 @@ public class EventUploadWorker extends Worker {
     /** Call right after queuing a new event for a fast-path delivery attempt. */
     public static void enqueueImmediate(Context context) {
         Constraints constraints = new Constraints.Builder()
+                // Kept deliberately: this is not a delay when the device is
+                // online, it only stops a pointless run (and a wasted attempt
+                // against MAX_ATTEMPTS) while it has no network at all.
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build();
 
         OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(EventUploadWorker.class)
                 .setConstraints(constraints)
-                .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.SECONDS)
+                // Ask the OS to run this now rather than at its own
+                // convenience. Without it a capture made while the device is
+                // idle waits for a normal job window, which is the one thing
+                // this pipeline must never do. RUN_AS_NON_EXPEDITED_WORK_REQUEST
+                // means an exhausted expedited quota degrades to a normal run
+                // instead of failing the upload outright.
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                // 10s is WorkManager's floor. Only applies after a failed
+                // attempt, never to the first one.
+                .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS)
                 .build();
 
-        // REPLACE, not APPEND: many captures can fire in a burst (a page full
-        // of screen text, several SMS parts) — one in-flight/queued drain
-        // pass already covers everything currently in the table, so there's
-        // no need to stack up duplicate immediate runs behind it.
+        // APPEND_OR_REPLACE, not REPLACE.
+        //
+        // REPLACE cancels a run that is already in flight. Under a burst — and
+        // a payment app updating one notification repeatedly IS a burst — each
+        // new capture cancelled the upload of the previous one, so the drain
+        // could be restarted indefinitely and events sat in the queue while
+        // the phone looked busy. APPEND_OR_REPLACE instead chains a fresh
+        // drain after the current one finishes, which both leaves the in-
+        // flight upload alone and guarantees a pass that sees the row just
+        // written (a run that already called getAll() cannot). _OR_REPLACE so
+        // a previously cancelled or failed chain doesn't block new work.
         WorkManager.getInstance(context.getApplicationContext())
-                .enqueueUniqueWork(IMMEDIATE_WORK_NAME, ExistingWorkPolicy.REPLACE, request);
+                .enqueueUniqueWork(IMMEDIATE_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request);
+    }
+
+    /**
+     * Required for {@link #setExpedited}: below API 31 the OS runs expedited
+     * work as a short-lived foreground service and asks for the notification
+     * to show. Reuses KeepAliveService's existing channel so this adds no new
+     * channel and no second visible entry on devices that already show it.
+     */
+    @NonNull
+    @Override
+    public ForegroundInfo getForegroundInfo() {
+        Context ctx = getApplicationContext();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    UPLOAD_CHANNEL_ID, UPLOAD_CHANNEL_ID, NotificationManager.IMPORTANCE_MIN);
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                nm.createNotificationChannel(channel);
+            }
+        }
+        Notification notification = new NotificationCompat.Builder(ctx, UPLOAD_CHANNEL_ID)
+                .setContentTitle("PaymentBot")
+                .setContentText("Sending captured payment")
+                .setSmallIcon(android.R.drawable.stat_notify_sync)
+                .setPriority(NotificationCompat.PRIORITY_MIN)
+                .setOngoing(true)
+                .build();
+        return new ForegroundInfo(UPLOAD_NOTIF_ID, notification);
     }
 
     private enum Outcome { SUCCESS, TRANSIENT_FAILURE, PERMANENT_FAILURE }
