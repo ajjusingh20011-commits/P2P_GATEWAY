@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { traderApi } from '../services/api';
+import { istDate } from '../utils/time';
 
 const SEEN_KEY = 'notif-last-seen-id';
 
@@ -23,7 +24,8 @@ function timeAgo(dateStr) {
   if (h < 24) return `${h}h ago`;
   const days = Math.floor(h / 24);
   if (days < 7) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
+  // IST, not the viewer's locale — see utils/time.js.
+  return istDate(dateStr) || '';
 }
 
 export default function NotificationBell({ socket }) {

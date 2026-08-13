@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import { Smartphone, RefreshCw } from 'lucide-react';
 import { Card, Badge, Button, SearchInput, Select, PageHeader, Modal, EmptyState, LoadingState } from '../components/ui';
+import { istDateTime } from '../utils/time';
 import { IconPlus, IconChevron } from '../components/icons';
 import { getDevices, generateLicense, renameDevice, deleteDevice, getNgoSocketToken, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 import { traderApi } from '../services/api';
@@ -365,7 +366,7 @@ export default function Smartphones() {
                 <div className="deviceStats">
                   <div>
                     <small>Last heartbeat</small>
-                    <strong title={s.lastSeen ? new Date(s.lastSeen).toLocaleString() : undefined}>{heartbeatAgo(s.lastSeen)}</strong>
+                    <strong title={istDateTime(s.lastSeen) || undefined}>{heartbeatAgo(s.lastSeen)}</strong>
                   </div>
                   <div style={{ position: 'relative' }}>
                     <small>Linked details</small>

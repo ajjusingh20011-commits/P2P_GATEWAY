@@ -70,4 +70,30 @@ router.post('/match-settlement', asyncHandler(async (req, res) => {
   return res.json({ success: true, ...result });
 }));
 
+// POST /api/internal/order-upis — called by ngo-backend when it lists a
+// trader's captured transactions, to say which of the trader's own UPIs each
+// settled order landed in. That mapping only exists here (orders and
+// payment_details are this service's tables), and resolving it at read time
+// rather than storing it on the capture means rows settled before this
+// existed resolve too.
+// Body: { order_ids: number[] }  ->  { upis: { "<order id>": "<upi id>" } }
+router.post('/order-upis', asyncHandler(async (req, res) => {
+  const ids = Array.isArray(req.body?.order_ids)
+    ? req.body.order_ids.map(Number).filter(Number.isFinite).slice(0, 500)
+    : [];
+  if (!ids.length) return res.json({ success: true, upis: {} });
+
+  const orders = await db.Order.findAll({
+    where: { id: ids },
+    attributes: ['id'],
+    include: [{ model: db.PaymentDetail, as: 'paymentDetail', attributes: ['upi_id'] }],
+  });
+
+  const upis = {};
+  orders.forEach((o) => {
+    if (o.paymentDetail && o.paymentDetail.upi_id) upis[o.id] = o.paymentDetail.upi_id;
+  });
+  return res.json({ success: true, upis });
+}));
+
 module.exports = router;

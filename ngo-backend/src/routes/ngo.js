@@ -6,7 +6,11 @@ const { verifyServiceOrAdmin, resolveTraderFilter, requireTraderId } = require('
 const { ROLES, ACCOUNT_STATUS, ACCOUNT_STATUS_REASON, CONNECTION_TYPE } = require('../config/constants');
 const { encrypt } = require('../utils/encryption');
 const { assertUpiAvailable, UpiTakenError } = require('../utils/upiUniqueness');
+const axios = require('axios');
 const { resolveSourceApp } = require('../utils/sourceApp');
+const { paymentText } = require('../utils/captureText');
+const { internalAuthHeaders } = require('../middleware/internalAuth');
+const Device = require('../models/Device');
 const ledgerService = require('../services/ledgerService');
 const Account = require('../models/Account');
 const Transaction = require('../models/Transaction');
@@ -310,12 +314,48 @@ router.get('/transactions', verifyServiceOrAdmin, async (req, res, next) => {
     // Resolved here rather than in the panel so every consumer gets the same
     // answer, and so rows captured before this shipped resolve too (it reads
     // data that was always being stored, just never surfaced).
-    const withSource = transactions.map((txn) => {
-      const obj = txn.toObject();
+    const rows = transactions.map((txn) => txn.toObject());
+
+    // The device each capture came from, by name rather than by the raw
+    // android id the RawEvent carries.
+    const deviceIds = [...new Set(rows.map((r) => r.rawEventId && r.rawEventId.deviceId).filter(Boolean))];
+    const deviceNames = {};
+    if (deviceIds.length) {
+      const devices = await Device.find({ deviceId: { $in: deviceIds } })
+        .select('deviceId deviceName deviceModel').lean();
+      devices.forEach((d) => { deviceNames[d.deviceId] = d.deviceName || d.deviceModel || ''; });
+    }
+
+    // Which of the trader's own UPIs a settled capture landed in. Lives in the
+    // gateway's tables, so it is asked for in one batched call rather than
+    // stored on the capture — that way rows settled before this existed
+    // resolve too. Best-effort: the panel simply omits the line if the
+    // gateway is unreachable, it must not fail the listing.
+    const orderIds = [...new Set(rows.filter((r) => r.matched && r.p2pOrderId).map((r) => r.p2pOrderId))];
+    let orderUpis = {};
+    if (orderIds.length) {
+      try {
+        const base = process.env.P2P_BACKEND_URL || 'http://localhost:4000';
+        const resp = await axios.post(`${base}/api/internal/order-upis`, { order_ids: orderIds },
+          { timeout: 5000, headers: internalAuthHeaders() });
+        orderUpis = (resp.data && resp.data.upis) || {};
+      } catch (e) {
+        console.warn(`transactions: could not resolve receiving UPIs — ${e.message}`);
+      }
+    }
+
+    const withSource = rows.map((obj) => {
       obj.sourceApp = resolveSourceApp({
         platform: obj.platform,
         rawSender: obj.rawEventId && obj.rawEventId.sender,
       });
+      // The line the trader reads, picked by which half of the capture names
+      // an amount — see utils/captureText.js.
+      obj.capturedText = obj.rawEventId
+        ? paymentText({ body: obj.rawEventId.body, sender: obj.rawEventId.sender })
+        : '';
+      obj.deviceName = (obj.rawEventId && deviceNames[obj.rawEventId.deviceId]) || '';
+      obj.receivingUpiId = obj.p2pOrderId ? (orderUpis[obj.p2pOrderId] || '') : '';
       return obj;
     });
 

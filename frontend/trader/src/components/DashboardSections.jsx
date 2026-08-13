@@ -303,10 +303,14 @@ const RANGE_MS = {
 };
 
 function bucketConfig(range) {
-  if (range === '1H') return { buckets: 6, stepMs: 10 * 60000, fmt: (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) };
-  if (range === '1D') return { buckets: 24, stepMs: 3600000, fmt: (d) => d.toLocaleTimeString([], { hour: 'numeric' }) };
-  if (range === '7D') return { buckets: 7, stepMs: 86400000, fmt: (d) => d.toLocaleDateString([], { weekday: 'short' }) };
-  return { buckets: 30, stepMs: 86400000, fmt: (d) => d.toLocaleDateString([], { month: 'short', day: 'numeric' }) };
+  // Axis labels pinned to IST like every other time in the panel — otherwise a
+  // trader abroad reads a chart whose buckets are labelled in their own
+  // timezone while the underlying volume is bucketed by the gateway's day.
+  const IST = 'Asia/Kolkata';
+  if (range === '1H') return { buckets: 6, stepMs: 10 * 60000, fmt: (d) => d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: IST }) };
+  if (range === '1D') return { buckets: 24, stepMs: 3600000, fmt: (d) => d.toLocaleTimeString('en-IN', { hour: 'numeric', timeZone: IST }) };
+  if (range === '7D') return { buckets: 7, stepMs: 86400000, fmt: (d) => d.toLocaleDateString('en-IN', { weekday: 'short', timeZone: IST }) };
+  return { buckets: 30, stepMs: 86400000, fmt: (d) => d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric', timeZone: IST }) };
 }
 
 function buildActivitySeries(orders, payoutReqs, range) {

@@ -31,9 +31,19 @@ function apiToRow(txn) {
   // payer UPI ID to reconcile, not a masked preview.
   let upiId = txn.payerUpiId || '—';
 
-  // Full original captured text: RawEvent.body for APK, reconstructed for scraper
+  // The captured line that actually describes the payment.
+  //
+  // `capturedText` is resolved server-side (ngo-backend utils/captureText.js)
+  // by whichever half of the capture names an amount. Reading RawEvent.body
+  // alone showed "See live notifications here…" for a real ₹10 payment,
+  // because GPay had put the payment in the notification's title that time and
+  // the boilerplate in the body — the same root cause as the amount fix in
+  // 1317477, one field further along. Falls back to the body so a panel talking
+  // to an older server behaves exactly as before.
   let originalText = '';
-  if (rawEvent && rawEvent.body) {
+  if (txn.capturedText) {
+    originalText = txn.capturedText;
+  } else if (rawEvent && rawEvent.body) {
     originalText = rawEvent.body;
   } else if (!isApk) {
     // Web scraper: reconstruct from parsed fields
@@ -74,7 +84,19 @@ function apiToRow(txn) {
     // Linked if matched=true (matched to an order), Process if false
     linkedStatus: txn.matched ? 'linked' : 'process',
     isLinked: txn.matched,
-    realId: txn.utr || txn.txnId || txn._id,
+    // The phone this was captured on, appended to the description so a trader
+    // running several devices can tell which one saw the payment.
+    deviceName: txn.deviceName || '',
+    // Which of the trader's OWN UPIs a settled capture landed in — resolved
+    // from the settled order, so it only exists for linked rows. Distinct from
+    // `upiId` above, which is the payer's.
+    receivingUpiId: txn.receivingUpiId || '',
+    // The order this settled, which is the SAME number the Trades page shows
+    // as its Transaction ID (orderToRow: `o.order_id || o.id`). Showing it
+    // here is what lets a trader put the two pages side by side; the Mongo
+    // _id fallback below means nothing on Trades.
+    orderId: txn.p2pOrderId || null,
+    realId: txn.p2pOrderId || txn.utr || txn.txnId || txn._id,
   };
 }
 
@@ -317,9 +339,17 @@ export default function Notifications() {
                         <Badge>{n.appLabel || n.method}</Badge>
                       )}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, wordBreak: 'break-all' }}>
-                      {n.upiId}
-                    </div>
+                    {/* The UPI the money landed in, shown only once the row is
+                        genuinely linked to an order — that is the only point
+                        at which we know which account received it. An
+                        unmatched capture has no answer, and printing the
+                        payer's UPI (often absent for notifications) in its
+                        place read as a dash for no stated reason. */}
+                    {n.isLinked && n.receivingUpiId ? (
+                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, wordBreak: 'break-all' }}>
+                        {n.receivingUpiId}
+                      </div>
+                    ) : null}
                   </div>
 
                   {/* 5. Description (source app + full original text + UTR) */}
@@ -358,6 +388,9 @@ export default function Notifications() {
                       }}
                     >
                       {n.originalText || '—'}
+                      {n.deviceName ? (
+                        <span style={{ color: 'var(--subtle)' }}>{` · ${n.deviceName}`}</span>
+                      ) : null}
                     </div>
                     {/* Bank reference (UTR/RRN) — what a trader actually
                         matches against their statement. Monospace + tabular

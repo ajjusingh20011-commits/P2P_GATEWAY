@@ -8,6 +8,7 @@ import { useSocket } from '../hooks/useSocket';
 import { traderApi } from '../services/api';
 import { toast } from '../components/Toaster';
 import ConfirmModal from '../components/ConfirmModal';
+import { istStamp, IST_LABEL } from '../utils/time';
 import { trades, inr, usdt, ACCOUNT_TYPES } from '../utils/mock';
 
 const PER_PAGE = 25;
@@ -27,18 +28,13 @@ function useDebounced(value, delay = 300) {
 }
 
 // Split a timestamp into two display lines: time (18:15) + date (04.07.2026),
-// in the viewer's local timezone (no trader tz is exposed by the API). Returns
-// null for missing/invalid values so the cell can render "—" instead of
-// "Invalid Date".
+// always in IST. Returns null for missing/invalid values so the cell can
+// render "—" instead of "Invalid Date".
 function formatStamp(value) {
-  if (value == null || value === '' || value === '—') return null;
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return null;
-  const p = (n) => String(n).padStart(2, '0');
-  return {
-    time: `${p(d.getHours())}:${p(d.getMinutes())}`,
-    date: `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`,
-  };
+  // IST for every trader, not the viewer's own clock. getHours()/getDate()
+  // read the rendering machine's timezone, so two traders comparing the same
+  // trade saw different times with nothing saying which was which.
+  return istStamp(value);
 }
 
 // Two timestamps in one column. Previously both rendered as "09:44 · 11.08.2026"
@@ -55,7 +51,10 @@ function Stamp({ label, value, muted }) {
       <span className="stampLabel">{label}</span>
       {s ? (
         <>
-          <strong className="stampTime" style={muted ? { color: 'var(--muted)' } : undefined}>{s.time}</strong>
+          <strong className="stampTime" style={muted ? { color: 'var(--muted)' } : undefined}>
+            {s.time}
+            <span style={{ fontSize: 9, fontWeight: 500, color: 'var(--subtle)', marginLeft: 3 }}>{IST_LABEL}</span>
+          </strong>
           <span className="stampDate">{s.date}</span>
         </>
       ) : (
