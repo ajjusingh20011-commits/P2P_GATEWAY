@@ -21,8 +21,8 @@ android {
         // committed values did not describe any APK anyone was running. The
         // versionName carries the commit the build's behaviour comes from, so
         // a phone in the field can be traced back to source.
-        versionCode = 5
-        versionName = "1.3-17f20c9"
+        versionCode = 6
+        versionName = "1.4-1317477"
 
         // Room schema export — not used for migrations yet (the app is
         // pre-install-base, so destructive fallback is acceptable), but
