@@ -74,6 +74,9 @@ public class SMSReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
+        // First statement in the callback — the SMS half of the same delay
+        // measurement NotificationService takes. See CaptureTiming.
+        final long appReactionMs = System.currentTimeMillis();
         if (intent == null || !SMS_RECEIVED.equals(intent.getAction())) {
             return;
         }
@@ -144,6 +147,14 @@ public class SMSReceiver extends BroadcastReceiver {
                             + " (sender=" + sender + ") — consider adding to BankSenderTags");
                 }
             }
+
+            // Diagnostic only — recorded for every captured SMS, debit or
+            // credit, before the paths diverge below. `timestamp` here is the
+            // telephony layer's own received time (SmsMessage.getTimestampMillis),
+            // which is the SMS equivalent of a notification's post time.
+            CaptureTiming.record(context, "SMS", sender, body,
+                    firstMatch(body, AMOUNT_PATTERNS), timestamp, appReactionMs,
+                    TimeFormatter.toUTC(timestamp));
 
             if (isDebit) {
                 handleDebit(context, sender, body, timestamp, verifiedSender, bankTag);

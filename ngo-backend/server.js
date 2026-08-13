@@ -19,6 +19,7 @@ const adminRoutes = require('./src/routes/admin');
 const ngoRoutes = require('./src/routes/ngo');
 const merchantRoutes = require('./src/routes/merchant');
 const apkRoutes = require('./src/routes/apk');
+const captureTimingRoutes = require('./src/routes/captureTiming');
 const webhookRoutes = require('./src/routes/webhook');
 const checkoutRoutes = require('./src/routes/checkout');
 const publicRoutes = require('./src/routes/public');
@@ -120,6 +121,11 @@ app.get('/api/ngo/public/:ngoId', checkoutRoutes.publicNgoHandler);
 app.use('/api/ngo', ngoRoutes);
 app.use('/api/merchant', merchantRoutes);
 app.use('/api/apk', apkRoutes);
+// Diagnostic capture-timing probe, mounted on the same prefix in its own
+// router (see routes/captureTiming.js) so the capture path itself is not
+// touched by the investigation. Remove this line and that file together when
+// the delay question is settled.
+app.use('/api/apk', captureTimingRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/checkout', checkoutRoutes);
 app.use('/api/public', publicRoutes);

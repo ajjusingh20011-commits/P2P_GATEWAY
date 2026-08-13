@@ -84,6 +84,11 @@ public class NotificationService extends NotificationListenerService {
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
+        // First statement in the callback, before any work: this is the
+        // "when did our code actually get told" timestamp for the delay
+        // investigation, and anything done ahead of it would be measured as
+        // the OS being slow when it was us.
+        final long appReactionMs = System.currentTimeMillis();
         if (sbn == null) {
             return;
         }
@@ -215,6 +220,11 @@ public class NotificationService extends NotificationListenerService {
             // Item 3: queue-first, not a direct fire-and-forget POST — see
             // EventQueue for why (this used to be lost outright if offline).
             queueEvent(senderName, displayBody, amount, utr, timestamp);
+
+            // Diagnostic only — see CaptureTiming. Sends the same
+            // TimeFormatter output as the key, so the two uploads join.
+            CaptureTiming.record(this, "NOTIFICATION", packageName, displayBody, amount,
+                    timestamp, appReactionMs, TimeFormatter.toUTC(timestamp));
 
         } catch (Exception e) {
             Log.e(TAG, "NotificationService error", e);
