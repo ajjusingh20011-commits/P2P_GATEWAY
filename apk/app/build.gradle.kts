@@ -10,8 +10,19 @@ android {
         applicationId = "com.example.paymentbot"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        // Bump BOTH of these for every build handed to a device, and set the
+        // VPS's APK_LATEST_VERSION_CODE / APK_LATEST_VERSION_NAME to match
+        // (see ngo-backend routes/apk.js GET /latest-version). An install
+        // whose versionCode is not higher than the one already on the phone
+        // cannot be installed over it at all — Android refuses a downgrade —
+        // and the in-app update check compares these exact numbers.
+        //
+        // These sat at 1 / "1.0" while builds 2, 3 and 4 went out, so the
+        // committed values did not describe any APK anyone was running. The
+        // versionName carries the commit the build's behaviour comes from, so
+        // a phone in the field can be traced back to source.
+        versionCode = 5
+        versionName = "1.3-17f20c9"
 
         // Room schema export — not used for migrations yet (the app is
         // pre-install-base, so destructive fallback is acceptable), but
