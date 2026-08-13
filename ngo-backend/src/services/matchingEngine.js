@@ -353,15 +353,17 @@ async function triggerOrderSettlementFromRawEvent(rawEvent) {
     return null;
   }
 
-  // The trader id is sent as-is; the gateway resolves it to that trader's UPI
-  // list from payment_details. This used to resolve the list here from the
-  // local Account collection, which holds Web Login accounts only — an
-  // APK-linked UPI has no Account document, so the matcher was handed the
-  // wrong UPIs, or none at all, and a real payment never settled (BUG-30).
-  // This service simply cannot answer that question: payment_details lives in
-  // the gateway's MySQL database.
-  console.log(`${tag}: attempting — trader=${rawEvent.traderId} amount=${target} utr=${rawEvent.utr || '(none)'}`);
+  // Send BOTH the device id and the trader id. The gateway scopes matching to
+  // the specific UPI(s) this device collects on FIRST (payment_details.
+  // ngo_device_id === the same deviceId this RawEvent carries), and only falls
+  // back to the trader's full UPI set if the device isn't linked to any UPI —
+  // so a payment that landed on the device's UPI A can no longer settle a
+  // same-amount order sitting on the trader's UPI B. trader_id is still sent as
+  // the fallback (and payment_details lives in the gateway's MySQL, which is
+  // the only place that can resolve either id to real UPIs — see BUG-30).
+  console.log(`${tag}: attempting — device=${rawEvent.deviceId || '(none)'} trader=${rawEvent.traderId} amount=${target} utr=${rawEvent.utr || '(none)'}`);
   return callMatchSettlement({
+    device_id: rawEvent.deviceId || null,
     trader_id: rawEvent.traderId,
     amount: target,
     utr: rawEvent.utr || '',

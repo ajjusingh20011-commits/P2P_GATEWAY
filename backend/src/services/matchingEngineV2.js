@@ -59,6 +59,27 @@ async function upiIdsForTrader(traderId) {
   return details.map((d) => d.upi_id).filter(Boolean);
 }
 
+/**
+ * The UPI(s) a specific device actually collects on — payment_details linked
+ * to it via `ngo_device_id` (the same android deviceId the RawEvent carries;
+ * the join key is deviceId, see backend/src/jobs/connectionLiveness.js). This
+ * is the scope that stops a payment landing on the device's UPI A from
+ * settling a same-amount order sitting on the trader's *other* UPI B.
+ *
+ * `ngo_device_id` is nullable and has no unique index, so this can legitimately
+ * return several UPIs (a device backing multiple accounts — they're returned
+ * together and pickClosestByTime still disambiguates within them) or none (the
+ * payment_detail was never linked to a device — the caller then falls back to
+ * the trader-wide set rather than stranding a real payment).
+ */
+async function upiIdsForDevice(deviceId) {
+  const details = await db.PaymentDetail.findAll({
+    where: { ngo_device_id: deviceId },
+    attributes: ['upi_id'],
+  });
+  return details.map((d) => d.upi_id).filter(Boolean);
+}
+
 /** Find every open order for any of the given UPI ids at this exact amount. */
 async function findCandidateOrders(upiIds, amount) {
   return db.Order.findAll({
@@ -107,18 +128,34 @@ function pickClosestByTime(candidates, eventTimestamp) {
  *   as smartMerge's `engine` tag and the discrepancy log's `source`.
  * @returns {Promise<{matched: boolean, reason?: string, tier?: number, order_id?: number}>}
  */
-async function matchAndSettle({ upiIds, traderId, amount, utr, eventTimestamp, payerName, payerUpi, source }) {
+async function matchAndSettle({ upiIds, deviceId, traderId, amount, utr, eventTimestamp, payerName, payerUpi, source }) {
   let normalizedUpiIds = (Array.isArray(upiIds) ? upiIds : [upiIds]).filter(Boolean);
   const normalizedAmount = Number(amount);
   const normalizedTraderId = Number(traderId);
+  const normalizedDeviceId = deviceId != null ? String(deviceId).trim() : '';
 
-  if (!normalizedUpiIds.length && Number.isFinite(normalizedTraderId)) {
-    normalizedUpiIds = await upiIdsForTrader(normalizedTraderId);
-    if (!normalizedUpiIds.length) {
-      logger.warn(`matchingEngineV2: trader ${normalizedTraderId} has no payment_details at all — nothing to match on (source=${source || 'unknown'})`);
-      return { matched: false, reason: 'no_accounts_for_trader', upis_checked: [] };
+  // Resolve the UPI set to match against, most-precise source first:
+  //   1. explicit upiIds  — the scraper already knows the exact account.
+  //   2. device-scoped     — the APK path names its device; use only the
+  //                          UPI(s) that device collects on (the fix).
+  //   3. trader-wide       — fallback when the device isn't named or isn't
+  //                          linked to any UPI; never strand a real payment.
+  if (!normalizedUpiIds.length) {
+    if (normalizedDeviceId) {
+      normalizedUpiIds = await upiIdsForDevice(normalizedDeviceId);
+      if (normalizedUpiIds.length) {
+        logger.info(`matchingEngineV2: device-scoped to ${normalizedUpiIds.length} upi(s) for device ${normalizedDeviceId} — ${normalizedUpiIds.join(',')} (source=${source || 'unknown'})`);
+      }
     }
-    logger.info(`matchingEngineV2: resolved ${normalizedUpiIds.length} upi(s) for trader ${normalizedTraderId} — ${normalizedUpiIds.join(',')}`);
+
+    if (!normalizedUpiIds.length && Number.isFinite(normalizedTraderId)) {
+      normalizedUpiIds = await upiIdsForTrader(normalizedTraderId);
+      if (!normalizedUpiIds.length) {
+        logger.warn(`matchingEngineV2: trader ${normalizedTraderId} has no payment_details at all — nothing to match on (source=${source || 'unknown'})`);
+        return { matched: false, reason: 'no_accounts_for_trader', upis_checked: [] };
+      }
+      logger.info(`matchingEngineV2: ${normalizedDeviceId ? `device ${normalizedDeviceId} has no linked UPI — ` : ''}trader-wide fallback resolved ${normalizedUpiIds.length} upi(s) for trader ${normalizedTraderId} — ${normalizedUpiIds.join(',')}`);
+    }
   }
 
   if (!normalizedUpiIds.length || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
@@ -192,4 +229,4 @@ async function matchAndSettle({ upiIds, traderId, amount, utr, eventTimestamp, p
   return { matched: true, tier, order_id: order.id };
 }
 
-module.exports = { matchAndSettle, findCandidateOrders, pickClosestByTime, upiIdsForTrader, MATCH_TIER };
+module.exports = { matchAndSettle, findCandidateOrders, pickClosestByTime, upiIdsForTrader, upiIdsForDevice, MATCH_TIER };
