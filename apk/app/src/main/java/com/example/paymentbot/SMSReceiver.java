@@ -43,6 +43,26 @@ public class SMSReceiver extends BroadcastReceiver {
     // can reliably capture the entity tag itself, not just verify the shape.
     private static final Pattern DLT_SENDER_PATTERN = Pattern.compile("^[A-Z]{2}-([A-Z]{6})-T$");
 
+    // The shape a real bank header actually takes in the wild, used as the
+    // capture gate (BUG-38). Deliberately wider than DLT_SENDER_PATTERN above,
+    // which only ever matched the textbook form: real headers carry 2-4
+    // character circle prefixes and 4-9 character entity codes, and the
+    // category suffix is often -S (service) rather than -T, or absent
+    // entirely. The one real ICICI sender in our own database,
+    // "ICIC-ICICIBK-T", has a 4-character prefix and a 7-character code and so
+    // matched nothing at all under the old pattern.
+    private static final Pattern DLT_HEADER = Pattern.compile("^[A-Z]{2,4}-([A-Z0-9]{4,9})(?:-[TSPG])?$");
+
+    // Any form of plain phone number Android may hand us as the originating
+    // address. A transactional bank alert never comes from one.
+    private static final Pattern PHONE_SENDER = Pattern.compile("^(?:\\+?91[- ]?|0)?[6-9][0-9]{9}$|^[0-9]{3,15}$");
+
+    // Secondary content signals a genuine bank alert carries: a reference the
+    // trader could reconcile against, and the masked account it landed in.
+    // Used ALONGSIDE the sender check, never instead of it.
+    private static final Pattern MASKED_ACCOUNT = Pattern.compile(
+            "(?:a/?c|acct|account)[^0-9a-z]{0,12}(?:x+|\\*+)?\\s*\\d{3,4}\\b", Pattern.CASE_INSENSITIVE);
+
     // ---- Debit body extraction patterns (all case-insensitive) ----
     private static final Pattern[] LAST4_PATTERNS = {
             Pattern.compile("a/?c\\s*(?:no\\.?\\s*)?(?:x+|\\*+)\\s*(\\d{4})", Pattern.CASE_INSENSITIVE),
@@ -119,9 +139,19 @@ public class SMSReceiver extends BroadcastReceiver {
             }
             String body = bodyBuilder.toString();
 
-            // Banking-only filter: ignore SMS from non-bank senders entirely.
+            // Source check first: who it is from, which wording cannot fake.
             if (!isValidBankSender(sender)) {
-                Log.d(TAG, "Skipping non-bank SMS: " + sender);
+                Log.d(TAG, "Skipping SMS — sender is not a registered bank DLT header: " + sender);
+                return;
+            }
+
+            // Then the corroborating content check. A message from a genuine
+            // bank header that carries neither a reference nor a masked
+            // account is not a payment alert — it is an OTP, a marketing push
+            // or a service notice, and it has no business reaching the
+            // classifier or the trader's feed.
+            if (!hasBankMessageMarkers(body)) {
+                Log.d(TAG, "Skipping SMS from " + sender + " — no UTR/reference and no masked account number");
                 return;
             }
 
@@ -230,12 +260,51 @@ public class SMSReceiver extends BroadcastReceiver {
         return t.contains("credited") || t.contains("received") || t.contains("added");
     }
 
-    /** Banking-only gate: true when the sender id belongs to a known bank/UPI. */
+    /**
+     * Banking-only gate — now structural first, name second (BUG-38).
+     *
+     * A real bank alert always arrives from a TRAI DLT header: a short
+     * carrier/circle prefix, a hyphen, the registered entity code, and
+     * optionally a category suffix (-T transactional, -S service, -P
+     * promotional, -G government). It NEVER arrives from a plain phone number.
+     *
+     * The old gate was a substring test alone, so anything merely CONTAINING a
+     * bank's name passed — "HDFCBANKOFFERS", or a personal number whose
+     * contact name mentioned a bank. Someone texting fake "payment received"
+     * wording from an ordinary number is a real risk, and no amount of text
+     * classification can catch it, because the text is genuinely well-formed.
+     * Checking who it is from is the part that cannot be faked by wording.
+     */
     static boolean isValidBankSender(String sender) {
         if (sender == null) {
             return false;
         }
-        String u = sender.toUpperCase();
+        String u = sender.trim().toUpperCase();
+
+        // Reject outright: a phone number in any of the forms Android hands us
+        // (10-digit, +91-prefixed, 0-prefixed, spaced). Real transactional
+        // bank SMS cannot come from one.
+        if (PHONE_SENDER.matcher(u).matches()) {
+            return false;
+        }
+
+        // Require the DLT header shape, and take the entity code from it.
+        Matcher header = DLT_HEADER.matcher(u);
+        if (!header.matches()) {
+            return false;
+        }
+        String code = header.group(1);
+
+        // Known either way round: an exact DLT entity code from the reference
+        // map, or a code carrying a bank name we recognise. Both are consulted
+        // because the two lists were built separately and disagree — the map
+        // knows CANBNK and UBIIND while the name list knows CANARA and UNION,
+        // so 13 of the 29 mapped tags used to be unreachable (BUG-38 audit).
+        return BankSenderTags.KNOWN_BANK_TAGS.containsKey(code) || containsBankName(code);
+    }
+
+    /** The bank-name substring test, now applied to the DLT code only. */
+    private static boolean containsBankName(String u) {
         return u.contains("HDFC")
                 || u.contains("SBIN") || u.contains("SBI")
                 || u.contains("ICICI")
@@ -282,6 +351,25 @@ public class SMSReceiver extends BroadcastReceiver {
         }
         Matcher m = DLT_SENDER_PATTERN.matcher(sender.trim().toUpperCase());
         return m.matches() ? m.group(1) : "";
+    }
+
+    /**
+     * True when the body carries at least one marker a real bank alert has and
+     * a fabricated one usually doesn't: a UTR/reference, or a masked account
+     * number.
+     *
+     * At least one, not both, on purpose: banks are inconsistent about which
+     * they include, and a message that names a masked account but no reference
+     * is still clearly a bank's own alert. Requiring both would reject real
+     * payments, which costs a settlement — the far more expensive error of the
+     * two. The sender check is what actually establishes authenticity; this is
+     * the corroborating signal.
+     */
+    static boolean hasBankMessageMarkers(String body) {
+        if (body == null || body.isEmpty()) {
+            return false;
+        }
+        return !firstMatch(body, UTR_PATTERNS).isEmpty() || MASKED_ACCOUNT.matcher(body).find();
     }
 
     /** Returns the first capturing-group match across the given patterns, or "". */

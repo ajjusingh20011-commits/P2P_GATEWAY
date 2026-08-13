@@ -58,6 +58,7 @@ public class NotificationService extends NotificationListenerService {
     // `adb shell pm list packages` on a device with the real app installed
     // before relying on them in production.
     private static final String[] ALLOWED_PACKAGES = {
+            // --- Apps a trader actually collects customer payments in ---
             "com.phonepe.app",
             "com.google.android.apps.nbu.paisa.user",
             // Google Pay for Business — merchant/business variant, separate
@@ -71,15 +72,25 @@ public class NotificationService extends NotificationListenerService {
             "com.paytm.business",
             // PhonePe Business — unverified, see note above.
             "com.phonepe.app.business",
-            "in.amazon.mShop.android.shopping",
-            "com.freecharge.android",
             "com.airtelpeymentsbank",
+
+            // --- Bank apps, kept for their credit alerts ---
+            // A payment can be reported by the receiving bank's own app rather
+            // than the UPI app, so these stay. They are not places a customer
+            // pays INTO, which is why they are listed separately.
             "com.snapwork.hdfc",
             "com.csam.icici.bank.imobile",
             "com.sbi.SBIFreedomPlus",
             "com.axis.mobile",
-            "com.dreamplug.androidapp",
-            "com.mobikwik_new"
+
+            // Removed deliberately (BUG-38): in.amazon.mShop.android.shopping,
+            // com.mobikwik_new, com.dreamplug.androidapp (CRED) and
+            // com.freecharge.android. None of them is somewhere a customer
+            // pays a trader; all of them post order, cashback and bill-reminder
+            // notifications carrying a ₹ amount, which is exactly the noise the
+            // text classifier then has to argue with. Filtering them here means
+            // that argument never happens. Re-add a line if a trader genuinely
+            // collects in one of them.
     };
 
     @Override
