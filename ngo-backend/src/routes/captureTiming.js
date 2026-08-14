@@ -49,6 +49,18 @@ router.post('/capture-timing', async (req, res) => {
       utcTimestamp: String(b.utcTimestamp || ''),
       bodyPreview: String(b.bodyPreview || '').slice(0, 300),
       amount: String(b.amount || ''),
+      // Duplicate-capture investigation — notification identity + raw post time.
+      // Two rows with the same notifKey are the SAME notification (a redelivery
+      // after a listener rebind), not a second GPay post; a rawPostTimeMs of 0
+      // means the systemPostTimeMs above is our wall-clock fallback, not GPay's.
+      notifKey: String(b.notifKey || ''),
+      // Raw (not via num()) so a legitimate 0 survives — for rawPostTimeMs, 0 IS
+      // the signal (getPostTime() returned <=0, so systemPostTimeMs is our
+      // fallback wall clock, not GPay's post time).
+      notifId: Number.isFinite(Number(b.notifId)) ? Number(b.notifId) : null,
+      notifTag: String(b.notifTag || ''),
+      groupKey: String(b.groupKey || ''),
+      rawPostTimeMs: Number.isFinite(Number(b.rawPostTimeMs)) ? Number(b.rawPostTimeMs) : null,
     });
 
     // One line carrying the whole picture, so the gaps are readable straight
@@ -61,7 +73,9 @@ router.post('/capture-timing', async (req, res) => {
       + `  embedded="${doc.embeddedTimeText || '(none)'}" -> post ${sec(doc.embeddedTimeMs, doc.systemPostTimeMs)}`
       + ` | post -> app ${sec(doc.systemPostTimeMs, doc.appReactionTimeMs)}`
       + ` | app -> server ${sec(doc.appReactionTimeMs, serverMs)}`
-      + ` | total ${sec(doc.embeddedTimeMs || doc.systemPostTimeMs, serverMs)}`
+      + ` | total ${sec(doc.embeddedTimeMs || doc.systemPostTimeMs, serverMs)}\n`
+      + `  key=${doc.notifKey || '(none)'} rawPost=${doc.rawPostTimeMs == null ? '(none)' : doc.rawPostTimeMs}`
+      + ` groupKey=${doc.groupKey || '(none)'}`
     );
 
     return res.json({ success: true, id: doc._id });

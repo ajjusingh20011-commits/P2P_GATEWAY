@@ -54,6 +54,28 @@ const captureTimingSchema = new mongoose.Schema(
     bodyPreview: { type: String, default: '' },
     amount: { type: String, default: '' },
 
+    // ---- duplicate-capture investigation (notifications only) ----
+    /**
+     * StatusBarNotification.getKey() — Android's stable identity for a
+     * notification. Two capture-timing rows with the SAME notifKey are the SAME
+     * underlying notification delivered to our listener twice (e.g. redelivered
+     * after a listener rebind — see HeartbeatService.requestRebind), NOT a
+     * second post by GPay. Empty for SMS.
+     */
+    notifKey: { type: String, default: '', index: true },
+    notifId: { type: Number, default: null },
+    notifTag: { type: String, default: '' },
+    /** getGroupKey() — distinguishes a group summary from its children. */
+    groupKey: { type: String, default: '' },
+    /**
+     * getPostTime() as read on the callback, BEFORE the onNotificationPosted
+     * `<=0 -> System.currentTimeMillis()` fallback. When this is 0, the
+     * systemPostTimeMs above is our own wall clock, not GPay's post time — which
+     * is exactly how a redelivered notification (unchanged original post time,
+     * or a reconstructed one reporting 0) can look ~minutes newer than the first.
+     */
+    rawPostTimeMs: { type: Number, default: null },
+
     createdAt: { type: Date, default: Date.now },
   },
   { timestamps: true }

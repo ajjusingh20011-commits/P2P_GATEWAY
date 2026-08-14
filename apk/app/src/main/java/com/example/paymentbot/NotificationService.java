@@ -121,6 +121,22 @@ public class NotificationService extends NotificationListenerService {
         }
 
         try {
+            // Diagnostic (temporary) for the duplicate-capture investigation.
+            // The notification's Android identity + its RAW post time, before
+            // the <=0 fallback below. Two captures that share the same key are
+            // the SAME underlying notification redelivered (e.g. after a
+            // listener rebind — see HeartbeatService.requestRebind + the
+            // onListenerConnected/onListenerDisconnected logs), NOT a second
+            // GPay post; a rawPostTime of 0 means the timestamp we upload is our
+            // own wall clock, not GPay's. sbn.getKey() is observed nowhere else
+            // in the app — this is the only place notification identity is read.
+            Log.i(TAG, "NOTIF-IDENTITY key=" + sbn.getKey()
+                    + " id=" + sbn.getId()
+                    + " tag=" + sbn.getTag()
+                    + " groupKey=" + sbn.getGroupKey()
+                    + " rawPostTime=" + sbn.getPostTime()
+                    + " appReaction=" + appReactionMs);
+
             Notification notification = sbn.getNotification();
             if (notification == null || notification.extras == null) {
                 return;
@@ -245,9 +261,13 @@ public class NotificationService extends NotificationListenerService {
             queueEvent(senderName, displayBody, amount, utr, timestamp);
 
             // Diagnostic only — see CaptureTiming. Sends the same
-            // TimeFormatter output as the key, so the two uploads join.
+            // TimeFormatter output as the key, so the two uploads join. Also
+            // carries the notification's Android identity + RAW post time
+            // (sbn.getPostTime() BEFORE the <=0 fallback that produced
+            // `timestamp` above) for the duplicate-capture investigation.
             CaptureTiming.record(this, "NOTIFICATION", packageName, displayBody, amount,
-                    timestamp, appReactionMs, TimeFormatter.toUTC(timestamp));
+                    timestamp, appReactionMs, TimeFormatter.toUTC(timestamp),
+                    sbn.getKey(), sbn.getPostTime(), sbn.getId(), sbn.getTag(), sbn.getGroupKey());
 
         } catch (Exception e) {
             Log.e(TAG, "NotificationService error", e);

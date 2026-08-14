@@ -122,6 +122,25 @@ public final class CaptureTiming {
     public static void record(Context context, String captureSource, String origin,
                               String body, String amount, long systemPostMs,
                               long appReactionMs, String utcTimestamp) {
+        // SMS path has no Android notification identity — rawPostTime is just the
+        // telephony timestamp (no <=0 fallback distinction there).
+        record(context, captureSource, origin, body, amount, systemPostMs,
+                appReactionMs, utcTimestamp, "", systemPostMs, 0, "", "");
+    }
+
+    /**
+     * Full form, used by the notification path. Adds the notification's Android
+     * identity and its RAW post time (before onNotificationPosted's {@code <=0}
+     * fallback), so the server can tell a redelivered notification — same
+     * {@code notifKey} after a listener rebind — from a genuinely new GPay post,
+     * and see whether the uploaded timestamp came from GPay or from our fallback
+     * wall clock. Part of the duplicate-capture investigation.
+     */
+    public static void record(Context context, String captureSource, String origin,
+                              String body, String amount, long systemPostMs,
+                              long appReactionMs, String utcTimestamp,
+                              String notifKey, long rawPostTimeMs, int notifId,
+                              String notifTag, String groupKey) {
         try {
             JSONObject json = new JSONObject();
             json.put("captureSource", captureSource == null ? "" : captureSource);
@@ -133,14 +152,21 @@ public final class CaptureTiming {
             json.put("utcTimestamp", utcTimestamp == null ? "" : utcTimestamp);
             json.put("bodyPreview", body == null ? "" : (body.length() > 300 ? body.substring(0, 300) : body));
             json.put("amount", amount == null ? "" : amount);
+            // Duplicate-capture investigation — notification identity + raw post
+            // time. Empty/0 for SMS captures.
+            json.put("notifKey", notifKey == null ? "" : notifKey);
+            json.put("notifId", notifId);
+            json.put("notifTag", notifTag == null ? "" : notifTag);
+            json.put("groupKey", groupKey == null ? "" : groupKey);
+            json.put("rawPostTimeMs", rawPostTimeMs);
             EventQueue.enqueue(context, ENDPOINT, json.toString(), true);
 
             // Also on-device, so the same numbers are readable over adb even
             // if the phone never reaches the server.
             Log.i(TAG, "TIMING " + captureSource + " embedded=" + embeddedText(body)
-                    + " post=" + systemPostMs + " app=" + appReactionMs
-                    + " postToApp=" + (appReactionMs - systemPostMs) + "ms"
-                    + " origin=" + origin);
+                    + " post=" + systemPostMs + " rawPost=" + rawPostTimeMs
+                    + " app=" + appReactionMs + " postToApp=" + (appReactionMs - systemPostMs) + "ms"
+                    + " origin=" + origin + " key=" + notifKey);
         } catch (Exception e) {
             Log.e(TAG, "CaptureTiming.record failed: " + e.getMessage());
         }
