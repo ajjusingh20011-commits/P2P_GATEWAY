@@ -82,7 +82,7 @@ async function syncOnce() {
   }
 
   const details = await db.PaymentDetail.findAll({
-    attributes: ['id', 'upi_id', 'ngo_device_id', 'connection_alive'],
+    attributes: ['id', 'upi_id', 'ngo_device_id', 'connection_alive', 'is_active', 'is_active_detail'],
   });
 
   const resolved = resolveLiveness(details.map((d) => d.get({ plain: true })), snapshot);
@@ -93,11 +93,32 @@ async function syncOnce() {
     const current = details.find((d) => d.id === r.id);
     // Always refresh checked_at, but only log/count a real state transition.
     const changed = (current.connection_alive === null ? null : !!current.connection_alive) !== r.alive;
+
+    // Re-arm is_active when the device is genuinely live again but the linkage
+    // flag was left off. is_active is set false the instant a device goes
+    // offline (the trader panel's auto-unlink), but nothing turned it back on
+    // when the device recovered — so an account whose switch is still ON
+    // (is_active_detail true) stayed dark forever after a single dropped
+    // heartbeat, because routing requires is_active AND connection_alive.
+    // connection_alive === true is proof the device is responding right now, so
+    // re-arming here is the same evidence a manual "Link" click checks — no
+    // separate readiness gate is skipped. Only ever turns is_active ON, and
+    // only while the trader's own switch is on; it never links an account the
+    // trader parked (is_active_detail false).
+    const rearm = r.alive === true
+      && current.is_active_detail === true
+      && current.is_active === false;
+
     // eslint-disable-next-line no-await-in-loop
     await db.PaymentDetail.update(
-      { connection_alive: r.alive, connection_checked_at: now },
+      rearm
+        ? { connection_alive: r.alive, connection_checked_at: now, is_active: true }
+        : { connection_alive: r.alive, connection_checked_at: now },
       { where: { id: r.id } }
     );
+    if (rearm) {
+      logger.info(`connectionLiveness: payment_detail ${r.id} re-armed is_active — device live again while switch on`);
+    }
     if (changed) {
       updated += 1;
       logger.info(`connectionLiveness: payment_detail ${r.id} connection_alive ${current.connection_alive} -> ${r.alive}`);
