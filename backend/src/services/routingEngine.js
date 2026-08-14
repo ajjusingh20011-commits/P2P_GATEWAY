@@ -171,20 +171,6 @@ async function eligibleAccountsFor(trader, amount) {
       continue;
     }
 
-    // Feature 2 — APK Device Verification via Random Test Payment. A device
-    // can be online (connection_alive true) and still never have proven it
-    // actually CAPTURES a payment — notification access silently revoked,
-    // wrong app paired, etc. device_verified_at is set once a real random
-    // test payment was genuinely detected (see ngo-backend's
-    // DeviceVerification flow, correlated in apk.js's POST /event handler).
-    // Existing accounts already alive at migration time were backfilled —
-    // see migrations/20260811000003-*  — so this only actually gates brand
-    // new payment details, not a silent regression on working ones.
-    if (account.device_verified_at == null) {
-      logger.info(`routing: account ${account.upi_id} has not completed device verification — skipping`);
-      continue;
-    }
-
     // Session success score, used for BOTH the threshold gate and the ranking
     // below — computed once here rather than queried twice. An account below
     // the threshold stops receiving new orders until the trader toggles it off
