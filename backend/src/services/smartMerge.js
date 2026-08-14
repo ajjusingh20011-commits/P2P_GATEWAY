@@ -68,9 +68,38 @@ function amountMatches(detected, expected) {
 async function confirmOrder(order, { utrNumber, engine, senderName, reviewedBy } = {}) {
   if (order.status === 'success') return order;
 
+  // Settle FIRST, then mark success. settleOrder moves trader + merchant USDT
+  // balances, writes balance_logs, and persists the order's locked financial
+  // fields (exchange_rate, amount_usdt, trader_rate, trader_deduction_usdt) in
+  // its own transaction. Only once it succeeds do we flip the order to success
+  // and fire the success side-effects.
+  //
+  // Previously status was set to 'success' first and a settlement failure was
+  // swallowed as "non-fatal", which left a confirmed order with NULL financial
+  // fields and no money actually moved — a half-settled success. A failed
+  // settlement (e.g. the trader has insufficient USDT balance) must instead
+  // stop the confirmation and surface: the order stays in its pre-confirm
+  // status for admin handling, and an alert is emitted. confirmOrderV2 already
+  // try/catches this call, so manual confirms report the real reason.
+  let fees;
+  try {
+    fees = await balanceService.settleOrder(order);
+  } catch (err) {
+    logger.error(`smartMerge: settlement failed for order ${order.id}: ${err.message} — not marking success`);
+    emitToAdmin('order:settlement_failed', {
+      order_id: order.uuid,
+      gateway_order_id: order.gateway_order_id,
+      trader_id: order.trader_id,
+      amount_inr: order.amount_inr,
+      reason: err.message,
+    });
+    throw Object.assign(err, { status: err.status || 422 });
+  }
+
   await order.update({
+    // settleOrder already stamped confirmed_at + the financial fields.
     status: 'success',
-    confirmed_at: new Date(),
+    confirmed_at: order.confirmed_at || new Date(),
     upi_ref_id: utrNumber || order.upi_ref_id,
     utr_number: utrNumber || order.utr_number,
     confirm_engine: engine || order.confirm_engine,
@@ -79,15 +108,6 @@ async function confirmOrder(order, { utrNumber, engine, senderName, reviewedBy }
 
   // Mark this order's transactions merged.
   await db.Transaction.update({ is_merged: true }, { where: { order_id: order.id } });
-
-  // Fee / commission settlement — moves trader + merchant USDT balances and
-  // writes balance_logs. Non-fatal if it fails (order stays confirmed).
-  let fees = null;
-  try {
-    fees = await balanceService.settleOrder(order);
-  } catch (err) {
-    logger.error(`smartMerge: settlement failed for order ${order.id}: ${err.message}`);
-  }
 
   // Update daily-usage counters and release the trader.
   if (order.trader_id) {

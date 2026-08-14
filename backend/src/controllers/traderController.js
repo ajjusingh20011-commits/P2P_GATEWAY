@@ -198,13 +198,17 @@ const commission = asyncHandler(async (req, res) => {
     let inr = 0;
     for (const o of rows) {
       const amt = Number(o.amount_inr) || 0;
-      const base = Number(o.exchange_rate) || currentBase;
+      // Value each order at ITS OWN locked rate only — never today's live rate,
+      // so changing the base rate can't retroactively revalue past earnings. An
+      // order with no stored rate is skipped rather than revalued at the live one.
+      const base = Number(o.exchange_rate) || 0;
+      if (!base) continue;
       const traderRate = Number(o.trader_rate) || null;
       // What the trader actually gave up (prefer the stored deduction).
       const gave = o.trader_deduction_usdt != null
         ? Number(o.trader_deduction_usdt)
         : (traderRate ? amt / traderRate : amt / base);
-      const baseValue = base ? amt / base : 0;
+      const baseValue = amt / base;
       const keptUsdt = baseValue - gave;
       usdt += keptUsdt;
       inr += keptUsdt * base;

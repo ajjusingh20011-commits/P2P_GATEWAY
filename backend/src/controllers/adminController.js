@@ -916,14 +916,17 @@ async function traderLifetimeCommissionUsdt(traderId) {
     raw: true,
   });
   if (!rows.length) return 0;
-  const baseRate = await rateService.getBaseRate();
   let usdt = 0;
   for (const o of rows) {
     const amt = Number(o.amount_inr) || 0;
-    const base = Number(o.exchange_rate) || baseRate;
+    // Each settled order is valued at ITS OWN locked exchange rate only — never
+    // today's live rate. An order with no stored rate is skipped rather than
+    // being retroactively revalued when the admin changes the base rate.
+    const base = Number(o.exchange_rate) || 0;
+    if (!base) continue;
     const traderRate = Number(o.trader_rate) || null;
     const gave = o.trader_deduction_usdt != null ? Number(o.trader_deduction_usdt) : traderRate ? amt / traderRate : amt / base;
-    const baseValue = base ? amt / base : 0;
+    const baseValue = amt / base;
     usdt += baseValue - gave;
   }
   return usdt < 0 ? 0 : +usdt.toFixed(8);
