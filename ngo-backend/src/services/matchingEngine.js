@@ -3,6 +3,7 @@ const { internalAuthHeaders } = require('../middleware/internalAuth');
 const Webhook = require('../models/Webhook');
 const Transaction = require('../models/Transaction');
 const NGO = require('../models/NGO');
+const Device = require('../models/Device');
 const ledgerService = require('./ledgerService');
 const { detectRealPayment } = require('./paymentDetector');
 const { isWithinMinutes } = require('../utils/timeHelper');
@@ -354,16 +355,28 @@ async function triggerOrderSettlementFromRawEvent(rawEvent) {
   }
 
   // Send BOTH the device id and the trader id. The gateway scopes matching to
-  // the specific UPI(s) this device collects on FIRST (payment_details.
-  // ngo_device_id === the same deviceId this RawEvent carries), and only falls
-  // back to the trader's full UPI set if the device isn't linked to any UPI —
-  // so a payment that landed on the device's UPI A can no longer settle a
-  // same-amount order sitting on the trader's UPI B. trader_id is still sent as
-  // the fallback (and payment_details lives in the gateway's MySQL, which is
-  // the only place that can resolve either id to real UPIs — see BUG-30).
-  console.log(`${tag}: attempting — device=${rawEvent.deviceId || '(none)'} trader=${rawEvent.traderId} amount=${target} utr=${rawEvent.utr || '(none)'}`);
+  // the specific UPI(s) this device collects on FIRST, and only falls back to
+  // the trader's wider set under the conditions described there — so a payment
+  // that landed on the device's UPI A can no longer settle a same-amount order
+  // sitting on the trader's UPI B. payment_details lives in the gateway's
+  // MySQL, which is the only place that can resolve either id to real UPIs
+  // (BUG-30).
+  //
+  // The id sent is this device's MONGO _id, not the android deviceId the
+  // RawEvent carries: payment_details.ngo_device_id stores Device._id (see
+  // backend/src/jobs/connectionLiveness.js, which has always joined on it).
+  // Sending the android id meant the gateway's device lookup matched nothing
+  // at all, so scoping silently never happened and every capture fell through
+  // to trader-wide matching — BUG-41, which closed three real orders on the
+  // wrong accounts.
+  const device = await Device.findOne({ deviceId: rawEvent.deviceId }).select('_id').lean();
+  if (!device) {
+    console.warn(`${tag}: device ${rawEvent.deviceId || '(none)'} has no Device document — matching will fall back to trader scope`);
+  }
+
+  console.log(`${tag}: attempting — device=${rawEvent.deviceId || '(none)'} (_id=${device ? device._id : 'none'}) trader=${rawEvent.traderId} amount=${target} utr=${rawEvent.utr || '(none)'}`);
   return callMatchSettlement({
-    device_id: rawEvent.deviceId || null,
+    device_id: device ? String(device._id) : null,
     trader_id: rawEvent.traderId,
     amount: target,
     utr: rawEvent.utr || '',

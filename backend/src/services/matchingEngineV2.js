@@ -61,16 +61,26 @@ async function upiIdsForTrader(traderId) {
 
 /**
  * The UPI(s) a specific device actually collects on — payment_details linked
- * to it via `ngo_device_id` (the same android deviceId the RawEvent carries;
- * the join key is deviceId, see backend/src/jobs/connectionLiveness.js). This
- * is the scope that stops a payment landing on the device's UPI A from
- * settling a same-amount order sitting on the trader's *other* UPI B.
+ * to it via `ngo_device_id`. This is the scope that stops a payment landing on
+ * the device's UPI A from settling a same-amount order sitting on the trader's
+ * *other* UPI B.
+ *
+ * IMPORTANT — which id this is. `ngo_device_id` holds ngo-backend's Mongo
+ * `Device._id`, NOT the android device id that a RawEvent carries. They are
+ * different identifier spaces: "6a7da28e9bbebda2eb93b3a6" against
+ * "b50bf3ebb8ea1a69". connectionLiveness.js documents the mapping
+ * (payment_details.ngo_device_id -> Device._id) and has always joined on it
+ * correctly; this function was written against the android id, so it matched
+ * zero rows for every capture and device scoping silently never happened —
+ * every APK payment fell through to the trader-wide list and settled whichever
+ * same-amount order was closest in time, on any of that trader's accounts.
+ * BUG-41, confirmed on live data: three orders across two accounts all settled
+ * from one unrelated device. ngo-backend now sends the Mongo _id.
  *
  * `ngo_device_id` is nullable and has no unique index, so this can legitimately
- * return several UPIs (a device backing multiple accounts — they're returned
- * together and pickClosestByTime still disambiguates within them) or none (the
- * payment_detail was never linked to a device — the caller then falls back to
- * the trader-wide set rather than stranding a real payment).
+ * return several UPIs (one device backing several accounts — returned together,
+ * and pickClosestByTime disambiguates within them) or none (that device is not
+ * linked to any account; see the caller for what happens then).
  */
 async function upiIdsForDevice(deviceId) {
   const details = await db.PaymentDetail.findAll({
@@ -78,6 +88,14 @@ async function upiIdsForDevice(deviceId) {
     attributes: ['upi_id'],
   });
   return details.map((d) => d.upi_id).filter(Boolean);
+}
+
+/** Whether this trader links any account to a device at all. */
+async function traderUsesDeviceLinking(traderId) {
+  const linked = await db.PaymentDetail.count({
+    where: { trader_id: traderId, ngo_device_id: { [Op.ne]: null } },
+  });
+  return linked > 0;
 }
 
 /** Find every open order for any of the given UPI ids at this exact amount. */
@@ -149,6 +167,26 @@ async function matchAndSettle({ upiIds, deviceId, traderId, amount, utr, eventTi
     }
 
     if (!normalizedUpiIds.length && Number.isFinite(normalizedTraderId)) {
+      // The trader-wide fallback is what closed the wrong customer's order in
+      // BUG-41, so it is no longer unconditional. If this trader links their
+      // accounts to devices at all, then a capture from a device that is
+      // linked to none of them cannot be attributed to any particular account
+      // — and settling it against whichever same-amount order happens to be
+      // open is a guess with real money behind it. Refuse instead: the payment
+      // still appears on the Notifications page for manual confirmation.
+      //
+      // Traders who link nothing keep the old behaviour, because for them the
+      // fallback is the only path there has ever been and refusing would
+      // strand every payment they take.
+      if (normalizedDeviceId && await traderUsesDeviceLinking(normalizedTraderId)) {
+        logger.warn(
+          `matchingEngineV2: REFUSING to match — device ${normalizedDeviceId} is not linked to any of trader `
+          + `${normalizedTraderId}'s accounts, and that trader does link devices. Settling trader-wide here is what `
+          + `closed the wrong account's order in BUG-41 (source=${source || 'unknown'}, amount=${normalizedAmount})`
+        );
+        return { matched: false, reason: 'device_not_linked_to_any_account', upis_checked: [] };
+      }
+
       normalizedUpiIds = await upiIdsForTrader(normalizedTraderId);
       if (!normalizedUpiIds.length) {
         logger.warn(`matchingEngineV2: trader ${normalizedTraderId} has no payment_details at all — nothing to match on (source=${source || 'unknown'})`);
