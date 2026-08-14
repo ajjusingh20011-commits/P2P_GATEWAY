@@ -93,10 +93,42 @@ function traderAcceptsType(trader, depositType) {
   return types.includes(depositType);
 }
 
-/** True if this account already holds an ACTIVE order for the exact amount. */
-async function hasSameAmountActiveOrder(paymentDetailId, amount) {
+/**
+ * True if this account — or any OTHER account collecting on the same physical
+ * device — already holds an ACTIVE order for the exact amount.
+ *
+ * The per-account half stops one account holding two indistinguishable orders.
+ * The device half stops the same ambiguity across accounts, and it exists
+ * because a payment captured on a phone can only be attributed as precisely as
+ * that phone allows: an APK notification says "₹100 received", not which of the
+ * two UPI accounts on that handset it landed in. If both accounts hold an open
+ * ₹100 order, the arriving payment genuinely cannot be assigned — and settling
+ * it against either one is a coin flip with a customer's money (BUG-41).
+ *
+ * Preventing the collision at assignment is strictly better than detecting it
+ * at settlement: the second order simply routes to a different account or
+ * queues, exactly as it already does when one account is busy at that amount.
+ *
+ * Accounts with no device link are only ever compared against themselves —
+ * ngo_device_id NULL is "not linked", not a group to collide within.
+ */
+async function hasSameAmountActiveOrder(paymentDetailId, amount, deviceId = undefined) {
+  const detailIds = [paymentDetailId];
+
+  if (deviceId) {
+    const siblings = await db.PaymentDetail.findAll({
+      where: { ngo_device_id: deviceId, id: { [Op.ne]: paymentDetailId } },
+      attributes: ['id'],
+    });
+    siblings.forEach((s) => detailIds.push(s.id));
+  }
+
   const n = await db.Order.count({
-    where: { payment_detail_id: paymentDetailId, amount_inr: Number(amount), status: { [Op.in]: ACTIVE } },
+    where: {
+      payment_detail_id: { [Op.in]: detailIds },
+      amount_inr: Number(amount),
+      status: { [Op.in]: ACTIVE },
+    },
   });
   return n > 0;
 }
@@ -139,6 +171,20 @@ async function eligibleAccountsFor(trader, amount) {
       continue;
     }
 
+    // Feature 2 — APK Device Verification via Random Test Payment. A device
+    // can be online (connection_alive true) and still never have proven it
+    // actually CAPTURES a payment — notification access silently revoked,
+    // wrong app paired, etc. device_verified_at is set once a real random
+    // test payment was genuinely detected (see ngo-backend's
+    // DeviceVerification flow, correlated in apk.js's POST /event handler).
+    // Existing accounts already alive at migration time were backfilled —
+    // see migrations/20260811000003-*  — so this only actually gates brand
+    // new payment details, not a silent regression on working ones.
+    if (account.device_verified_at == null) {
+      logger.info(`routing: account ${account.upi_id} has not completed device verification — skipping`);
+      continue;
+    }
+
     // Session success score, used for BOTH the threshold gate and the ranking
     // below — computed once here rather than queried twice. An account below
     // the threshold stops receiving new orders until the trader toggles it off
@@ -155,8 +201,8 @@ async function eligibleAccountsFor(trader, amount) {
 
     // Same-amount lock.
     // eslint-disable-next-line no-await-in-loop
-    if (await hasSameAmountActiveOrder(account.id, amount)) {
-      logger.info(`routing: account ${account.upi_id} busy with active ₹${amount} order — skipping (same amount)`);
+    if (await hasSameAmountActiveOrder(account.id, amount, account.ngo_device_id)) {
+      logger.info(`routing: account ${account.upi_id} busy with active ₹${amount} order — skipping (same amount${account.ngo_device_id ? ', checked across its device' : ''})`);
       continue;
     }
 

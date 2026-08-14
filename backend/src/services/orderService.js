@@ -58,7 +58,13 @@ async function createOrder(merchant, body = {}) {
   if (!locked) throw typedErr(503, 'no_provider_available', 'Provider momentarily busy — please retry', { deposit_type: actualDepositType });
 
   try {
-    if (await routingEngine.hasSameAmountActiveOrder(assignment.paymentDetail.id, amount)) {
+    // Re-checked under the lock, and across the account's device — the
+    // eligibility pass that chose this account did the same, but another order
+    // can have landed on a SIBLING account sharing its phone in between. See
+    // hasSameAmountActiveOrder.
+    if (await routingEngine.hasSameAmountActiveOrder(
+      assignment.paymentDetail.id, amount, assignment.paymentDetail.ngo_device_id,
+    )) {
       throw typedErr(503, 'no_provider_available', 'Provider just took a same-amount order — please retry', { deposit_type: actualDepositType });
     }
 
