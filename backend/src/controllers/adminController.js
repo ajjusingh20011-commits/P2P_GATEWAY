@@ -932,6 +932,66 @@ async function traderLifetimeCommissionUsdt(traderId) {
   return usdt < 0 ? 0 : +usdt.toFixed(8);
 }
 
+// ADMIN-45/46 — the real devices and notifications for a trader live in
+// ngo-backend (Mongo), where the APK actually reports; this gateway's MySQL
+// Smartphone table is near-empty and its NotificationLog is never written. Read
+// ngo-backend's own endpoints instead, minting a service token for the TARGET
+// trader so its resolveTraderFilter scopes to exactly that trader (the same
+// proven path the trader panel's ngo-proxy uses).
+async function ngoGetForTrader(traderId, path, params) {
+  const axios = require('axios');
+  const { mintNgoServiceToken } = require('../services/ngoServiceAuth');
+  const base = process.env.NGO_BACKEND_URL || 'http://localhost:3000';
+  return axios.get(`${base}${path}`, {
+    params,
+    headers: { 'X-Service-Token': mintNgoServiceToken(traderId) },
+    timeout: 5000,
+    validateStatus: () => true,
+  });
+}
+
+// Resilient by design: a slow or unreachable ngo-backend yields an empty device
+// list, never a failed trader-detail page (matches how the whole page already
+// degrades). Mapped to the shape the admin Devices tab already renders.
+async function fetchNgoDevicesForTrader(traderId) {
+  try {
+    const resp = await ngoGetForTrader(traderId, '/api/apk/devices');
+    if (resp.status >= 400 || !resp.data || !Array.isArray(resp.data.devices)) return [];
+    return resp.data.devices.map((d) => ({
+      id: d.id,
+      deviceId: d.deviceId,
+      name: d.deviceName || d.deviceModel || d.deviceId || 'Device',
+      connectionType: 'APK',
+      online: !!d.online,
+      lastPing: d.lastSeen || null,
+      // ngo-backend's devices projection does not return a created date.
+      createdAt: null,
+      status: d.status || null,
+      listenerConnected: d.listenerConnected ?? null,
+    }));
+  } catch (err) {
+    require('../utils/logger').warn(`getTraderDetail: ngo devices fetch failed for trader ${traderId}: ${err.message}`);
+    return [];
+  }
+}
+
+// GET /admin/traders/:id/notifications — the trader's captured payment events,
+// relayed verbatim from ngo-backend's Transaction store (same shape the trader
+// Notifications page consumes). Lazy (its own endpoint) rather than folded into
+// getTraderDetail, since it is paginated and can grow long.
+const getTraderNotifications = asyncHandler(async (req, res) => {
+  const trader = await findTraderById(req.params.id);
+  if (!trader) return fail(res, 404, 'Trader not found');
+  const resp = await ngoGetForTrader(trader.id, '/api/ngo/transactions', { limit: req.query.limit || 100 });
+  if (!resp || resp.status >= 400 || !resp.data) {
+    return fail(res, 502, 'Could not load notifications from ngo-backend');
+  }
+  return ok(res, {
+    transactions: resp.data.transactions || resp.data.rows || [],
+    total: resp.data.total ?? null,
+  });
+});
+
 // GET /admin/traders/:id — header + top summary + Overview + Payment
 // Accounts + Devices + Merchant Routing in one call (all naturally
 // small/bounded per trader); Orders/Balance History/Disputes stay separate,
@@ -944,14 +1004,14 @@ const getTraderDetail = asyncHandler(async (req, res) => {
 
   const [
     todayOrdersCount, todayVolume, closedToday, confirmedToday,
-    paymentDetails, smartphones, commissionEarnedUsdt, openDisputesCount, recentOrders,
+    paymentDetails, deviceRows, commissionEarnedUsdt, openDisputesCount, recentOrders,
   ] = await Promise.all([
     db.Order.count({ where: { trader_id: trader.id, created_at: { [Op.gte]: today } } }),
     db.Order.sum('amount_inr', { where: { trader_id: trader.id, status: 'success', created_at: { [Op.gte]: today } } }),
     db.Order.count({ where: { trader_id: trader.id, status: { [Op.in]: ['success', 'failed', 'rejected', 'disputed'] }, created_at: { [Op.gte]: today } } }),
     db.Order.count({ where: { trader_id: trader.id, status: 'success', created_at: { [Op.gte]: today } } }),
     db.PaymentDetail.findAll({ where: { trader_id: trader.id }, order: [['id', 'ASC']] }),
-    db.Smartphone.findAll({ where: { trader_id: trader.id }, order: [['id', 'ASC']] }),
+    fetchNgoDevicesForTrader(trader.id),
     traderLifetimeCommissionUsdt(trader.id),
     db.Dispute.count({ where: { status: { [Op.in]: ['open', 'reviewing'] } }, include: [{ model: db.Order, as: 'order', where: { trader_id: trader.id }, attributes: [] }] }),
     db.Order.findAll({
@@ -992,15 +1052,10 @@ const getTraderDetail = asyncHandler(async (req, res) => {
     })
   );
 
-  const devices = smartphones.map((s) => ({
-    id: s.id,
-    deviceId: s.device_id,
-    name: s.device_name || s.device_id,
-    connectionType: s.connection_type,
-    online: !!s.is_online,
-    lastPing: s.last_ping,
-    createdAt: s.created_at,
-  }));
+  // Already mapped to the admin device shape by fetchNgoDevicesForTrader, and
+  // sourced from ngo-backend (Mongo) where the APK actually reports — so the
+  // Devices tab and the "Devices online" summary tile show real data.
+  const devices = deviceRows;
 
   // Merchant Routing — grouped from the capped recent-order set above.
   // currentState is a literal, real signal (does this trader currently hold
@@ -1524,6 +1579,7 @@ module.exports = {
   listMatching,
   getMatchingDetail,
   getTraderDetail,
+  getTraderNotifications,
   getTraderBalanceLogs,
   getTraderActivity,
   getMerchantDetail,

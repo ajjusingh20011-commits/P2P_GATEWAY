@@ -348,6 +348,73 @@ function DevicesTab({ devices }) {
   );
 }
 
+// Real captured payment events for this trader, from ngo-backend's Transaction
+// store (proxied through /admin/traders/:id/notifications). Same data the
+// trader's own Notifications page shows — the admin view was previously empty
+// because it never crossed to ngo-backend at all.
+function NotificationsTab({ traderId }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [page, setPage] = useState(1);
+  const PER_PAGE = 15;
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    adminApi.getTraderNotifications(traderId, { limit: 200 })
+      .then((data) => { if (active) setRows(data.transactions || []); })
+      .catch((e) => { if (active) setError(e.response?.data?.message || 'Could not load notifications.'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [traderId]);
+
+  const pageRows = rows.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+
+  if (loading) return <InlineLoader label="Loading notifications…" />;
+  if (error) return <p style={{ color: '#ef4444', fontSize: 14 }}>{error}</p>;
+  if (rows.length === 0) return <p style={{ color: 'var(--muted)', fontSize: 14, padding: '24px 0', textAlign: 'center' }}>No captured payment notifications for this trader yet.</p>;
+
+  return (
+    <div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs uppercase tracking-wide" style={{ borderBottom: '1px solid var(--cardborder)', color: 'var(--muted)' }}>
+              <th className="px-3 py-2.5 font-medium">Amount</th>
+              <th className="px-3 py-2.5 font-medium">Captured</th>
+              <th className="px-3 py-2.5 font-medium">Payer</th>
+              <th className="px-3 py-2.5 font-medium">UTR / Ref</th>
+              <th className="px-3 py-2.5 font-medium">Detected</th>
+              <th className="px-3 py-2.5 font-medium">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((t) => {
+              const amount = t.amount ?? t.amountInr ?? t.amount_inr;
+              const captured = t.capturedText || t.rawEventId?.body || t.sender || t.rawEventId?.sender || '—';
+              const payer = t.payerName || t.payerUpiId || '—';
+              const utr = t.utr || t.utrNumber || t.upiRefId || t.rrn || '—';
+              const when = t.scrapedAt || t.createdAt || t.capturedAt;
+              return (
+                <tr key={t._id || t.id || `${utr}-${when}`} style={{ borderTop: '1px solid var(--cardborder)' }}>
+                  <td className="px-3 py-2.5" style={{ color: 'var(--text)' }}>{amount != null ? inr(amount) : '—'}</td>
+                  <td className="px-3 py-2.5" style={{ color: 'var(--muted)', maxWidth: 320 }}><span className="line-clamp-2">{captured}</span></td>
+                  <td className="px-3 py-2.5 font-mono" style={{ color: 'var(--muted)', fontSize: 11.5 }}>{payer}</td>
+                  <td className="px-3 py-2.5 font-mono" style={{ color: 'var(--muted)', fontSize: 11.5 }}>{utr}</td>
+                  <td className="px-3 py-2.5" style={{ color: 'var(--muted)', fontSize: 12 }}>{when ? fmtDateTime(when) : '—'}</td>
+                  <td className="px-3 py-2.5">{t.status ? <Badge color="sky">{t.status}</Badge> : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <Pagination page={page} perPage={PER_PAGE} total={rows.length} onPage={setPage} />
+    </div>
+  );
+}
+
 function OrdersTab({ traderId }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -650,6 +717,7 @@ const TABS = [
   { key: 'overview', label: 'Overview' },
   { key: 'accounts', label: 'Payment Accounts' },
   { key: 'devices', label: 'Devices' },
+  { key: 'notifications', label: 'Notifications' },
   { key: 'orders', label: 'Orders' },
   { key: 'balance', label: 'Balance History' },
   { key: 'disputes', label: 'Disputes' },
@@ -801,6 +869,7 @@ export default function TraderDetail() {
         {tab === 'overview' && <OverviewTab detail={detail} />}
         {tab === 'accounts' && <AccountsTab accounts={accounts} />}
         {tab === 'devices' && <DevicesTab devices={devices} />}
+        {tab === 'notifications' && <NotificationsTab traderId={trader.id} />}
         {tab === 'orders' && <OrdersTab traderId={trader.id} />}
         {tab === 'balance' && <BalanceHistoryTab traderId={trader.id} />}
         {tab === 'disputes' && <DisputesTab traderId={trader.id} />}

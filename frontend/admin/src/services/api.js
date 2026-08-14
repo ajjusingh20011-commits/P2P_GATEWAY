@@ -109,6 +109,9 @@ export const adminApi = {
   getTraderDetail: (id) => api.get(`/admin/traders/${id}`).then(unwrap),
   getTraderBalanceLogs: (id, params) => api.get(`/admin/traders/${id}/balance-logs`, { params }).then(unwrap),
   getTraderActivity: (id, params) => api.get(`/admin/traders/${id}/activity`, { params }).then(unwrap),
+  // Real captured payment events, proxied from ngo-backend (Mongo) — the store
+  // the APK actually writes to; the MySQL NotificationLog is never populated.
+  getTraderNotifications: (id, params) => api.get(`/admin/traders/${id}/notifications`, { params }).then(unwrap),
 
   // Merchant Detail — read-only (Phase 6). Mutations reuse updateMerchant /
   // updateMerchantFees already defined above.

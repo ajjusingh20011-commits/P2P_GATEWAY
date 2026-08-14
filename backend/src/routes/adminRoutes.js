@@ -22,6 +22,7 @@ router.post('/traders/create', adminController.createTraderFull);
 router.get('/traders/:id', adminController.getTraderDetail);
 router.get('/traders/:id/balance-logs', adminController.getTraderBalanceLogs);
 router.get('/traders/:id/activity', adminController.getTraderActivity);
+router.get('/traders/:id/notifications', adminController.getTraderNotifications);
 router.put('/traders/:id', adminController.updateTrader);
 router.put('/traders/:id/balance', adminController.updateTraderBalance);
 router.put('/traders/:id/commission', adminController.updateTraderCommission);
