@@ -1094,6 +1094,7 @@ function AddAccountModal({ presetBank, onClose, onSaved }) {
 // EDIT modal
 // ---------------------------------------------------------------------------
 function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) {
+  const navigate = useNavigate();
   const [form, setForm] = useState(() => ({
     ...emptyLimits(),
     account_name: detail.account_name ?? '',
@@ -1116,6 +1117,15 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
   }));
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // BUG-A: the linked phone was editable only through the row-level "Link a
+  // device" banner, which appears solely while the account is disconnected or
+  // was never linked. A working APK account therefore had no way to move to a
+  // different phone at all — the trader had to delete it and add it again,
+  // losing its history and score. Same picker and same real device list the
+  // Add wizard and LinkDeviceModal use, so there is one control for this.
+  const { devices, loading: devicesLoading } = useDevices();
+  const [deviceId, setDeviceId] = useState(detail.ngo_device_id ? String(detail.ngo_device_id) : '');
+  const [changingDevice, setChangingDevice] = useState(false);
   // Pre-open a window if it already has an amount cap set.
   const [caps, setCaps] = useState({
     month: detail.monthly_limit != null,
@@ -1146,6 +1156,7 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
         organization_name: form.organization_name,
       });
       let syncFailed = false;
+      let movedTo = null;
       if (detail.__ngo) {
         await updateAccount(detail._id, toNgoUpdateBody(body));
         try {
@@ -1176,10 +1187,25 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
           syncFailed = true;
         }
       } else {
-        await traderApi.updatePaymentDetail(detail.id, body);
+        // Only sent when it actually changed: `ngo_device_id` is what routing
+        // and settlement scope to (see matchingEngineV2), so re-writing it on
+        // every unrelated edit would be a silent no-op at best.
+        const deviceChanged = String(deviceId || '') !== String(detail.ngo_device_id || '');
+        await traderApi.updatePaymentDetail(detail.id, deviceChanged ? { ...body, ngo_device_id: deviceId || null } : body);
+        if (deviceChanged && deviceId) movedTo = devices.find((d) => String(d.id) === String(deviceId)) || null;
       }
       if (syncFailed) {
         toast('Details saved, but order routing may not reflect these changes yet. Check back or save again.', 'warning');
+      } else if (movedTo) {
+        // Same wording LinkDeviceModal uses, for the same reason: linking an
+        // offline phone saves fine but changes nothing about routing until it
+        // comes back, and silently succeeding reads as "it's working now".
+        toast(
+          movedTo.online
+            ? `Saved — now paired to ${deviceLabel(movedTo)}, which should start receiving orders shortly`
+            : `Saved — now paired to ${deviceLabel(movedTo)}. It is offline right now, so orders will not route until it comes back online.`,
+          movedTo.online ? 'success' : 'info'
+        );
       } else {
         toast('Payment detail updated', 'success');
       }
@@ -1257,6 +1283,84 @@ function EditModal({ detail, onClose, onSaved, onDeleted, deviceLiveMap = {} }) 
           </Field>
         </div>
       </div>
+
+      {/* Paired smartphone. APK accounts only — a Web Login account is a
+          browser session on our side and has no device to move. */}
+      {!detail.__ngo && connType(detail) !== 'web' && (
+        <div className="mt-4">
+          <div className="mb-2 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>Paired smartphone</p>
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                The APK on this phone detects payments arriving on this UPI.
+              </p>
+            </div>
+            {!changingDevice && (
+              <button
+                type="button"
+                onClick={() => setChangingDevice(true)}
+                className="whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium"
+                style={{ border: '1px solid var(--cardborder)', color: 'var(--text)' }}
+              >
+                {deviceId ? 'Change device' : 'Link a device'}
+              </button>
+            )}
+          </div>
+
+          {!changingDevice ? (
+            <div className="flex items-center gap-2.5 rounded-lg px-3 py-2.5" style={{ border: '1px solid var(--cardborder)' }}>
+              <span
+                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg"
+                style={liveState === 'active'
+                  ? { background: 'rgba(34,197,94,.14)', color: '#22c55e' }
+                  : { background: 'rgba(239,68,68,.14)', color: '#ef4444' }}
+              >
+                <IconPhone className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                {/* The device list is the only place a device's NAME lives, so
+                    until it loads there is nothing truthful to show but the
+                    fact that one is linked. */}
+                <p className="truncate text-sm font-semibold" style={{ color: 'var(--text)' }}>
+                  {deviceId
+                    ? (devices.find((d) => String(d.id) === String(deviceId))
+                      ? deviceLabel(devices.find((d) => String(d.id) === String(deviceId)))
+                      : (devicesLoading ? 'Loading…' : 'Linked device'))
+                    : 'No device linked'}
+                </p>
+                <p className="truncate text-[11px]" style={{ color: 'var(--subtle)' }}>
+                  {deviceId
+                    ? (liveState === 'active' ? 'Online' : 'Not responding — orders will not route here')
+                    : 'This account cannot detect payments until a phone is linked.'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <DevicePicker
+                devices={devices}
+                loading={devicesLoading}
+                selectedId={deviceId}
+                onSelect={setDeviceId}
+                onPairNew={() => navigate('/smartphones')}
+                emptyMessage="No paired devices yet — pair a smartphone first, then link it here."
+                maxHeight={200}
+              />
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-xs" style={{ color: 'var(--muted)' }}>Applied when you save.</p>
+                <button
+                  type="button"
+                  onClick={() => { setDeviceId(detail.ngo_device_id ? String(detail.ngo_device_id) : ''); setChangingDevice(false); }}
+                  className="rounded-md px-2.5 py-1 text-xs font-medium"
+                  style={{ border: '1px solid var(--cardborder)', color: 'var(--muted)' }}
+                >
+                  Keep current device
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="mb-2 mt-4 flex items-center justify-between">
         <div>

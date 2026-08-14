@@ -333,12 +333,18 @@ router.get('/transactions', verifyServiceOrAdmin, async (req, res, next) => {
     // gateway is unreachable, it must not fail the listing.
     const orderIds = [...new Set(rows.filter((r) => r.matched && r.p2pOrderId).map((r) => r.p2pOrderId))];
     let orderUpis = {};
+    // The same order's UUID — what every other trader-facing page calls its
+    // Transaction ID. A capture only knows the numeric order id, so without
+    // this the Notifications page showed "21" for the very order the Trades
+    // page called "670644d5-…", and the two read as different records.
+    let orderUuids = {};
     if (orderIds.length) {
       try {
         const base = process.env.P2P_BACKEND_URL || 'http://localhost:4000';
         const resp = await axios.post(`${base}/api/internal/order-upis`, { order_ids: orderIds },
           { timeout: 5000, headers: internalAuthHeaders() });
         orderUpis = (resp.data && resp.data.upis) || {};
+        orderUuids = (resp.data && resp.data.uuids) || {};
       } catch (e) {
         console.warn(`transactions: could not resolve receiving UPIs — ${e.message}`);
       }
@@ -356,6 +362,7 @@ router.get('/transactions', verifyServiceOrAdmin, async (req, res, next) => {
         : '';
       obj.deviceName = (obj.rawEventId && deviceNames[obj.rawEventId.deviceId]) || '';
       obj.receivingUpiId = obj.p2pOrderId ? (orderUpis[obj.p2pOrderId] || '') : '';
+      obj.p2pOrderUuid = obj.p2pOrderId ? (orderUuids[obj.p2pOrderId] || '') : '';
       return obj;
     });
 

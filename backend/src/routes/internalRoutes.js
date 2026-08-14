@@ -76,24 +76,36 @@ router.post('/match-settlement', asyncHandler(async (req, res) => {
 // payment_details are this service's tables), and resolving it at read time
 // rather than storing it on the capture means rows settled before this
 // existed resolve too.
-// Body: { order_ids: number[] }  ->  { upis: { "<order id>": "<upi id>" } }
+// Body: { order_ids: number[] }
+//   ->  { upis:  { "<order id>": "<upi id>" },
+//        uuids: { "<order id>": "<order uuid>" } }
+//
+// `uuids` exists because the trader panel shows an order's UUID as its
+// "Transaction ID" everywhere else (Trades reads orderView's `order_id`, which
+// is order.uuid — see orderController.js), while a capture only ever carries
+// the numeric id matchingEngineV2 returns. The two pages therefore labelled the
+// same order with two different-looking identifiers and looked like unrelated
+// records. Returned as a separate map rather than folded into `upis` so an
+// older ngo-backend keeps working through a staggered deploy.
 router.post('/order-upis', asyncHandler(async (req, res) => {
   const ids = Array.isArray(req.body?.order_ids)
     ? req.body.order_ids.map(Number).filter(Number.isFinite).slice(0, 500)
     : [];
-  if (!ids.length) return res.json({ success: true, upis: {} });
+  if (!ids.length) return res.json({ success: true, upis: {}, uuids: {} });
 
   const orders = await db.Order.findAll({
     where: { id: ids },
-    attributes: ['id'],
+    attributes: ['id', 'uuid'],
     include: [{ model: db.PaymentDetail, as: 'paymentDetail', attributes: ['upi_id'] }],
   });
 
   const upis = {};
+  const uuids = {};
   orders.forEach((o) => {
     if (o.paymentDetail && o.paymentDetail.upi_id) upis[o.id] = o.paymentDetail.upi_id;
+    if (o.uuid) uuids[o.id] = o.uuid;
   });
-  return res.json({ success: true, upis });
+  return res.json({ success: true, upis, uuids });
 }));
 
 module.exports = router;

@@ -91,12 +91,16 @@ function apiToRow(txn) {
     // from the settled order, so it only exists for linked rows. Distinct from
     // `upiId` above, which is the payer's.
     receivingUpiId: txn.receivingUpiId || '',
-    // The order this settled, which is the SAME number the Trades page shows
-    // as its Transaction ID (orderToRow: `o.order_id || o.id`). Showing it
-    // here is what lets a trader put the two pages side by side; the Mongo
-    // _id fallback below means nothing on Trades.
+    // The order this settled. Trades resolves its own Transaction ID from
+    // `o.order_id || o.id`, and `order_id` is the order's UUID (orderView in
+    // orderController.js) — not the numeric id, as this previously assumed. So
+    // the two pages labelled one order "21" here and "670644d5-…" there, which
+    // reads as two unrelated records. `p2pOrderUuid` is that same UUID,
+    // resolved alongside the receiving UPI, so both pages now print the same
+    // string for the same order. The numeric id remains the fallback for rows
+    // settled before ngo-backend started resolving the UUID.
     orderId: txn.p2pOrderId || null,
-    realId: txn.p2pOrderId || txn.utr || txn.txnId || txn._id,
+    realId: txn.p2pOrderUuid || txn.p2pOrderId || txn.utr || txn.txnId || txn._id,
   };
 }
 
