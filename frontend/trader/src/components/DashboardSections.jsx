@@ -680,7 +680,7 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
           <span>Payment method</span>
           <span>Device / session</span>
           <span>Connection</span>
-          <span>Orders today</span>
+          <span>Won / assigned</span>
           <span>Pay-in volume</span>
           <span>Success rate</span>
           <span>Limit</span>
@@ -766,7 +766,12 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
                     : isWeb ? <IconGlobe className="h-3 w-3" /> : <IconRobot className="h-3 w-3" />}
                   {meta.short}
                 </span>
-                <div className="personCell"><strong>{d.usage?.used_today ?? 0}{d.max_per_day ? ` / ${d.max_per_day}` : ''}</strong></div>
+                {/* Item 5 — real session success ratio (successes / orders
+                    assigned this session), e.g. 8/10, which is what drives the
+                    Success rate % beside it. NOT orders-received / daily-limit,
+                    which conflated two unrelated things; the daily limit is a
+                    separate routing constraint shown via the Limit column. */}
+                <div className="personCell"><strong>{(d.usage?.orders_total ?? 0) > 0 ? `${d.usage.orders_confirmed ?? 0} / ${d.usage.orders_total}` : '—'}</strong></div>
                 <div className="personCell"><strong>{inr(d.usage?.daily_amount_total || 0)}</strong></div>
                 <div className="personCell">
                   <strong className={rate == null ? '' : rate >= 50 ? 'autoClose' : 'manualReview'} style={rate == null ? { color: 'var(--muted)' } : undefined}>
