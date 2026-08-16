@@ -2268,16 +2268,15 @@ export default function Offers() {
     try {
       const data = await getAccounts();
       setNgoAccounts(data || []);
-      // Backfill: accounts saved before the routing-sync bridge existed have
-      // no mirror yet. Create one now, in the background, so they become
-      // assignable to orders without requiring the trader to re-open/edit
-      // them. Self-limiting — once linked, gatewayPaymentDetailId is set and
-      // this filter skips them on the next load.
-      (data || [])
-        .filter((a) => !a.gatewayPaymentDetailId)
-        .forEach((a) => {
-          syncNgoAccountToPaymentDetail(a).catch((e) => console.error('Backfill sync failed for', a._id, e));
-        });
+      // NO on-load backfill (Item 7). A payment_details mirror is created ONLY
+      // on an explicit trader action — saving a new Web Login account or editing
+      // one (see the syncNgoAccountToPaymentDetail calls in those handlers) —
+      // never automatically here. The old backfill silently inserted a mirror
+      // row for every web account without one on EVERY page load, so accounts
+      // the trader never deliberately added kept appearing in "All Payment
+      // Accounts". Trade-off, intentionally accepted: a legacy web account saved
+      // before the routing bridge and never edited has no mirror until the
+      // trader edits it once — creation is deliberate, not silent.
     } catch (e) {
       console.log('NGO load error:', e.message);
       setNgoAccounts([]);
