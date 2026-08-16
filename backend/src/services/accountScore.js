@@ -17,15 +17,15 @@
  * must be able to take its first order; scoring it 0% would make the gate
  * below permanently unsatisfiable and nothing would ever route.
  *
- * WHAT COUNTS (y). An order enters the score only if it belongs to this
- * account's CURRENT live session and either:
- *   - the customer claimed it (customer_confirmed_at) — success rate measures
- *     claim handling, so an order the system detected and settled with no
- *     customer involvement is not the trader's to be judged on; or
- *   - it was open when the account's connection died (disconnect_failed) —
- *     a real service failure to the trader's own customer, which must not be
- *     silently excluded just because the customer never got as far as
- *     claiming.
+ * WHAT COUNTS (y) — Item 3, real assignment accounting. Every order ASSIGNED to
+ * this account in its CURRENT live session is a genuine opportunity and enters
+ * the score once it has CONCLUDED (reached a terminal status), whether or not
+ * the customer ever claimed it. In particular an order that timed out un-claimed
+ * (status 'failed') counts — the old rule scored only customer-claimed orders,
+ * so an account could be handed real chances that went nowhere and still show a
+ * fake 100%. In-flight orders (ACTIVE_STATUSES) are not yet an outcome and are
+ * excluded until they finish; a disconnect_failed order counts even while still
+ * active, because the outage already reached the customer.
  *
  * WHAT COUNTS AS SUCCESS (x). Settled successfully AND not disconnect_failed.
  * A disconnect failure is permanent: reconnecting and settling the order later
@@ -51,8 +51,22 @@ function scoredWhere(detail) {
   return {
     payment_detail_id: detail.id,
     id: { [Op.gt]: detail.live_session_start_order_id || 0 },
+    // Item 3 — real assignment accounting. Every order ASSIGNED to this account
+    // in the current session is a genuine opportunity, and it is scored once it
+    // has CONCLUDED, regardless of whether the customer ever claimed it. A
+    // timed-out un-claimed order (jobs/orderExpiry.js sets status 'failed') now
+    // counts as a non-success — closing the old gap where an order the customer
+    // never followed through on counted as nothing, letting an account sit at a
+    // fake 100% despite real chances that went nowhere.
+    //
+    // Scored "on conclusion", not at assignment: an in-flight order
+    // (ACTIVE_STATUSES) is not yet an outcome, so it is excluded until it
+    // finishes — otherwise an account legitimately handling several concurrent
+    // orders would be pushed below the threshold and starved. A disconnect
+    // failure is the one exception: it counts even while the order is still in
+    // an active status, because the outage already happened to the customer.
     [Op.or]: [
-      { customer_confirmed_at: { [Op.ne]: null } },
+      { status: { [Op.notIn]: db.Order.ACTIVE_STATUSES } },
       { disconnect_failed: true },
     ],
   };

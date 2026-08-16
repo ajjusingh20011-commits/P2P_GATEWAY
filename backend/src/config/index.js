@@ -78,6 +78,10 @@ module.exports = {
     orderExpiryMinutes: parseInt(process.env.ORDER_EXPIRY_MINUTES, 10) || 10,
     exchangeRate: parseFloat(process.env.DEFAULT_EXCHANGE_RATE) || 89.0,
     heartbeatTimeoutMs: parseInt(process.env.HEARTBEAT_TIMEOUT_MS, 10) || 2 * 60 * 1000,
+    // Weighted-rotation weight given to a brand-new, unscored account so it
+    // still earns a fair proportional share of orders to build a real score
+    // (services/routingEngine.js selection, Item 1).
+    newAccountRoutingWeight: parseInt(process.env.NEW_ACCOUNT_ROUTING_WEIGHT, 10) || 50,
   },
 
   queue: {

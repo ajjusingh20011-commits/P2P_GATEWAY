@@ -21,6 +21,7 @@ const config = require('../config');
 const db = require('../models');
 const logger = require('../utils/logger');
 const accountScore = require('./accountScore');
+const weightedRotation = require('./weightedRotation');
 const { connection, isRedisAvailable } = require('../loaders/redis');
 const { emitToTrader, emitToAdmin, emitToMerchant, emitToOrder, broadcast } = require('../websocket');
 const upiService = require('./upiService');
@@ -81,6 +82,96 @@ async function releaseTrader(traderId, orderId) {
 // racing onto one account. Auto-expires; the DB same-amount check is the durable guard.
 const acquireAmountLock = (detailId, amount, orderKey) => acquireLock(amountLockKey(detailId, amount), orderKey, 30);
 const releaseAmountLock = (detailId, amount) => releaseLock(amountLockKey(detailId, amount));
+
+/* ------------------------- weighted selection (SWRR) ---------------------- */
+// Eligibility (eligibleAccountsFor / eligibleTraders) decides WHICH candidates
+// may take an order; SELECTION decides which eligible one actually does. Item 1:
+// selection uses smooth weighted round-robin (services/weightedRotation.js) so
+// volume spreads proportionally to each candidate's success-rate score instead
+// of the single top scorer taking nearly everything. Two levels — pick a
+// trader, then an account within it — the same fairness at both, so neither one
+// account nor one trader can monopolise at scale.
+//
+// The per-candidate "credit" SWRR accumulates persists across orders, in Redis
+// (shared across instances) with an in-memory Map fallback — the same
+// availability model as the locks above. A credit reset (e.g. a Redis flush) is
+// harmless: the rotation simply re-converges.
+const SWRR_ACCT_KEY = 'swrr:acct:credit';
+const SWRR_TRADER_KEY = 'swrr:trader:credit';
+const memAcctCredit = new Map();
+const memTraderCredit = new Map();
+const NEW_ACCOUNT_WEIGHT = config.platform.newAccountRoutingWeight || 50;
+
+// Score (0-100, or null for a brand-new account) -> a strictly positive SWRR
+// weight. A new account gets NEW_ACCOUNT_WEIGHT so it still earns a fair,
+// proportional share of traffic to build a real score rather than being
+// starved. Eligible scored accounts are always >= MIN_SUCCESS_RATE here, so the
+// floor at 1 is only a guard.
+function weightForRate(rate) {
+  const w = rate === null || rate === undefined ? NEW_ACCOUNT_WEIGHT : Number(rate);
+  return w > 0 ? w : 1;
+}
+
+async function getCredits(hashKey, memMap, ids) {
+  const out = new Map();
+  if (!ids.length) return out;
+  if (isRedisAvailable()) {
+    const vals = await connection.hmget(hashKey, ...ids.map(String));
+    ids.forEach((id, i) => out.set(id, Number(vals[i]) || 0));
+  } else {
+    ids.forEach((id) => out.set(id, Number(memMap.get(id)) || 0));
+  }
+  return out;
+}
+
+async function saveCredits(hashKey, memMap, nodes) {
+  if (!nodes.length) return;
+  if (isRedisAvailable()) {
+    const args = [];
+    nodes.forEach((n) => args.push(String(n.key), String(n.current)));
+    await connection.hset(hashKey, ...args);
+  } else {
+    nodes.forEach((n) => memMap.set(n.key, n.current));
+  }
+}
+
+// Account-level SWRR among already-eligible {account, rate} entries under ONE
+// trader. Advances and persists their credit; returns the winning entry.
+async function selectAccount(eligible) {
+  if (!eligible.length) return null;
+  const ids = eligible.map((e) => e.account.id);
+  const credits = await getCredits(SWRR_ACCT_KEY, memAcctCredit, ids);
+  const nodes = eligible.map((e) => ({ key: e.account.id, weight: weightForRate(e.rate), current: credits.get(e.account.id) }));
+  const winner = weightedRotation.pick(nodes);
+  await saveCredits(SWRR_ACCT_KEY, memAcctCredit, nodes);
+  return winner ? eligible.find((e) => e.account.id === winner.key) : null;
+}
+
+// Two-level SWRR across ALL eligible {trader, account, rate} candidates: pick a
+// trader (weighted by the average score of its own eligible accounts this
+// order), then an account within it. Prevents both single-account and
+// single-trader concentration (Item 1). Returns {trader, account, rate}.
+async function selectCandidate(candidates) {
+  if (!candidates.length) return null;
+  const byTrader = new Map();
+  for (const c of candidates) {
+    if (!byTrader.has(c.trader.id)) byTrader.set(c.trader.id, { trader: c.trader, entries: [] });
+    byTrader.get(c.trader.id).entries.push(c);
+  }
+  const traderIds = [...byTrader.keys()];
+  const traderCredits = await getCredits(SWRR_TRADER_KEY, memTraderCredit, traderIds);
+  const traderNodes = traderIds.map((id) => {
+    const g = byTrader.get(id);
+    const avg = g.entries.reduce((s, e) => s + weightForRate(e.rate), 0) / g.entries.length;
+    return { key: id, weight: avg, current: traderCredits.get(id) };
+  });
+  const traderWinner = weightedRotation.pick(traderNodes);
+  await saveCredits(SWRR_TRADER_KEY, memTraderCredit, traderNodes);
+  if (!traderWinner) return null;
+  const chosen = byTrader.get(traderWinner.key);
+  const winner = await selectAccount(chosen.entries);
+  return winner ? { trader: winner.trader, account: winner.account, rate: winner.rate } : null;
+}
 
 /* ------------------------------ eligibility ------------------------------- */
 
@@ -229,39 +320,15 @@ async function eligibleAccountsFor(trader, amount) {
 }
 
 /**
- * Ranking for BUG-24. Highest success rate wins; raw id order no longer
- * overrides a genuine performance difference.
- *
- * An account with no scored orders yet (rate null) ranks FIRST. It is newly
- * live and has no evidence against it, and it must actually receive traffic to
- * earn a score — otherwise a scored account would monopolise orders and
- * nothing new could ever get its first one. That matters more than it sounds:
- * the BUG-23 reset makes every recovered account unscored, so ranking them
- * last would starve exactly the accounts a trader has just fixed.
- *
- * Ties fall back to the previous behaviour, lowest trader id then lowest
- * account id, so ordering stays deterministic.
- */
-function rankCandidates(candidates) {
-  return [...candidates].sort((a, b) => {
-    const aFresh = a.rate === null;
-    const bFresh = b.rate === null;
-    if (aFresh !== bFresh) return aFresh ? -1 : 1;
-    if (!aFresh && a.rate !== b.rate) return b.rate - a.rate;
-    if (a.trader.id !== b.trader.id) return a.trader.id - b.trader.id;
-    return a.account.id - b.account.id;
-  });
-}
-
-/**
- * Best single account under one trader. Kept for callers that have already
- * chosen the trader (assignTraderToOrder); it now returns the trader's BEST
- * eligible account rather than the first one that happened to pass.
+ * One eligible account under a trader, chosen by weighted rotation (Item 1) —
+ * for callers that have already chosen the trader. A brand-new (unscored)
+ * account still participates via NEW_ACCOUNT_WEIGHT, so it gets a fair share to
+ * earn its first score rather than being starved by higher-scored siblings.
  */
 async function pickEligibleAccount(trader, amount) {
   const eligible = await eligibleAccountsFor(trader, amount);
-  if (!eligible.length) return null;
-  return rankCandidates(eligible.map((e) => ({ ...e, trader })))[0].account;
+  const winner = await selectAccount(eligible);
+  return winner ? winner.account : null;
 }
 
 /** Online, active, funded traders that accept `depositType`, with their accounts. */
@@ -305,13 +372,17 @@ async function findAvailableTrader(amountInr, depositType = 'STD') {
     return null;
   }
 
-  const ranked = rankCandidates(candidates);
-  const best = ranked[0];
-  if (ranked.length > 1) {
-    const shown = ranked.slice(0, 4).map((c) => `${c.account.upi_id}=${c.rate === null ? 'new' : `${c.rate}%`}`).join(', ');
-    logger.info(`routing: ${ranked.length} eligible account(s), ranked by success rate: ${shown}`);
+  if (candidates.length > 1) {
+    const traderCount = new Set(candidates.map((c) => c.trader.id)).size;
+    const shown = candidates.slice(0, 6).map((c) => `${c.account.upi_id}=${c.rate === null ? 'new' : `${c.rate}%`}`).join(', ');
+    logger.info(`routing: ${candidates.length} eligible account(s) across ${traderCount} trader(s): ${shown}`);
   }
-  logger.info(`routing: selected trader ${best.trader.id}, account ${best.account.upi_id} (success rate ${best.rate === null ? 'unscored' : `${best.rate}%`})`);
+  const best = await selectCandidate(candidates);
+  if (!best) {
+    logger.warn(`routing: no eligible trader/account for ₹${amount} ${depositType}`);
+    return null;
+  }
+  logger.info(`routing: weighted rotation selected trader ${best.trader.id}, account ${best.account.upi_id} (score ${best.rate === null ? 'new' : `${best.rate}%`})`);
   return { trader: best.trader, paymentDetail: best.account };
 }
 
@@ -327,23 +398,29 @@ async function assignTraderToOrder(order, { excludeTraderId } = {}) {
   const depositType = order.deposit_type || 'STD';
   const traders = (await eligibleTraders(depositType)).filter((t) => t.id !== excludeTraderId);
 
+  // Gather every eligible trader+account pair, then choose by weighted rotation
+  // (Item 1) — the same selection findAvailableTrader uses — rather than taking
+  // the first trader in id order that happens to have an eligible account.
+  const candidates = [];
   for (const trader of traders) {
     if (Number(trader.daily_limit) > 0 && Number(trader.current_daily_used) + amount > Number(trader.daily_limit)) continue;
     // eslint-disable-next-line no-await-in-loop
-    const account = await pickEligibleAccount(trader, amount);
-    if (!account) continue;
-
-    // eslint-disable-next-line no-await-in-loop
-    await order.update({ trader_id: trader.id, payment_detail_id: account.id, status: 'pending', expires_at: new Date(Date.now() + config.platform.orderExpiryMinutes * 60 * 1000) });
-    const payload = upiService.paymentPayload(order, account);
-    emitToTrader(trader.id, 'order:assigned', { order_id: order.id, uuid: order.uuid, amount_inr: order.amount_inr, ...payload });
-    emitToAdmin('order:assigned', { order_id: order.id, trader_id: trader.id });
-    logger.info(`routing: order ${order.id} -> trader ${trader.id} (account ${account.id})`);
-    return { trader, paymentDetail: account };
+    const accounts = await eligibleAccountsFor(trader, amount);
+    for (const entry of accounts) candidates.push({ ...entry, trader });
   }
 
-  await queueOrder(order);
-  return null;
+  const selected = await selectCandidate(candidates);
+  if (!selected) {
+    await queueOrder(order);
+    return null;
+  }
+  const { trader, account } = selected;
+  await order.update({ trader_id: trader.id, payment_detail_id: account.id, status: 'pending', expires_at: new Date(Date.now() + config.platform.orderExpiryMinutes * 60 * 1000) });
+  const payload = upiService.paymentPayload(order, account);
+  emitToTrader(trader.id, 'order:assigned', { order_id: order.id, uuid: order.uuid, amount_inr: order.amount_inr, ...payload });
+  emitToAdmin('order:assigned', { order_id: order.id, trader_id: trader.id });
+  logger.info(`routing: order ${order.id} -> trader ${trader.id} (account ${account.id}) via weighted rotation`);
+  return { trader, paymentDetail: account };
 }
 
 async function queueOrder(order) {
