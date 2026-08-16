@@ -711,6 +711,53 @@ function CommissionModal({ trader, onClose, onSaved }) {
   );
 }
 
+// Feature 2 — allocate a trader to the payout pool and set their daily cap.
+function PayoutAccessModal({ trader, onClose, onSaved }) {
+  const [access, setAccess] = useState(false);
+  const [limit, setLimit] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (trader) {
+      setAccess(!!trader.payoutPoolAccess);
+      setLimit(String(trader.payoutDailyLimit ?? 0));
+    }
+  }, [trader?.id]);
+  if (!trader) return null;
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await adminApi.updateTrader(trader.id, { payout_pool_access: access, payout_daily_limit: Number(limit) || 0 });
+      toast('Payout access updated', 'success');
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast(err.response?.data?.message || err.response?.data?.error?.message || 'Failed to update', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal open={!!trader} onClose={onClose} size="md" title="Payout pool access" subtitle={`Trader #${trader.id}`}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button onClick={submit} disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Button></>}>
+      <div className="space-y-4">
+        <label className="flex items-center justify-between gap-3" style={{ cursor: 'pointer' }}>
+          <span className="text-sm" style={{ color: 'var(--text)' }}>Allocated to the payout pool</span>
+          <input type="checkbox" checked={access} onChange={(e) => setAccess(e.target.checked)} />
+        </label>
+        <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>
+          Only allocated traders can see or pick up payouts from the global pool.
+        </p>
+        <div>
+          <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Daily payout limit (₹, 0 = no limit)</label>
+          <Input type="number" step="1" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="0" />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /* ------------------------------------ Page ------------------------------------ */
 
 const TABS = [
@@ -733,6 +780,7 @@ export default function TraderDetail() {
   const [tab, setTab] = useState('overview');
   const [balanceModal, setBalanceModal] = useState(false);
   const [commissionModal, setCommissionModal] = useState(false);
+  const [payoutModal, setPayoutModal] = useState(false);
   const [confirming, setConfirming] = useState(null); // { next: boolean }
   const [suspending, setSuspending] = useState(false);
 
@@ -813,6 +861,7 @@ export default function TraderDetail() {
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => setBalanceModal(true)}>Edit Balance</Button>
           <Button variant="ghost" size="sm" onClick={() => setCommissionModal(true)}>Edit Commission</Button>
+          <Button variant="ghost" size="sm" onClick={() => setPayoutModal(true)}>Payout access</Button>
           {trader.status === 'suspended'
             ? <Button variant="success" size="sm" onClick={() => setConfirming({ next: false })}>Reactivate</Button>
             : <Button variant="danger" size="sm" onClick={() => setConfirming({ next: true })}>Suspend</Button>}
@@ -877,6 +926,7 @@ export default function TraderDetail() {
 
       {balanceModal && <BalanceModal trader={trader} onClose={() => setBalanceModal(false)} onSaved={load} />}
       {commissionModal && <CommissionModal trader={trader} onClose={() => setCommissionModal(false)} onSaved={load} />}
+      {payoutModal && <PayoutAccessModal trader={trader} onClose={() => setPayoutModal(false)} onSaved={load} />}
 
       <ConfirmModal
         open={!!confirming}

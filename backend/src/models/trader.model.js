@@ -31,6 +31,12 @@ module.exports = (sequelize) => {
       // Commission / "My Rate" configuration (set by admin).
       commission_rate: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 4.0 },
       payout_commission: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 2.0 },
+      // Feature 2 payout access layer. Default false (new traders must be
+      // allocated to the pool by an admin); existing traders are grandfathered
+      // to true by the migration. payout_daily_limit is an INR/day cap on
+      // payouts this trader may pick up (0 = no limit), enforced in accept().
+      payout_pool_access: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+      payout_daily_limit: { type: DataTypes.DECIMAL(15, 2), allowNull: false, defaultValue: 0 },
       rate_label: { type: DataTypes.STRING(50), allowNull: false, defaultValue: 'My Rate' },
 
       // Rate-margin system: trader_margin = "My Rate" % over base; admin_margin =

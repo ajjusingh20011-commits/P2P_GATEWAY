@@ -98,7 +98,8 @@ const updateTrader = asyncHandler(async (req, res) => {
   if (!trader) return fail(res, 404, 'Trader not found');
 
   const patch = {};
-  ['daily_limit', 'balance_usdt', 'commission_rate', 'payout_commission', 'rate_label', 'telegram_chat_id']
+  ['daily_limit', 'balance_usdt', 'commission_rate', 'payout_commission', 'rate_label', 'telegram_chat_id',
+    'payout_pool_access', 'payout_daily_limit']
     .forEach((k) => { if (req.body[k] != null) patch[k] = req.body[k]; });
   // deposit_types: keep only valid FTD/STD; ignore empty (must accept ≥1 type).
   if (req.body.deposit_types != null) {
@@ -1154,6 +1155,8 @@ const getTraderDetail = asyncHandler(async (req, res) => {
       dailyLimit: Number(trader.daily_limit) || 0,
       currentDailyUsed: Number(trader.current_daily_used) || 0,
       depositTypes: trader.deposit_types || ['FTD', 'STD'],
+      payoutPoolAccess: !!trader.payout_pool_access,
+      payoutDailyLimit: Number(trader.payout_daily_limit) || 0,
       commissionEarnedUsdt,
     },
     summary: {

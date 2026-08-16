@@ -186,6 +186,10 @@ async function listForMerchant(merchantId, { status } = {}) {
  */
 async function listForTrader(traderId, { status } = {}) {
   if (!status || status === 'awaiting_processing') {
+    // Only traders an admin has allocated to the payout pool may see it
+    // (Feature 2 access layer). Not allocated -> the pool is empty for them.
+    const trader = await db.Trader.findByPk(traderId, { attributes: ['payout_pool_access'] });
+    if (!trader || !trader.payout_pool_access) return [];
     const rows = await db.PayoutRequest.findAll({
       where: { status: 'awaiting_processing', assigned_trader_id: null },
       order: [['priority', 'DESC'], ['created_at', 'ASC']],
@@ -201,8 +205,14 @@ async function listForTrader(traderId, { status } = {}) {
 
 /** Count per tab for the trader (awaiting is global; rest are this trader's). */
 async function traderCounts(traderId) {
+  // The pool count is 0 for a trader not allocated to it — so the tab matches
+  // the (empty) list they actually see.
+  const accessTrader = await db.Trader.findByPk(traderId, { attributes: ['payout_pool_access'] });
+  const canSeePool = !!(accessTrader && accessTrader.payout_pool_access);
   const [awaiting, inProc, awaitSettle, completed, canceled, dispute] = await Promise.all([
-    db.PayoutRequest.count({ where: { status: 'awaiting_processing', assigned_trader_id: null } }),
+    canSeePool
+      ? db.PayoutRequest.count({ where: { status: 'awaiting_processing', assigned_trader_id: null } })
+      : Promise.resolve(0),
     db.PayoutRequest.count({ where: { status: 'in_processing', assigned_trader_id: traderId } }),
     db.PayoutRequest.count({ where: { status: 'awaiting_settlement', assigned_trader_id: traderId } }),
     db.PayoutRequest.count({ where: { status: 'settlement_completed', assigned_trader_id: traderId } }),
@@ -268,6 +278,29 @@ async function accept(traderId, id) {
     // must be active (above), the request must still be unassigned and
     // awaiting_processing (above), both balances must cover the payout
     // (below), and the row locks guard against a double accept.
+
+    // Feature 2 access layer — the trader must be allocated to the payout pool,
+    // and within their admin-set daily payout amount cap (both under the trader
+    // row lock, so race-safe per trader).
+    if (!trader.payout_pool_access) {
+      throw Object.assign(new Error('You are not allocated to the payout pool'), { status: 403 });
+    }
+    const dailyLimit = Number(trader.payout_daily_limit) || 0;
+    if (dailyLimit > 0) {
+      const startToday = new Date();
+      startToday.setHours(0, 0, 0, 0);
+      const usedToday = (await db.PayoutRequest.sum('amount_inr', {
+        where: {
+          assigned_trader_id: traderId,
+          accepted_at: { [Op.gte]: startToday },
+          status: { [Op.in]: ['in_processing', 'awaiting_settlement', 'settlement_completed'] },
+        },
+        transaction,
+      })) || 0;
+      if (Number(usedToday) + Number(row.amount_inr) > dailyLimit) {
+        throw Object.assign(new Error(`This payout would exceed your daily payout limit of ₹${dailyLimit}`), { status: 422 });
+      }
+    }
 
     // Hard cap on how many payouts a trader may hold in 'in_processing' at once
     // (admin-adjustable, max_concurrent_payouts). Race-safe: the trader row is
