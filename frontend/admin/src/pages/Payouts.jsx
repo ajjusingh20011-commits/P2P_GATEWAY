@@ -45,6 +45,160 @@ const ACTION_COPY = {
   void: { title: 'Void this disputed payout?', tone: 'danger', label: 'Void', desc: (r) => `${short(r.uuid, r.id)} will be marked Canceled with no funds moved.` },
 };
 
+// ---- Payout evidence review (Feature 2) ----------------------------------
+const digitsOnly = (s) => String(s == null ? '' : s).replace(/\D/g, '');
+const normName = (s) => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+
+// Compare one captured field against the payout's expected value. Defensive: a
+// field the capture didn't include is "missing" (NOT a mismatch) — a missing
+// signal must never read as a failure. Returns { status, recorded, expected }.
+function compareField(recorded, expected, kind) {
+  const hasRecorded = recorded != null && String(recorded).trim() !== '';
+  if (!hasRecorded) return { status: 'missing' };
+  const hasExpected = expected != null && String(expected).trim() !== '';
+  if (!hasExpected) return { status: 'unknown', recorded };
+  let ok;
+  if (kind === 'account') {
+    const r = digitsOnly(recorded);
+    const e = digitsOnly(expected);
+    ok = !!r && !!e && (r === e || (r.length >= 4 && e.length >= 4 && r.slice(-4) === e.slice(-4)));
+  } else if (kind === 'amount') {
+    ok = Math.abs(Number(recorded) - Number(expected)) < 0.01 || digitsOnly(recorded) === digitsOnly(expected);
+  } else if (kind === 'name') {
+    const r = normName(recorded);
+    const e = normName(expected);
+    ok = !!r && !!e && (r === e || r.includes(e) || e.includes(r));
+  } else {
+    ok = String(recorded).trim().toUpperCase() === String(expected).trim().toUpperCase();
+  }
+  return { status: ok ? 'match' : 'mismatch', recorded, expected };
+}
+
+// recordedInput is device-authored and stored as Mixed — read defensively.
+function firstOf(obj, keys) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const k of keys) {
+    if (obj[k] != null && String(obj[k]).trim() !== '') return obj[k];
+  }
+  return null;
+}
+
+const MATCH_META = {
+  match: { color: '#22c55e', label: '✓ match' },
+  mismatch: { color: '#ef4444', label: '✕ mismatch' },
+  missing: { color: 'var(--muted)', label: 'not captured' },
+  unknown: { color: 'var(--muted)', label: 'no expected value' },
+};
+
+function MatchRow({ label, recorded, expected, status }) {
+  const m = MATCH_META[status] || MATCH_META.missing;
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, padding: '5px 0', borderBottom: '1px solid var(--cardborder)' }}>
+      <span style={{ color: 'var(--muted)', fontSize: 12, minWidth: 78 }}>{label}</span>
+      <span className="font-mono" style={{ color: 'var(--text)', fontSize: 12.5, flex: 1, textAlign: 'right', wordBreak: 'break-all' }}>
+        {recorded != null && String(recorded).trim() !== '' ? String(recorded) : '—'}
+        {status === 'mismatch' && expected != null && (
+          <span style={{ color: 'var(--muted)' }}> (expected {String(expected)})</span>
+        )}
+      </span>
+      <span style={{ color: m.color, fontSize: 11.5, fontWeight: 600, minWidth: 84, textAlign: 'right' }}>{m.label}</span>
+    </div>
+  );
+}
+
+function PayoutEvidenceSection({ payout, evidence, loading }) {
+  const H = ({ children }) => (
+    <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted)', margin: '0 0 10px' }}>{children}</h3>
+  );
+  if (loading) return <div><H>Evidence</H><InlineLoader label="Loading evidence…" /></div>;
+  if (!evidence || evidence.uploadCount === 0) {
+    return (
+      <div>
+        <H>Evidence</H>
+        <p style={{ color: 'var(--muted)', fontSize: 13 }}>
+          No evidence captured for this payout yet{payout.assigned_trader_id ? '' : ' (not picked up by a trader)'}.
+        </p>
+      </div>
+    );
+  }
+
+  const ri = evidence.recordedInput;
+  const recorded = {
+    account: firstOf(ri, ['accountNumber', 'account_number', 'account', 'acct']),
+    name: firstOf(ri, ['holderName', 'holder_name', 'name', 'recipientName', 'recipient_name', 'payeeName']),
+    amount: firstOf(ri, ['amount', 'amount_inr', 'amountInr']),
+    ifsc: firstOf(ri, ['ifsc', 'ifsc_code', 'ifscCode']),
+    upi: firstOf(ri, ['upiId', 'upi', 'upi_id']),
+  };
+  const checks = [
+    { label: 'Account', ...compareField(recorded.account, payout.account_number, 'account') },
+    { label: 'Recipient', ...compareField(recorded.name, payout.recipient_name, 'name') },
+    { label: 'Amount', ...compareField(recorded.amount, payout.amount_inr, 'amount') },
+    { label: 'IFSC', ...compareField(recorded.ifsc, payout.ifsc_code, 'ifsc') },
+    { label: 'UPI ID', ...compareField(recorded.upi, payout.upi_id, 'exact') },
+  ];
+  const matched = checks.filter((c) => c.status === 'match').length;
+  const mismatched = checks.filter((c) => c.status === 'mismatch').length;
+  const comparable = matched + mismatched;
+
+  // Timing: was the capture within the payout window (accept -> transfer/now)?
+  const capMs = Date.parse(evidence.screenshotTimestamp || evidence.recordTimestamp || evidence.smsTimestamp || '');
+  const acceptMs = Date.parse(payout.accepted_at || '');
+  const endMs = Date.parse(payout.transferred_at || '') || Date.now();
+  const timingOk = capMs && acceptMs ? (capMs >= acceptMs - 5 * 60000 && capMs <= endMs + 5 * 60000) : null;
+
+  const verdict = mismatched > 0
+    ? { color: '#ef4444', bg: 'rgba(239,68,68,.12)', text: `${mismatched} signal${mismatched === 1 ? '' : 's'} DO NOT match — review carefully before approving.` }
+    : comparable > 0
+      ? { color: '#22c55e', bg: 'rgba(34,197,94,.12)', text: `Looks like a match — ${matched} of ${comparable} captured signal${comparable === 1 ? '' : 's'} agree. Admin approval still required.` }
+      : { color: 'var(--muted)', bg: 'var(--hover)', text: 'Evidence present but nothing comparable was captured — review the screenshot and SMS manually.' };
+
+  const img = evidence.screenshotBase64
+    ? (String(evidence.screenshotBase64).startsWith('data:') ? evidence.screenshotBase64 : `data:image/png;base64,${evidence.screenshotBase64}`)
+    : null;
+
+  return (
+    <div>
+      <H>Evidence &amp; match</H>
+
+      {/* Suggestion only — the system never auto-approves; a mismatch is flagged, not rejected. */}
+      <div style={{ padding: '10px 14px', borderRadius: 10, background: verdict.bg, color: verdict.color, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>
+        {verdict.text}
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        {checks.map((c) => <MatchRow key={c.label} label={c.label} recorded={c.recorded} expected={c.expected} status={c.status} />)}
+        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}>
+          <span style={{ color: 'var(--muted)', fontSize: 12, minWidth: 78 }}>Timing</span>
+          <span style={{ color: timingOk == null ? 'var(--muted)' : timingOk ? '#22c55e' : '#ef4444', fontSize: 11.5, fontWeight: 600 }}>
+            {timingOk == null ? 'unknown' : timingOk ? '✓ within window' : '✕ outside window'}
+          </span>
+        </div>
+      </div>
+
+      {/* Screenshot — real inline image, not a filename/link. */}
+      <div style={{ marginBottom: 14 }}>
+        <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 6px' }}>Payment screenshot{evidence.screenshotTimestamp ? ` · ${fmtDateTime(evidence.screenshotTimestamp)}` : ''}</p>
+        {img
+          ? (
+            <a href={img} target="_blank" rel="noreferrer">
+              <img src={img} alt="Payment screenshot" style={{ maxWidth: '100%', maxHeight: 380, borderRadius: 10, border: '1px solid var(--cardborder)', display: 'block' }} />
+            </a>
+          )
+          : <p style={{ color: 'var(--muted)', fontSize: 13 }}>Not captured.</p>}
+      </div>
+
+      {/* Bank debit SMS — raw text so the admin can verify a genuine bank sender. */}
+      <div>
+        <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 6px' }}>Bank debit SMS{evidence.smsTimestamp ? ` · ${fmtDateTime(evidence.smsTimestamp)}` : ''}</p>
+        {evidence.linkedSmsRaw
+          ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--hover)', border: '1px solid var(--cardborder)', borderRadius: 10, padding: '10px 12px', fontSize: 12.5, color: 'var(--text)', margin: 0 }}>{evidence.linkedSmsRaw}</pre>
+          : <p style={{ color: 'var(--muted)', fontSize: 13 }}>Not captured.</p>}
+      </div>
+    </div>
+  );
+}
+
 export default function Payouts() {
   const [tab, setTab] = useState('awaiting_settlement');
   const [rows, setRows] = useState([]);
@@ -56,6 +210,22 @@ export default function Payouts() {
   const [merchantFilter, setMerchantFilter] = useState('All');
   const [viewing, setViewing] = useState(null);
   const [confirming, setConfirming] = useState(null); // { row, actionKey }
+  const [evidence, setEvidence] = useState(null);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+
+  // Load the captured evidence (full: screenshot + SMS + recorded input) when a
+  // payout is opened for review.
+  useEffect(() => {
+    if (!viewing) { setEvidence(null); return undefined; }
+    let active = true;
+    setEvidenceLoading(true);
+    setEvidence(null);
+    adminApi.getPayoutEvidence(viewing.id)
+      .then((data) => { if (active) setEvidence(data.evidence || null); })
+      .catch(() => { if (active) setEvidence(null); })
+      .finally(() => { if (active) setEvidenceLoading(false); });
+    return () => { active = false; };
+  }, [viewing?.id]);
 
   const load = useCallback(async (status) => {
     setLoading(true);
@@ -282,6 +452,8 @@ export default function Payouts() {
                 <Field label="Canceled">{fmtDateTime(viewing.canceled_at)}</Field>
               </div>
             </div>
+
+            <PayoutEvidenceSection payout={viewing} evidence={evidence} loading={evidenceLoading} />
           </div>
         )}
       </Modal>
