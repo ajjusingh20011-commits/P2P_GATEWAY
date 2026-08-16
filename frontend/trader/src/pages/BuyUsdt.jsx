@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QrCode, Landmark, Check, ArrowRight } from 'lucide-react';
 import { Card, Badge, Button, PageHeader, Modal, EmptyState, LoadingState } from '../components/ui';
 import { traderApi } from '../services/api';
+import { getPayoutEvidence } from '../lib/ngoApi';
 import { inr } from '../utils/mock';
 
 /*
@@ -92,7 +93,36 @@ export default function BuyUsdt() {
   const [busyId, setBusyId] = useState(null);
   const [selected, setSelected] = useState(null); // full detail for the modal
   const [now, setNow] = useState(Date.now());
+  const [evidenceMap, setEvidenceMap] = useState({});
   const pollRef = useRef(null);
+
+  // Compact evidence status per row (record/screenshot/SMS) for the two tabs
+  // where a payout is being or has been captured. A trader holds at most a few
+  // processing payouts, so this is a small handful of light (flags-only)
+  // lookups, refreshed on the same cadence as the list.
+  const rowKey = rows.map((r) => r.id).join(',');
+  useEffect(() => {
+    if (tab !== 'in_processing' && tab !== 'awaiting_settlement') {
+      setEvidenceMap({});
+      return undefined;
+    }
+    let active = true;
+    const loadEvidence = () => {
+      Promise.all(rows.map((r) => getPayoutEvidence([r.uuid, r.id])
+        .then((e) => [r.id, e])
+        .catch(() => [r.id, null])))
+        .then((entries) => {
+          if (!active) return;
+          const m = {};
+          entries.forEach(([id, e]) => { if (e) m[id] = e; });
+          setEvidenceMap(m);
+        });
+    };
+    loadEvidence();
+    const t = setInterval(loadEvidence, 8000);
+    return () => { active = false; clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, rowKey]);
 
   const load = useCallback(async (status) => {
     setLoading(true);
@@ -212,6 +242,7 @@ export default function BuyUsdt() {
               <div className="min-w-0">
                 <strong className="truncate">{r.recipient_name || short(r.uuid, r.id)}</strong>
                 <small className="truncate">{short(r.uuid, r.id)} · {subLine(r, tab, now)}</small>
+                {(tab === 'in_processing' || tab === 'awaiting_settlement') && <EvidenceMini e={evidenceMap[r.id]} />}
               </div>
               <div>
                 <small>Amount</small>
@@ -260,6 +291,27 @@ export default function BuyUsdt() {
   );
 }
 
+// Compact three-dot evidence indicator for a payout row: record / screenshot /
+// SMS. Green = captured, grey = not yet.
+function EvidenceMini({ e }) {
+  const dot = (ok, title) => (
+    <span
+      title={title}
+      style={{ width: 7, height: 7, borderRadius: '50%', display: 'inline-block', background: ok ? '#22c55e' : 'var(--cardborder)' }}
+    />
+  );
+  return (
+    <span
+      title="Evidence captured: record · screenshot · SMS"
+      style={{ display: 'inline-flex', gap: 3, alignItems: 'center', marginTop: 3 }}
+    >
+      {dot(!!e?.hasRecord, 'Recorded input')}
+      {dot(!!e?.hasScreenshot, 'Payment screenshot')}
+      {dot(!!e?.hasSms, 'Bank debit SMS')}
+    </span>
+  );
+}
+
 function Row({ label, value }) {
   if (value == null || value === '') return null;
   return (
@@ -270,9 +322,50 @@ function Row({ label, value }) {
   );
 }
 
+// One row of the payout evidence checklist (record / screenshot / SMS).
+function EvidenceItem({ ok, label }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+      <span
+        style={{
+          width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 11, fontWeight: 700,
+          background: ok ? 'rgba(34,197,94,.15)' : 'var(--cardborder)',
+          color: ok ? '#22c55e' : 'var(--muted)',
+        }}
+      >
+        {ok ? '✓' : '○'}
+      </span>
+      <span style={{ color: ok ? 'var(--text)' : 'var(--muted)', fontSize: 13 }}>{label}</span>
+    </div>
+  );
+}
+
 function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProblem }) {
   const [receipt, setReceipt] = useState('');
   const [done, setDone] = useState(false);
+  const [evidence, setEvidence] = useState(null);
+
+  // Live capture status for THIS payout: the trader is recording/screenshotting
+  // on their phone in real time, so fetch on open and poll while the modal is
+  // up. (ngo-backend also emits a payout-evidence socket event; a short poll
+  // keeps this self-contained and correct even if a push is missed.) Both the
+  // payout uuid and id are passed so the lookup matches whichever the device
+  // captured under.
+  useEffect(() => {
+    if (!req) return undefined;
+    let active = true;
+    const load = () => {
+      getPayoutEvidence([req.uuid, req.id])
+        .then((e) => { if (active) setEvidence(e); })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 5000);
+    return () => { active = false; clearInterval(t); };
+  }, [req?.uuid, req?.id]);
+
   if (!req) return null;
 
   // Only in_processing rows can actually be acted on — payoutService's
@@ -327,6 +420,22 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProb
       <Row label="You will be credited" value={req.trader_credit_usdt ? `${req.trader_credit_usdt} USDT` : null} />
       <Row label="Settled" value={req.settled_at ? fmtDate(req.settled_at) : null} />
       <Row label="Dispute reason" value={req.dispute_reason} />
+
+      {/* Evidence capture checklist — what the APK overlay has captured for this
+          payout so far. Updates live while the trader processes on their phone. */}
+      {(req.status === 'in_processing' || req.status === 'awaiting_settlement') && (
+        <div style={{ margin: '14px 0', padding: '12px 14px', borderRadius: 12, background: 'var(--hover)', border: '1px solid var(--cardborder)' }}>
+          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 8px' }}>Evidence captured from your phone</p>
+          <EvidenceItem ok={!!evidence?.hasRecord} label="Recorded input" />
+          <EvidenceItem ok={!!evidence?.hasScreenshot} label="Payment screenshot" />
+          <EvidenceItem ok={!!evidence?.hasSms} label="Bank debit SMS" />
+          {evidence && evidence.uploadCount === 0 && (
+            <p style={{ color: 'var(--muted)', fontSize: 11, margin: '8px 0 0', lineHeight: 1.5 }}>
+              Nothing captured yet — use Record and Screenshot in the overlay on your phone while you pay.
+            </p>
+          )}
+        </div>
+      )}
 
       {actionable && (
         <>

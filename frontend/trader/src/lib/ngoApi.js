@@ -95,6 +95,16 @@ export async function getTransactions() {
   return res.transactions;
 }
 
+// Payout evidence capture status for a payout — the record/screenshot/SMS flags
+// the Buy USDT ProcessModal checklist shows. Pass both the payout uuid and id
+// (the device may have captured under either — robust match, see the ngo route).
+// Flags only here; the heavy screenshot/SMS payloads are admin-only (full=1).
+export async function getPayoutEvidence(orderIds) {
+  const orderId = (Array.isArray(orderIds) ? orderIds : [orderIds]).filter(Boolean).join(',');
+  const res = await unwrap(api.get(`${PROXY}/ngo/payout-evidence?orderId=${encodeURIComponent(orderId)}`));
+  return res.evidence;
+}
+
 // Start connect process
 export async function connectAccount(accountId) {
   return unwrap(api.post(`${PROXY}/ngo/accounts/${accountId}/connect`));
