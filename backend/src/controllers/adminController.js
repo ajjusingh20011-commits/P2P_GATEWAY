@@ -293,8 +293,17 @@ const updateTraderSuspend = asyncHandler(async (req, res) => {
 
   const nextStatus = value.suspended ? 'suspended' : 'active';
   if (trader.user) await trader.user.update({ status: nextStatus });
-  // A suspended trader must not stay online (else they'd keep receiving orders).
-  if (value.suspended) await trader.update({ is_online: false });
+  if (value.suspended) {
+    // A suspended trader must not stay online (else they'd keep receiving orders).
+    await trader.update({ is_online: false });
+  } else {
+    // Reactivation restores the online state suspension forced off, with a
+    // fresh heartbeat window so the trader isn't immediately re-swept. If their
+    // panel isn't actually present, the normal heartbeat timeout drops them
+    // again within HEARTBEAT_TIMEOUT_MS — so this never strands orders on an
+    // absent trader, it only stops "reactivated but silently still offline".
+    await trader.update({ is_online: true, last_heartbeat: new Date() });
+  }
 
   if (value.suspended) emitToTrader(trader.id, 'trader:suspended', { trader_id: trader.id });
   emitToAdmin('trader:status', { trader_id: trader.id, status: nextStatus, ...(value.suspended ? { is_online: false } : {}) });

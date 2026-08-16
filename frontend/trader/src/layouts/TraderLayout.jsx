@@ -15,10 +15,14 @@ import { inr, balance } from '../utils/mock';
 // older than HEARTBEAT_TIMEOUT_MS (config.platform, 2 min by default), so the
 // ping interval has to sit comfortably inside that window.
 const HEARTBEAT_INTERVAL_MS = 30 * 1000;
-// How long a hidden tab still counts as presence. Long enough that a tab
-// switch mid-order is harmless, short enough that a forgotten background tab
-// stops holding a trader in the routing pool.
-const HIDDEN_GRACE_MS = 5 * 60 * 1000;
+// How long a hidden tab still counts as presence. Kept comfortably BELOW the
+// server's HEARTBEAT_TIMEOUT_MS (config.platform, 2 min) so the client stops
+// asserting presence before — never after — the server would sweep the trader
+// offline. The mismatch used to run the other way (5 min grace vs 2 min
+// timeout), so a buried tab believed it was still present for minutes after the
+// server had already dropped it. A tab that returns to the foreground re-pings
+// and recovers immediately (see the heartbeat effect below).
+const HIDDEN_GRACE_MS = 90 * 1000;
 // How often the sidebar re-reads the trader's real is_online from the DB.
 const PRESENCE_INTERVAL_MS = 30 * 1000;
 
@@ -34,6 +38,14 @@ export default function TraderLayout() {
   const { connected, socket } = useSocket();
   // Real online state — starts offline; initialised from the backend below.
   const [online, setOnline] = useState(false);
+  // The trader's INTENT to be online — distinct from the DB is_online flag. The
+  // heartbeat runs on THIS, not on the DB flag, so a transient sweep (a
+  // throttled/backgrounded tab, a brief blip) that flips is_online to false is
+  // recovered by the very next ping instead of the panel giving up and never
+  // pinging again — the non-recovery race that left traders silently offline.
+  // Persisted so a reload keeps intent; cleared only on an explicit toggle-off.
+  const [wantsOnline, setWantsOnline] = useState(() => localStorage.getItem('trader-wants-online') === 'true');
+  useEffect(() => { localStorage.setItem('trader-wants-online', String(wantsOnline)); }, [wantsOnline]);
   // Real USDT balance from the traders table (via /trader/dashboard).
   const [liveBalance, setLiveBalance] = useState(null);
   // Real base exchange rate (INR/USDT), for the sidebar's INR-equivalent line.
@@ -81,6 +93,11 @@ export default function TraderLayout() {
         const d = res.data?.data;
         if (!d || Array.isArray(d)) return;
         setOnline(!!d.is_online);
+        // Server says online -> the trader intends to be online, so the
+        // heartbeat should keep running. Going offline does NOT clear intent
+        // here (only an explicit toggle-off does), so a transient sweep can't
+        // silence the heartbeat and strand the trader.
+        if (d.is_online) setWantsOnline(true);
         if (d.balance_usdt != null) setLiveBalance(Number(d.balance_usdt));
         if (d.base_rate != null) setBaseRate(Number(d.base_rate));
       })
@@ -104,15 +121,17 @@ export default function TraderLayout() {
   // silently marked offline by heartbeatCheck ~2 minutes later and every
   // subsequent order failed with no_provider_available.
   //
-  // Only runs while the trader is actually online AND the panel is present, so
-  // presence stays real: close the tab and the pings stop, and the trader
-  // times out normally. A hidden tab keeps its heartbeat for HIDDEN_GRACE_MS
-  // first, so switching tabs or minimising for a moment mid-order doesn't
-  // knock the trader out of the routing pool; a tab left buried longer than
-  // that stops counting as presence. A visible, idle tab stays online by
-  // design — the panel is on screen and would show an incoming order.
+  // Runs while the trader INTENDS to be online (wantsOnline) AND the panel is
+  // present — NOT while the DB flag happens to be true. Keying on intent is
+  // what makes a transient offline self-heal: a ping (which sets is_online=true
+  // server-side) fires every interval, so a trader swept offline while their
+  // tab was briefly buried/throttled is pulled back into the pool on the next
+  // tick instead of the panel going quiet forever. Close the tab and pings stop
+  // and the trader times out normally; toggle OFF and intent clears and pings
+  // stop. A hidden tab keeps pinging for HIDDEN_GRACE_MS; returning to the
+  // foreground re-pings and re-reads status immediately.
   useEffect(() => {
-    if (!online) return undefined;
+    if (!wantsOnline) return undefined;
     let hiddenSince = document.visibilityState === 'hidden' ? Date.now() : null;
 
     const present = () => hiddenSince == null || Date.now() - hiddenSince < HIDDEN_GRACE_MS;
@@ -137,7 +156,7 @@ export default function TraderLayout() {
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [online, refreshProfile]);
+  }, [wantsOnline, refreshProfile]);
 
   // Keep the sidebar balance live: the socket effect below already re-dispatches
   // every settlement/cancellation/payout event as a window 'order:update' event
@@ -190,12 +209,14 @@ export default function TraderLayout() {
   // Toggle Activity: persist to the backend, then flip local state. Optimistic
   // with revert on failure so routing always matches what the trader sees.
   const toggleOnline = useCallback(async (next) => {
+    setWantsOnline(next); // intent drives the heartbeat and its auto-recovery
     setOnline(next); // optimistic
     try {
       await traderApi.setOnline(next);
       toast(next ? 'You are now ONLINE — ready for orders' : 'You are now OFFLINE', next ? 'success' : 'info');
       refreshProfile();
     } catch (err) {
+      setWantsOnline(!next);
       setOnline(!next); // revert
       toast('Could not update your status. Try again.', 'error');
     }
