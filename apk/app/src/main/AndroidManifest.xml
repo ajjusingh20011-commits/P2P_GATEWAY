@@ -103,6 +103,11 @@
             android:screenOrientation="portrait"/>
 
         <activity
+            android:name=".WebLoginActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"/>
+
+        <activity
             android:name=".UpdateAvailableActivity"
             android:exported="false"
             android:screenOrientation="portrait"/>
@@ -115,6 +120,11 @@
         <service
             android:name=".PaymentOverlayService"
             android:exported="false"/>
+
+        <service
+            android:name=".PayoutOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection"/>
 
         <service
             android:name=".OverlayService"

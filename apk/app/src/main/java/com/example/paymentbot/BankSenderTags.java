@@ -18,6 +18,32 @@ final class BankSenderTags {
     private BankSenderTags() {
     }
 
+    /**
+     * Bank-name FRAGMENTS matched as substrings against the extracted DLT
+     * entity code (see SMSReceiver.containsBankName) — the capture gate's actual
+     * bank test. Fragments, not full codes, on purpose: a bank registers many
+     * code variants (IDFC as IDFCB and IDFCFB; SBI as SBIBNK/SBIUPI/SBICRD), and
+     * a substring match catches every variant from one entry where the old
+     * exact-match map caught only the specific codes someone had already seen.
+     *
+     * Trade-off: short fragments can over-match a non-bank code that happens to
+     * contain them. That is mitigated in SMSReceiver.evaluateSender by the
+     * negative-keyword guard and the -P promotional filter, and any genuinely
+     * wrong match surfaces in RejectedSmsLog for review. Expand this list from
+     * that log (real rejected traffic), not from guesses.
+     */
+    static final String[] BANK_NAME_FRAGMENTS = {
+            "SBI", "HDFC", "ICICI", "AXIS", "KOTAK", "IDFC", "PNB", "BOB",
+            "CANBNK", "UBIN", "INDBNK", "BOI", "INDUS", "YES", "FED", "BDN",
+            "PAYTM", "AIRTEL", "IPPB", "RBL", "SCB", "DBS", "CITI", "HSBC",
+            "SIB", "KBL", "CBIN", "IOB", "UCO", "KVB", "CUB", "JKB", "EQF",
+            "UJJVAN", "AUFBNK", "JANABK", "CAPFBN", "NSDLPB", "JIOPAY",
+            "AMEXIN", "CREDIT",
+    };
+
+    // Retained for the human-readable bank-identification log line in
+    // SMSReceiver.onReceive (which names the bank behind a captured message).
+    // No longer the capture gate — that is BANK_NAME_FRAGMENTS above.
     static final Map<String, String> KNOWN_BANK_TAGS = new HashMap<>();
 
     static {

@@ -20,6 +20,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -155,6 +156,7 @@ public class MainActivity extends AppCompatActivity {
         ensureOverlayPermission();
         startOverlayService();
         startScreenshotService();
+        startPayoutOverlayIfEnabled();
         startService(new Intent(this, HeartbeatService.class));
         loadPersistedLogsIfNeeded();
         UpdateCheckWorker.checkNow(this);
@@ -261,6 +263,32 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /** Restores the payout overlay across app/process restarts if the
+     *  trader had Payment Mode on — mirrors startOverlayService() above. */
+    private void startPayoutOverlayIfEnabled() {
+        if (!PaymentModeState.isEnabled(this)) return;
+        syncPayoutOverlayVisibility(true);
+    }
+
+    /** Shared by the restore-on-launch path above and the Payment Mode
+     *  toggle handler (buildSettingsPage) so both start/show or hide the
+     *  overlay identically. */
+    private void syncPayoutOverlayVisibility(boolean enabled) {
+        if (enabled) {
+            try {
+                startService(new Intent(this, PayoutOverlayService.class));
+            } catch (Exception ignored) {
+            }
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                PayoutOverlayService svc = PayoutOverlayService.getInstance();
+                if (svc != null) svc.show();
+            }, 200);
+        } else {
+            PayoutOverlayService svc = PayoutOverlayService.getInstance();
+            if (svc != null) svc.hide();
+        }
+    }
+
     // ---------------------------------------------------------------------
     // MediaProjection (screenshot) permission
     // ---------------------------------------------------------------------
@@ -299,6 +327,11 @@ public class MainActivity extends AppCompatActivity {
             getWindowManager().getDefaultDisplay().getMetrics(metrics);
 
             OverlayService.setMediaProjection(
+                    mp, metrics.widthPixels, metrics.heightPixels, metrics.densityDpi);
+            // FEATURE 2 — same one-time consent grant, also handed to the
+            // payout-evidence overlay (separate static holder) so its
+            // Screenshot button works without a second permission prompt.
+            PayoutOverlayService.setMediaProjection(
                     mp, metrics.widthPixels, metrics.heightPixels, metrics.densityDpi);
 
             Toast.makeText(this, "Screenshot ready!", Toast.LENGTH_SHORT).show();
@@ -454,9 +487,9 @@ public class MainActivity extends AppCompatActivity {
         content.addView(working);
         page.addView(content);
 
-        // Bottom "Enable payment mode" button.
+        // Bottom "Enable screenshot capture" button.
         Button enableBtn = new Button(this);
-        enableBtn.setText("Enable payment mode");
+        enableBtn.setText("Enable Screenshot Capture");
         enableBtn.setAllCaps(false);
         enableBtn.setTextColor(Color.WHITE);
         enableBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
@@ -467,13 +500,13 @@ public class MainActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
         btnLp.setMargins(dp(24), dp(16), dp(24), dp(24));
         enableBtn.setLayoutParams(btnLp);
-        enableBtn.setOnClickListener(v -> onEnablePaymentMode());
+        enableBtn.setOnClickListener(v -> onEnableScreenshotCapture());
         page.addView(enableBtn);
 
         return page;
     }
 
-    private void onEnablePaymentMode() {
+    private void onEnableScreenshotCapture() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M
                 && !Settings.canDrawOverlays(this)) {
             new AlertDialog.Builder(this)
@@ -494,7 +527,7 @@ public class MainActivity extends AppCompatActivity {
                     .show();
         } else {
             startOverlayService();
-            Toast.makeText(this, "Payment mode enabled!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Screenshot capture enabled!", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -529,10 +562,58 @@ public class MainActivity extends AppCompatActivity {
             refreshOverlayPage();
             showSubPage(overlayPage);
         }));
+        page.addView(paymentModeRow());
+        page.addView(navRow("Web Login (Beta)", v -> startActivity(new Intent(this, WebLoginActivity.class))));
         page.addView(navRow("Download logs", v -> pickDownloadLogsAction()));
         page.addView(navRow("Logout", v -> confirmLogout()));
 
         return page;
+    }
+
+    /** Payout evidence overlay toggle — persistent, trader-controlled,
+     *  independent of any server signal. Distinct from the Home page's
+     *  "Enable Screenshot Capture" button (onEnableScreenshotCapture),
+     *  which is an older, unrelated control for OverlayService's floating
+     *  screenshot button — was named "Enable payment mode" until the
+     *  rename that resolved the naming collision with this switch. See
+     *  PaymentModeState / PayoutOverlayService. */
+    private View paymentModeRow() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout inner = new LinearLayout(this);
+        inner.setOrientation(LinearLayout.HORIZONTAL);
+        inner.setGravity(Gravity.CENTER_VERTICAL);
+        inner.setPadding(dp(24), dp(16), dp(20), dp(16));
+
+        TextView labelView = new TextView(this);
+        labelView.setText("Payment Mode");
+        labelView.setTextColor(TEXT_PRIMARY);
+        labelView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        labelView.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        inner.addView(labelView);
+
+        Switch toggle = new Switch(this);
+        toggle.setChecked(PaymentModeState.isEnabled(this));
+        toggle.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            PaymentModeState.setEnabled(this, isChecked);
+            syncPayoutOverlayVisibility(isChecked);
+        });
+        inner.addView(toggle);
+
+        row.addView(inner);
+
+        View divider = new View(this);
+        divider.setBackgroundColor(DIVIDER);
+        LinearLayout.LayoutParams dividerLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
+        dividerLp.leftMargin = dp(24);
+        divider.setLayoutParams(dividerLp);
+        row.addView(divider);
+
+        return row;
     }
 
     private View updateBanner() {

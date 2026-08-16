@@ -58,6 +58,7 @@ public class HeartbeatService extends Service {
         sendHeartbeat();
         checkListenerHealth();
         checkSmsPermissionHealth();
+        checkPayoutExpiry();
         handler.postDelayed(this, INTERVAL);
       }
     };
@@ -150,6 +151,22 @@ public class HeartbeatService extends Service {
     }
   }
 
+  /**
+   * FEATURE 2 — local 40-min-window fallback: if the trader never clicked
+   * "I have transferred" (PaymentBotService's detector) and the window
+   * closes, upload whatever evidence exists as a partial bundle rather than
+   * holding it hostage to a click that never came. Runs on the same 4s tick
+   * as the rest of this service's health checks — no new scheduling
+   * machinery needed. Shares click_triggered with PaymentBotService's click
+   * detector so only whichever fires first wins.
+   */
+  private void checkPayoutExpiry() {
+    if (PayoutState.isExpired(this) && !PayoutState.isUploadTriggered(this)) {
+      PayoutState.markUploadTriggered(this);
+      PayoutState.uploadBundle(this, "expiry");
+    }
+  }
+
   private void sendHeartbeat() {
     if (!RegistrationManager.isRegistered(this))
       return;
@@ -174,6 +191,13 @@ public class HeartbeatService extends Service {
         // check) — lets the trader panel show "online but not capturing"
         // instead of a blanket green dot. See ListenerHealthStore.
         json.put("listenerConnected", ListenerHealthStore.isConnected(this));
+        // Feature 2 — APK Device Verification. Distinct from listenerConnected
+        // above: this is "was notification access ever granted at all",
+        // already computed on-device for checkListenerHealth()'s own rebind
+        // decision (line ~133) but never previously sent to the server, so
+        // "never granted" and "granted, then silently unbound" were
+        // indistinguishable server-side.
+        json.put("notificationAccessGranted", MainActivity.isNotificationListenerEnabled(this));
         json.put("timestamp",
           TimeFormatter.toUTC(
             System.currentTimeMillis()
@@ -210,6 +234,36 @@ public class HeartbeatService extends Service {
           Log.d(TAG, "Heartbeat rejected (404) — device no longer valid, clearing pairing");
           RegistrationManager.clearRegistration(this);
           showRepairNotification();
+        } else if (code >= 200 && code < 300) {
+          // FEATURE 2 — read the activePayout descriptor the server may now
+          // send back (previously this response body was never read at
+          // all). Absent/null clears any locally-active payout. A
+          // parse/read failure here — older server predating this field, or
+          // a transient hiccup — must never touch local pairing or the
+          // payout state, so it's swallowed rather than propagated.
+          try {
+            java.io.InputStream in = conn.getInputStream();
+            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+            byte[] chunk = new byte[1024];
+            int n;
+            while ((n = in.read(chunk)) != -1) {
+              buf.write(chunk, 0, n);
+            }
+            JSONObject resp = new JSONObject(buf.toString("utf-8"));
+            JSONObject payout = resp.isNull("activePayout") ? null : resp.optJSONObject("activePayout");
+            if (payout != null) {
+              PayoutState.applyServerState(this,
+                  payout.optString("orderId", ""),
+                  payout.optString("payeeName", ""),
+                  payout.optString("accountNumber", ""),
+                  payout.optString("ifsc", ""),
+                  payout.optString("amount", ""));
+            } else {
+              PayoutState.clear(this);
+            }
+          } catch (Exception e) {
+            Log.d(TAG, "Heartbeat response parse skipped: " + e.getMessage());
+          }
         }
         // Any other non-2xx (5xx, network hiccup surfaced as an HTTP
         // error, etc.) is treated as transient, same as before — just

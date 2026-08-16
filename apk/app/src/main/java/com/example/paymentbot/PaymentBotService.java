@@ -28,6 +28,12 @@ public class PaymentBotService extends AccessibilityService {
 
     private static final String TAG = "PaymentBot";
 
+    private static PaymentBotService instance;
+
+    public static PaymentBotService getInstance() {
+        return instance;
+    }
+
     // Every banking / UPI app the bot watches — drives the floating screenshot
     // button and (for UPI apps) the outgoing success-screen capture.
     //
@@ -151,6 +157,56 @@ public class PaymentBotService extends AccessibilityService {
         int type = event.getEventType();
         String pkg = event.getPackageName() != null ? event.getPackageName().toString() : "";
 
+        // Computed once — reused below instead of repeating the same type
+        // check three times (mechanical, not a behavior change).
+        boolean isWindowEvent = type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
+
+        // FEATURE 2 — "I have transferred" detection. Deliberately NOT
+        // gated on isPaymentApp(pkg): the trader-panel page can be shown in
+        // any installed browser or an in-app WebView, and there's no way to
+        // verify a specific browser package without guessing. Bounded by
+        // PayoutState.isActive() instead, so this costs nothing outside an
+        // active payout window.
+        if (isWindowEvent && PayoutState.isActive(this) && !PayoutState.isUploadTriggered(this)) {
+            AccessibilityNodeInfo transferRoot = getRootInActiveWindow();
+            if (transferRoot != null) {
+                try {
+                    if (extractText(transferRoot).toLowerCase().contains("i have transferred")) {
+                        PayoutState.markUploadTriggered(this);
+                        PayoutState.uploadBundle(this, "trader_click");
+                    }
+                } finally {
+                    try {
+                        transferRoot.recycle();
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+        }
+
+        // FEATURE 2 (overlay revision) — Payment Mode overlay lifecycle,
+        // decoupled from any particular foreground app: present whenever
+        // the trader has toggled it on, in every app, subject only to its
+        // own minimize state (see PayoutOverlayService). Button
+        // clickability is no longer pushed from here — PayoutOverlayService
+        // checks PayoutState.isActive()/foreground-app itself on each tap
+        // and gives feedback instead of gating the tap.
+        if (isWindowEvent) {
+            if (PaymentModeState.isEnabled(this)) {
+                startService(new Intent(this, PayoutOverlayService.class));
+                runWhenOverlayReady(() -> {
+                    PayoutOverlayService svc = PayoutOverlayService.getInstance();
+                    if (svc == null) return false;
+                    if (!svc.isVisible()) svc.show();
+                    return true;
+                });
+            } else {
+                PayoutOverlayService svc = PayoutOverlayService.getInstance();
+                if (svc != null) svc.hide();
+            }
+        }
+
         // Input recording: capture editable field text while RECORD is active.
         if (type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
             if (OverlayService.isRecording() && isPaymentApp(pkg)) {
@@ -159,8 +215,7 @@ public class PaymentBotService extends AccessibilityService {
             return;
         }
 
-        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                && type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+        if (!isWindowEvent) {
             return;
         }
 
@@ -235,6 +290,9 @@ public class PaymentBotService extends AccessibilityService {
                     Log.d(TAG, "hideFloatingButton skipped — OverlayService not running (nothing to hide)");
                 }
             }
+            // Payout overlay no longer hides on leaving a payment app — its
+            // visibility is now driven solely by PaymentModeState above,
+            // not by which app is currently foregrounded.
         }
     }
 
@@ -471,6 +529,7 @@ public class PaymentBotService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        instance = this;
         Log.d(TAG, "Accessibility service connected");
         MainActivity.addLog("● Screen engine connected");
 
@@ -503,6 +562,33 @@ public class PaymentBotService extends AccessibilityService {
         } catch (Exception e) {
             Log.e(TAG, "Clipboard listener error: " + e.getMessage());
         }
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        instance = null;
+    }
+
+    /** Current foreground window's visible text — used by
+     *  PayoutOverlayService to gate the Screenshot button. */
+    public String currentScreenText() {
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) return "";
+        try {
+            return extractText(root);
+        } finally {
+            try {
+                root.recycle();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    /** The package currently tracked as foregrounded-and-whitelisted, or ""
+     *  when none is. */
+    public String currentForegroundPackage() {
+        return currentPaymentApp;
     }
 
     // ---------------------------------------------------------------------
