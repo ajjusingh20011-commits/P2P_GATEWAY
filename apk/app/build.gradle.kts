@@ -21,8 +21,14 @@ android {
         // committed values did not describe any APK anyone was running. The
         // versionName carries the commit the build's behaviour comes from, so
         // a phone in the field can be traced back to source.
-        versionCode = 6
-        versionName = "1.4-1317477"
+        //
+        // The committed value here had drifted to 6 while the VPS already
+        // advertised 7 (GET /api/apk/latest-version, checked live before this
+        // build) — confirms the note above wasn't followed for that release.
+        // Set to 8 here, above the server's 7, carrying dfbb00c (the payout
+        // evidence capture + content-based SMS push commit this build ships).
+        versionCode = 8
+        versionName = "1.5-dfbb00c"
 
         // Room schema export — not used for migrations yet (the app is
         // pre-install-base, so destructive fallback is acceptable), but
@@ -74,4 +80,9 @@ dependencies {
     // events (and crash reports) — survives process death/reboot because
     // WorkManager persists its own work queue independently of our Room DB.
     implementation("androidx.work:work-runtime:2.9.0")
+
+    // Local JVM unit tests for the pure SMS bank-sender gate (SMSReceiver
+    // .evaluateSender). Runs via `gradlew testDebugUnitTest` — no APK build,
+    // no device. The gate methods touch no Android APIs, so no Robolectric.
+    testImplementation("junit:junit:4.13.2")
 }
