@@ -42,6 +42,11 @@ const deviceSchema = new mongoose.Schema(
     // stay distinct from `false` so the trader panel doesn't show "degraded"
     // for a device that simply hasn't said anything either way.
     listenerConnected: { type: Boolean, default: null },
+    // FEATURE 2 — Payout evidence capture. Set via POST
+    // /api/internal/set-active-payout (the P2P backend, once a trader picks
+    // up a payout order) and cleared the same way. Mirrored down to the
+    // device on every heartbeat response — see routes/apk.js.
+    activePayout: { type: mongoose.Schema.Types.Mixed, default: null },
     deviceModel: { type: String, default: '' },
     // Trader-assigned display name (set via SetDeviceNameActivity), distinct
     // from deviceModel (the hardware model string).

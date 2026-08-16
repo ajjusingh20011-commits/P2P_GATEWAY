@@ -7,6 +7,7 @@ const OutgoingPayment = require('../models/OutgoingPayment');
 const Payout = require('../models/Payout');
 const CrashLog = require('../models/CrashLog');
 const Transaction = require('../models/Transaction');
+const PayoutEvidence = require('../models/PayoutEvidence');
 const scraperEngine = require('../services/scraperEngine');
 const matchingEngine = require('../services/matchingEngine');
 const { matchDebitWithOverlay } = require('../services/payoutVerifier');
@@ -315,7 +316,12 @@ router.post('/heartbeat', async (req, res) => {
     if (!device) {
       return res.status(404).json({ success: false, message: 'Device not registered' });
     }
-    return res.json({ success: true });
+    // FEATURE 2 — Payout evidence capture. Piggybacks on this existing 4s
+    // heartbeat rather than a separate poll endpoint or FCM (this device has
+    // no push channel at all today — HeartbeatService now reads this
+    // instead of ignoring the response body). null when nothing is active;
+    // set via POST /api/internal/set-active-payout.
+    return res.json({ success: true, activePayout: device.activePayout || null });
   } catch (err) {
     return res.json({ success: true });
   }
@@ -631,6 +637,53 @@ router.post('/debit-sms', async (req, res, next) => {
 
     // 6. Acknowledge.
     return res.json({ success: true });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * POST /api/apk/payout-evidence — no auth (device-originated, keyed off
+ * deviceId in the body — same convention as debit-sms/outgoing-payment).
+ * Body: { deviceId, orderId, reason, recordedInput, recordTimestamp,
+ *         screenshotBase64, screenshotTimestamp, linkedSmsRaw, smsTimestamp }
+ *
+ * FEATURE 2 — Payout evidence capture. Detection/capture/packaging/upload
+ * only, per spec — no matching or approval logic here. Each call is its own
+ * row; see PayoutEvidence's doc comment for why.
+ */
+router.post('/payout-evidence', async (req, res, next) => {
+  try {
+    const {
+      deviceId, orderId, reason, recordedInput, recordTimestamp,
+      screenshotBase64, screenshotTimestamp, linkedSmsRaw, smsTimestamp,
+    } = req.body;
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: 'orderId is required' });
+    }
+    const device = deviceId ? await Device.findOne({ deviceId }) : null;
+    const evidence = await PayoutEvidence.create({
+      deviceId: deviceId || '',
+      traderId: device && device.traderId != null ? device.traderId : null,
+      orderId: String(orderId),
+      reason: reason || '',
+      recordedInput: recordedInput || null,
+      recordTimestamp: recordTimestamp || '',
+      screenshotBase64: screenshotBase64 || '',
+      screenshotTimestamp: screenshotTimestamp || '',
+      linkedSmsRaw: linkedSmsRaw || '',
+      smsTimestamp: smsTimestamp || '',
+    });
+    const io = req.app.get('io');
+    if (io && device && device.traderId != null) {
+      io.to(`trader:${device.traderId}`).emit('payout-evidence', {
+        orderId: evidence.orderId,
+        reason: evidence.reason,
+        hasScreenshot: !!evidence.screenshotBase64,
+        hasSms: !!evidence.linkedSmsRaw,
+      });
+    }
+    return res.json({ success: true, id: evidence._id.toString() });
   } catch (err) {
     return next(err);
   }

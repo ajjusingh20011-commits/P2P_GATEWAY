@@ -124,4 +124,96 @@ router.get('/connection-liveness', async (req, res, next) => {
   }
 });
 
+/**
+ * POST /api/internal/set-active-payout
+ * Body: { device_id, orderId, payeeName, accountNumber, ifsc, amount } to
+ * activate, or { device_id, orderId: null } (or omitted) to clear.
+ *
+ * FEATURE 2 — Payout evidence capture, signal-delivery leg. The P2P backend
+ * calls this once a trader picks up a payout order for a device; mirrored
+ * down to the device on its next heartbeat (routes/apk.js). Nothing calls
+ * this yet from the P2P backend's own payout-pickup flow — that wiring is a
+ * separate follow-up; this endpoint is real and independently testable
+ * (call it directly, then watch a real device's next heartbeat response).
+ */
+router.post('/set-active-payout', async (req, res, next) => {
+  try {
+    const { device_id, orderId, payeeName, accountNumber, ifsc, amount } = req.body || {};
+    if (!device_id || !mongoose.Types.ObjectId.isValid(device_id)) {
+      return res.status(400).json({ success: false, message: 'device_id is required' });
+    }
+    const activePayout = orderId
+      ? {
+          orderId: String(orderId),
+          payeeName: payeeName || '',
+          accountNumber: accountNumber || '',
+          ifsc: ifsc || '',
+          amount: amount != null ? String(amount) : '',
+          activatedAt: new Date(),
+        }
+      : null;
+    const device = await Device.findByIdAndUpdate(device_id, { activePayout }, { new: true });
+    if (!device) {
+      return res.status(404).json({ success: false, message: 'Device not found' });
+    }
+    return res.json({ success: true, activePayout: device.activePayout });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * POST /api/internal/set-active-payout-for-trader — arm (or clear) EVERY device
+ * a trader owns to capture payout evidence for one order.
+ *
+ * FEATURE 2 multi-device: a trader may process a payout on ANY of their paired
+ * phones, and Device.activePayout is a single slot, so the P2P backend arms all
+ * of a trader's devices at pickup; whichever phone they actually use is already
+ * capturing (the server matches the upload to the right order by content).
+ *
+ * Body: { traderId, orderId, payeeName, accountNumber, ifsc, amount } to arm,
+ * or { traderId, orderId, clear: true } to clear — the clear is TARGETED to
+ * that orderId so it never wipes an arming the trader has since taken for a
+ * different order. Trader-scoped sibling of set-active-payout above.
+ */
+router.post('/set-active-payout-for-trader', async (req, res, next) => {
+  try {
+    const {
+      traderId, orderId, payeeName, accountNumber, ifsc, amount, clear,
+    } = req.body || {};
+    if (traderId == null || !Number.isFinite(Number(traderId))) {
+      return res.status(400).json({ success: false, message: 'traderId is required' });
+    }
+    const tid = Number(traderId);
+
+    if (clear) {
+      if (!orderId) {
+        return res.status(400).json({ success: false, message: 'orderId is required to clear' });
+      }
+      // Only clear devices still armed for THIS order.
+      const r = await Device.updateMany(
+        { traderId: tid, 'activePayout.orderId': String(orderId) },
+        { activePayout: null }
+      );
+      return res.json({ success: true, cleared: r.modifiedCount != null ? r.modifiedCount : (r.nModified || 0) });
+    }
+
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: 'orderId is required to arm' });
+    }
+    const activePayout = {
+      orderId: String(orderId),
+      payeeName: payeeName || '',
+      accountNumber: accountNumber || '',
+      ifsc: ifsc || '',
+      amount: amount != null ? String(amount) : '',
+      activatedAt: new Date(),
+    };
+    const r = await Device.updateMany({ traderId: tid }, { activePayout });
+    return res.json({ success: true, armed: r.modifiedCount != null ? r.modifiedCount : (r.nModified || 0) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 module.exports = router;

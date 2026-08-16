@@ -23,7 +23,16 @@ const DEFAULTS = {
   order_expiry_minutes: '10',
   min_order_amount: '100',
   max_order_amount: '500000',
-  payout_expiry_minutes: '15',
+  // Feature 2 payout lifecycle — all admin-adjustable:
+  //  payout_expiry_minutes  = the pickup -> transfer window (minutes a trader
+  //    has after picking up a payout to confirm transfer before it goes to
+  //    dispute). This IS that window; raised from 15 to 40 per spec.
+  //  payout_dispute_hours   = how long a disputed payout sits before it auto-
+  //    returns to the global pool for another trader.
+  //  max_concurrent_payouts = payouts one trader may hold 'in_processing' at once.
+  payout_expiry_minutes: '40',
+  payout_dispute_hours: '3',
+  max_concurrent_payouts: '3',
 };
 
 /** Get a raw string setting (cache → db → default). */

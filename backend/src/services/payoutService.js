@@ -39,12 +39,19 @@ const {
   emitToTrader,
   broadcast,
 } = require('../websocket');
+const axios = require('axios');
+const { internalAuthHeaders } = require('./ngoServiceAuth');
+
+// ngo-backend holds the devices; the P2P backend arms them for capture on
+// pickup and clears them when a payout leaves processing.
+const NGO_BASE = process.env.NGO_BACKEND_URL || 'http://localhost:3000';
 
 const round8 = (n) => +Number(n).toFixed(8);
 const round4 = (n) => +Number(n).toFixed(4);
 
 // How long a trader has to complete the transfer after accepting.
-const DEFAULT_EXPIRY_MINUTES = 15;
+const DEFAULT_EXPIRY_MINUTES = 40; // pickup -> transfer window; adjustable via payout_expiry_minutes
+const DEFAULT_MAX_CONCURRENT = 3;  // payouts a trader may hold in processing; adjustable via max_concurrent_payouts
 
 // Recipient fields hidden from traders in the global awaiting pool — only
 // revealed once a trader has accepted (and thus owns) the request.
@@ -58,6 +65,55 @@ function sanitizePool(row) {
 
 async function expiryMinutes() {
   return settingsService.getNumber('payout_expiry_minutes', DEFAULT_EXPIRY_MINUTES);
+}
+
+/**
+ * Feature 2 — arm EVERY device the trader owns to capture payout evidence for
+ * this order. A trader may process a payout on any of their paired phones and
+ * Device.activePayout is a single slot, so all their devices are armed at
+ * pickup; whichever phone they actually use is already capturing, and the
+ * server matches the uploaded evidence to the right order by content later.
+ *
+ * Best-effort: the money side has already committed, so a briefly-unreachable
+ * ngo-backend must not fail the pickup — but a failure means capture won't
+ * auto-start, so it is logged loudly.
+ */
+async function armTraderDevicesForPayout(traderId, row) {
+  try {
+    await axios.post(
+      `${NGO_BASE}/api/internal/set-active-payout-for-trader`,
+      {
+        traderId,
+        orderId: row.uuid,
+        payeeName: row.recipient_name || '',
+        accountNumber: row.account_number || row.upi_id || '',
+        ifsc: row.ifsc_code || '',
+        amount: row.amount_inr != null ? String(row.amount_inr) : '',
+      },
+      { timeout: 5000, headers: internalAuthHeaders() }
+    );
+  } catch (err) {
+    logger.warn(`payout: could not arm devices for trader ${traderId} order ${row.uuid} — evidence capture will not auto-start: ${err.message}`);
+  }
+}
+
+/**
+ * Feature 2 — clear the active-payout arming for this order across the trader's
+ * devices, once the payout leaves in_processing (transferred / expired /
+ * canceled). Targeted to this orderId so it never wipes an arming the trader
+ * has since taken for a different order. Best-effort, same reasoning as above.
+ */
+async function clearTraderDevicesPayout(traderId, orderUuid) {
+  if (!traderId || !orderUuid) return;
+  try {
+    await axios.post(
+      `${NGO_BASE}/api/internal/set-active-payout-for-trader`,
+      { traderId, orderId: orderUuid, clear: true },
+      { timeout: 5000, headers: internalAuthHeaders() }
+    );
+  } catch (err) {
+    logger.warn(`payout: could not clear device arming for trader ${traderId} order ${orderUuid}: ${err.message}`);
+  }
 }
 
 /**
@@ -184,8 +240,9 @@ async function getForTrader(traderId, id) {
 async function accept(traderId, id) {
   const base = await settingsService.getNumber('base_exchange_rate', 100);
   const mins = await expiryMinutes();
+  const maxConcurrent = await settingsService.getNumber('max_concurrent_payouts', DEFAULT_MAX_CONCURRENT);
 
-  return db.sequelize.transaction(async (transaction) => {
+  const row = await db.sequelize.transaction(async (transaction) => {
     const row = await db.PayoutRequest.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
     if (!row) throw Object.assign(new Error('Payout request not found'), { status: 404 });
     if (row.status !== 'awaiting_processing' || row.assigned_trader_id != null) {
@@ -210,6 +267,18 @@ async function accept(traderId, id) {
     // must be active (above), the request must still be unassigned and
     // awaiting_processing (above), both balances must cover the payout
     // (below), and the row locks guard against a double accept.
+
+    // Hard cap on how many payouts a trader may hold in 'in_processing' at once
+    // (admin-adjustable, max_concurrent_payouts). Race-safe: the trader row is
+    // locked above, so two concurrent accepts by the same trader serialize and
+    // the second sees the first's committed count.
+    const activeCount = await db.PayoutRequest.count({
+      where: { assigned_trader_id: traderId, status: 'in_processing' },
+      transaction,
+    });
+    if (activeCount >= maxConcurrent) {
+      throw Object.assign(new Error(`You can hold at most ${maxConcurrent} payouts in processing at once — finish one first`), { status: 409 });
+    }
 
     const merchant = await db.Merchant.findByPk(row.merchant_id, { transaction, lock: transaction.LOCK.UPDATE });
     if (!merchant) throw Object.assign(new Error('Merchant not found'), { status: 404 });
@@ -242,6 +311,12 @@ async function accept(traderId, id) {
     logger.info(`payout: trader ${traderId} accepted ${row.uuid}`);
     return row;
   });
+
+  // After the money side commits, arm the trader's devices to capture evidence
+  // for this order (best-effort — see armTraderDevicesForPayout). This is the
+  // accept() -> set-active-payout wiring the capture chain was missing.
+  await armTraderDevicesForPayout(traderId, row);
+  return row;
 }
 
 /** in_processing → awaiting_settlement (trader confirms they sent the money). */
@@ -250,6 +325,9 @@ async function transferred(traderId, id, { receipt_url } = {}) {
   if (row.status !== 'in_processing') throw Object.assign(new Error(`Cannot mark transferred from ${row.status}`), { status: 409 });
 
   await row.update({ status: 'awaiting_settlement', transferred_at: new Date(), receipt_url: receipt_url || row.receipt_url });
+  // The capture window for this order is over — stop the trader's devices
+  // capturing for it (the evidence bundle upload is triggered by this click).
+  await clearTraderDevicesPayout(traderId, row.uuid);
   const summary = { id: row.id, uuid: row.uuid, trader_id: traderId, status: row.status };
   emitToAdmin('payout:transferred', summary);
   emitToMerchant(row.merchant_id, 'payout:transferred', summary);
@@ -455,6 +533,7 @@ async function checkExpired() {
   });
   let n = 0;
   for (const row of rows) {
+    let expired = null;
     // eslint-disable-next-line no-await-in-loop
     await db.sequelize.transaction(async (transaction) => {
       const fresh = await db.PayoutRequest.findByPk(row.id, { transaction, lock: transaction.LOCK.UPDATE });
@@ -469,7 +548,12 @@ async function checkExpired() {
       if (fresh.assigned_trader_id) emitToTrader(fresh.assigned_trader_id, 'payout:expired', summary);
       emitToMerchant(fresh.merchant_id, 'payout:disputed', summary);
       n += 1;
+      expired = { traderId: fresh.assigned_trader_id, uuid: fresh.uuid };
     });
+    // Order timed out — stop the trader's devices capturing for it (outside the
+    // txn: it's a best-effort cross-service call, not part of the DB write).
+    // eslint-disable-next-line no-await-in-loop
+    if (expired) await clearTraderDevicesPayout(expired.traderId, expired.uuid);
   }
   if (n) logger.info(`payout: expiry sweep moved ${n} request(s) to dispute`);
   return { expired: n };
