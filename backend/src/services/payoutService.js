@@ -52,6 +52,7 @@ const round4 = (n) => +Number(n).toFixed(4);
 // How long a trader has to complete the transfer after accepting.
 const DEFAULT_EXPIRY_MINUTES = 40; // pickup -> transfer window; adjustable via payout_expiry_minutes
 const DEFAULT_MAX_CONCURRENT = 3;  // payouts a trader may hold in processing; adjustable via max_concurrent_payouts
+const DEFAULT_DISPUTE_HOURS = 3;   // how long a dispute sits before auto-returning to the pool; adjustable via payout_dispute_hours
 
 // Recipient fields hidden from traders in the global awaiting pool — only
 // revealed once a trader has accepted (and thus owns) the request.
@@ -559,6 +560,61 @@ async function checkExpired() {
   return { expired: n };
 }
 
+/**
+ * Return payouts that have sat in `dispute` longer than payout_dispute_hours
+ * back to the global pool for a different trader to pick up. Resets the row to
+ * awaiting_processing and clears the accept-time state (assigned trader, timer,
+ * dispute markers); the rate is re-snapshotted on the next accept(). Only
+ * touches still-disputed rows, so it can never disturb one an admin has since
+ * resolved.
+ *
+ * NOTE: "a different trader" is not yet enforced — the returned request is open
+ * to the whole pool, including the trader who let it lapse. Excluding that
+ * trader needs a remembered previous-trader id and belongs with the per-trader
+ * pool-access layer (still to build).
+ */
+async function returnDisputesToPool() {
+  const hours = await settingsService.getNumber('payout_dispute_hours', DEFAULT_DISPUTE_HOURS);
+  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
+  const rows = await db.PayoutRequest.findAll({
+    where: { status: 'dispute', disputed_at: { [Op.lt]: cutoff } },
+    limit: 200,
+  });
+  let n = 0;
+  for (const row of rows) {
+    let returned = null;
+    // eslint-disable-next-line no-await-in-loop
+    await db.sequelize.transaction(async (transaction) => {
+      const fresh = await db.PayoutRequest.findByPk(row.id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!fresh || fresh.status !== 'dispute') return; // admin resolved it in the meantime
+      const prevTrader = fresh.assigned_trader_id;
+      await fresh.update(
+        {
+          status: 'awaiting_processing',
+          assigned_trader_id: null,
+          accepted_at: null,
+          expires_at: null,
+          disputed_at: null,
+          dispute_reason: null,
+        },
+        { transaction }
+      );
+      returned = { uuid: fresh.uuid, prevTrader };
+      n += 1;
+    });
+    if (returned) {
+      // The order is no longer this trader's — stop any of their devices still
+      // armed for it, and put it back in every trader's pool view.
+      // eslint-disable-next-line no-await-in-loop
+      if (returned.prevTrader) await clearTraderDevicesPayout(returned.prevTrader, returned.uuid);
+      broadcast('payout:returned-to-pool', { uuid: returned.uuid });
+      emitToAdmin('payout:returned-to-pool', { uuid: returned.uuid });
+    }
+  }
+  if (n) logger.info(`payout: returned ${n} stale dispute(s) to the global pool`);
+  return { returned: n };
+}
+
 module.exports = {
   computeRate,
   createRequest,
@@ -576,4 +632,5 @@ module.exports = {
   reject,
   disputeResolve,
   checkExpired,
+  returnDisputesToPool,
 };

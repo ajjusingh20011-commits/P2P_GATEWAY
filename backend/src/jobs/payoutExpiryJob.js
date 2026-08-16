@@ -1,17 +1,21 @@
 'use strict';
 
 /**
- * payoutExpiryJob — moves in_processing payout requests whose transfer timer
- * elapsed into `dispute` (per spec: accepted but not transferred in time → the
- * admin must review). Runs in-process every 30s (works without Redis), like the
- * order-expiry sweep. Delegates the actual work to payoutService.checkExpired,
- * which is transactional and only touches still-in_processing rows.
+ * payoutExpiryJob — the payout lifecycle sweep. Two stages, both transactional
+ * and each only touching rows still in the expected status:
+ *   1. in_processing whose transfer timer elapsed  -> dispute
+ *      (accepted but not transferred in time; the admin must review).
+ *   2. dispute that has sat past payout_dispute_hours -> back to the global
+ *      pool (awaiting_processing) for another trader to pick up.
+ * Runs in-process every 30s (works without Redis), like the order-expiry sweep.
  */
 
 const payoutService = require('../services/payoutService');
 
 async function checkExpiredPayouts() {
-  return payoutService.checkExpired();
+  const expired = await payoutService.checkExpired();
+  const returned = await payoutService.returnDisputesToPool();
+  return { ...expired, ...returned };
 }
 
 module.exports = { checkExpiredPayouts };
