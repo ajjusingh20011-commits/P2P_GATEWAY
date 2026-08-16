@@ -14,6 +14,7 @@ const Device = require('../models/Device');
 const ledgerService = require('../services/ledgerService');
 const Account = require('../models/Account');
 const Transaction = require('../models/Transaction');
+const PayoutEvidence = require('../models/PayoutEvidence');
 const Ledger = require('../models/Ledger');
 const PaytmScraper = require('../services/webScraper')
 const SessionStore = require('../services/SessionStore')
@@ -560,6 +561,86 @@ router.get('/stats', verifyToken, requireRole(ROLES.NGO_STAFF, ROLES.ADMIN), asy
         activeAccounts,
       },
     });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * GET /api/ngo/payout-evidence?orderId=X[,Y][&full=1]
+ *
+ * FEATURE 2 — Payout evidence, read side. Aggregates the per-upload
+ * PayoutEvidence rows for an order (the initial bundle and any sms_followup /
+ * expiry rows are separate documents) into ONE status for the trader checklist
+ * and the admin review queue.
+ *
+ * orderId may be a comma-separated list of candidate ids — the caller passes
+ * BOTH the payout's uuid and its numeric id, because whichever the device
+ * captured under is ambiguous today (see the accept()->set-active-payout
+ * wiring); matching on either is the robust choice.
+ *
+ * The heavy payloads (screenshotBase64, linkedSmsRaw, recordedInput) are
+ * returned ONLY when full=1 — the admin viewer asks for them; the trader
+ * checklist only needs the has-record/has-screenshot/has-sms flags, so it does
+ * not ship a base64 image to every trader panel.
+ *
+ * Scoped by resolveTraderFilter: a trader-service caller only ever sees their
+ * own evidence; an admin may read any order's.
+ */
+router.get('/payout-evidence', verifyServiceOrAdmin, async (req, res, next) => {
+  try {
+    const scope = resolveTraderFilter(req);
+    if (scope == null) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
+    }
+    const raw = String(req.query.orderId || '').trim();
+    if (!raw) {
+      return res.status(400).json({ success: false, message: 'orderId is required' });
+    }
+    const orderIds = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    const full = req.query.full === '1' || req.query.full === 'true';
+
+    const rows = await PayoutEvidence.find({ ...scope, orderId: { $in: orderIds } })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    const evidence = {
+      orderId: orderIds[0],
+      hasRecord: false,
+      hasScreenshot: false,
+      hasSms: false,
+      recordTimestamp: null,
+      screenshotTimestamp: null,
+      smsTimestamp: null,
+      reasons: [],
+      uploadCount: rows.length,
+    };
+    if (full) {
+      evidence.recordedInput = null;
+      evidence.screenshotBase64 = null;
+      evidence.linkedSmsRaw = null;
+    }
+    for (const r of rows) {
+      if (r.reason) evidence.reasons.push(r.reason);
+      const hasRecord = r.recordedInput != null
+        && (typeof r.recordedInput !== 'object' || Object.keys(r.recordedInput).length > 0);
+      if (hasRecord) {
+        evidence.hasRecord = true;
+        evidence.recordTimestamp = r.recordTimestamp || evidence.recordTimestamp;
+        if (full) evidence.recordedInput = r.recordedInput;
+      }
+      if (r.screenshotBase64) {
+        evidence.hasScreenshot = true;
+        evidence.screenshotTimestamp = r.screenshotTimestamp || evidence.screenshotTimestamp;
+        if (full) evidence.screenshotBase64 = r.screenshotBase64;
+      }
+      if (r.linkedSmsRaw) {
+        evidence.hasSms = true;
+        evidence.smsTimestamp = r.smsTimestamp || evidence.smsTimestamp;
+        if (full) evidence.linkedSmsRaw = r.linkedSmsRaw;
+      }
+    }
+    return res.json({ success: true, evidence });
   } catch (err) {
     return next(err);
   }

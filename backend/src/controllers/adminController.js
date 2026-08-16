@@ -1001,6 +1001,29 @@ const getTraderNotifications = asyncHandler(async (req, res) => {
   });
 });
 
+// GET /admin/payout-requests/:id/evidence — the captured payout evidence for
+// the admin review queue (Feature 2). Evidence lives in ngo-backend (Mongo),
+// keyed by the order id the device uploaded under; we proxy there with a
+// service token minted for the payout's ASSIGNED trader (the one whose device
+// captured it), asking for the full payload (screenshot + SMS + recorded
+// input) since this feeds the admin's inline image viewer. Robust key: the
+// order id is ambiguous today, so we pass BOTH the payout uuid and numeric id.
+const getPayoutEvidence = asyncHandler(async (req, res) => {
+  const payout = await db.PayoutRequest.findByPk(req.params.id);
+  if (!payout) return fail(res, 404, 'Payout not found');
+  const traderId = payout.assigned_trader_id;
+  if (!traderId) {
+    // Not yet picked up by any trader — no device captured for it.
+    return ok(res, { evidence: { orderId: payout.uuid, hasRecord: false, hasScreenshot: false, hasSms: false, uploadCount: 0 } });
+  }
+  const orderId = [payout.uuid, String(payout.id)].join(',');
+  const resp = await ngoGetForTrader(traderId, '/api/ngo/payout-evidence', { orderId, full: 1 });
+  if (!resp || resp.status >= 400 || !resp.data) {
+    return fail(res, 502, 'Could not load payout evidence from ngo-backend');
+  }
+  return ok(res, { evidence: resp.data.evidence || null });
+});
+
 // GET /admin/traders/:id — header + top summary + Overview + Payment
 // Accounts + Devices + Merchant Routing in one call (all naturally
 // small/bounded per trader); Orders/Balance History/Disputes stay separate,
@@ -1589,6 +1612,7 @@ module.exports = {
   getMatchingDetail,
   getTraderDetail,
   getTraderNotifications,
+  getPayoutEvidence,
   getTraderBalanceLogs,
   getTraderActivity,
   getMerchantDetail,
