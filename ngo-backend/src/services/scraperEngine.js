@@ -140,6 +140,32 @@ async function scrapeAccount(accountId) {
  * and move money against the wrong trade.
  */
 const RAW_EVENT_DEDUPE_WINDOW_MINUTES = 24 * 60;
+// Tighter window for the weaker fallback key (device+amount, no payer/time).
+// Set to 20 to safely cover the observed re-post gap, which reaches ~16 min — a
+// literal 15-min window would miss a 16-min re-post, defeating the fallback.
+// Still short enough that a genuine second same-amount payment to the same
+// device more than 20 min apart is NOT suppressed.
+const CONTENT_FALLBACK_WINDOW_MINUTES = 20;
+
+// GPay (and others) shift a payment's text between the notification title and
+// body across re-posts, so exact sender/body no longer identifies the same
+// payment (BUG-52). These pull the two signals that ARE stable across re-posts
+// out of the combined title+body: the payer name and the embedded payment time
+// ("at 5:49 pm"), so the dedupe recognises the same real payment regardless of
+// how the app worded each post.
+function extractPayerName(text) {
+  const m = /(?:received\s+from|debited\s+by|credited\s+by|\bfrom|\bby)\s+([A-Za-z][A-Za-z.'\- ]{1,39}?)(?=\s*(?:\bon\b|\bat\b|\bvia\b|\bfor\b|₹|rs\.?|inr|upi|ref|utr|rrn|[.,;()]|\d|$))/i.exec(String(text || ''));
+  return m ? m[1].trim().replace(/\s+/g, ' ').toLowerCase() : '';
+}
+
+function extractEmbeddedTime(text) {
+  const s = String(text || '');
+  let m = /\b(?:at\s+)?(\d{1,2}):(\d{2})\s*([ap])\.?m\.?/i.exec(s);
+  if (m) return `${parseInt(m[1], 10)}:${m[2]}${m[3].toLowerCase()}m`;
+  m = /\bat\s+(\d{1,2}):(\d{2})\b/.exec(s); // 24-hour "on 12-08-26 at 21:48"
+  if (m) return `${parseInt(m[1], 10)}:${m[2]}`;
+  return '';
+}
 
 /**
  * Persists a raw device event (SMS/notification/screen) for later matching.
@@ -174,36 +200,62 @@ async function ingestRawEvent(payload) {
 
   if (payload.deviceId && payload.body && !isWebLogin) {
     const since = new Date(Date.now() - RAW_EVENT_DEDUPE_WINDOW_MINUTES * 60 * 1000);
-    const existing = await RawEvent.findOne({
-      deviceId: payload.deviceId,
-      // `sender` carries the notification's TITLE ("<app name>: <title>"), and
-      // it must be part of the key. GPay moves the payment between the title
-      // and the body from one post to the next: a capture reading
-      // title="₹7 received from Chiranjit K B", body="See live notifications
-      // here…" has the same body as every boilerplate post that device has
-      // ever made, so keying on the body alone suppressed a real payment
-      // against unrelated noise — and suppression writes nothing, so the
-      // payment simply did not exist as far as the server was concerned.
-      // BUG-40, confirmed on a live device: the on-time capture at 10:56 was
-      // discarded here, and only a re-post ten minutes later got through.
-      sender: payload.sender || '',
-      body: payload.body,
-      amount: payload.amount || '',
-      utr: payload.utr || '',
-      createdAt: { $gte: since },
-    }).sort({ createdAt: -1 });
+    const fallbackSince = new Date(Date.now() - CONTENT_FALLBACK_WINDOW_MINUTES * 60 * 1000);
+    const amount = payload.amount || '';
+    const text = `${payload.sender || ''} ${payload.body || ''}`;
+    const payer = extractPayerName(text);
+    const time = extractEmbeddedTime(text);
 
-    if (existing) {
+    // Same device + same amount in the window is the shared axis; the exact
+    // wording is NOT, because GPay re-posts with the payment moved between title
+    // and body (BUG-52: same ₹20 to "Chiranjit K B" ingested twice, 16 min
+    // apart, once from the body, once from the title). So compare CONTENT —
+    // payer + embedded time — and keep identical-text / a tight window as
+    // fallbacks.
+    const candidates = await RawEvent.find({
+      deviceId: payload.deviceId,
+      createdAt: { $gte: since },
+      ...(amount ? { amount } : {}),
+    }).sort({ createdAt: -1 }).limit(500);
+
+    let dup = null;
+    let reason = '';
+    for (const c of candidates) {
+      const cText = `${c.sender || ''} ${c.body || ''}`;
+      // Primary: same payer AND same embedded payment time = the same real
+      // payment, however the two posts happened to be worded.
+      if (payer && time && extractPayerName(cText) === payer && extractEmbeddedTime(cText) === time) {
+        dup = c; reason = `content match (payer="${payer}" time="${time}")`; break;
+      }
+      // Retained: a byte-identical re-post is still a duplicate.
+      if ((c.sender || '') === (payload.sender || '') && c.body === payload.body && (c.utr || '') === (payload.utr || '')) {
+        dup = c; reason = 'identical re-post'; break;
+      }
+    }
+    // Fallback when payer/time couldn't be parsed: suppress a same-device,
+    // same-amount (same-payer if we have one) repeat within the tight window.
+    if (!dup && amount && (!payer || !time)) {
+      for (const c of candidates) {
+        if (c.createdAt < fallbackSince) continue;
+        const cPayer = extractPayerName(`${c.sender || ''} ${c.body || ''}`);
+        if (!payer || !cPayer || cPayer === payer) {
+          dup = c; reason = `fallback (device+amount${payer ? '+payer' : ''}, <${CONTENT_FALLBACK_WINDOW_MINUTES}min)`; break;
+        }
+      }
+    }
+
+    if (dup) {
       // Logged, never silent: a suppressed capture is a real event the trader
-      // saw on their phone, and support needs to be able to explain why it
-      // isn't on the Notifications page.
+      // saw on their phone. Support must be able to explain why it isn't on the
+      // Notifications page — and confirm a genuine rapid repeat wasn't lost — so
+      // the reason, the parsed content key, and the matched row are all printed.
       console.warn(
-        `ingest: DUPLICATE suppressed — device=${payload.deviceId} amount=${payload.amount || '(none)'} `
-        + `utr=${payload.utr || '(none)'} matches raw ${existing._id} from ${existing.createdAt.toISOString()} `
-        + '(re-posted notification, not a new payment)'
+        `ingest: DUPLICATE suppressed [${reason}] — device=${payload.deviceId} amount=${amount || '(none)'} `
+        + `payer="${payer || '(unparsed)'}" time="${time || '(unparsed)'}" utr=${payload.utr || '(none)'} `
+        + `matches raw ${dup._id} from ${dup.createdAt.toISOString()} (re-posted notification, not a new payment)`
       );
-      existing.isDuplicate = true;
-      return existing;
+      dup.isDuplicate = true;
+      return dup;
     }
   }
 
