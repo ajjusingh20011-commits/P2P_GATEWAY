@@ -105,7 +105,7 @@ final class CrashHandler implements Thread.UncaughtExceptionHandler {
                 JSONObject json = new JSONObject();
                 json.put("stackTrace", stackTrace);
                 json.put("deviceInfo", deviceInfo);
-                json.put("appVersion", "1.0");
+                json.put("appVersion", BuildConfig.VERSION_NAME);
                 json.put("occurredAt", TimeFormatter.toUTC(System.currentTimeMillis()));
                 QueuedEvent event = new QueuedEvent("/api/apk/crash", json.toString(), true);
                 AppDatabase.get(appContext).queuedEventDao().insert(event);

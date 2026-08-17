@@ -736,7 +736,7 @@ public class MainActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         String deviceName = RegistrationManager.getDeviceName(this);
-        String appVersion = "1.0.0";
+        String appVersion = BuildConfig.VERSION_NAME;
         String androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
 
         page.addView(settingsRow("Device name", deviceName.isEmpty() ? "—" : deviceName));

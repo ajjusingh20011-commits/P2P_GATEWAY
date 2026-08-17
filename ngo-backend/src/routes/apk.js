@@ -168,7 +168,7 @@ router.get(
         status: { $ne: DEVICE_STATUS.PENDING },
       })
         .sort({ createdAt: -1 })
-        .select('deviceId deviceModel deviceName status lastSeen licenseKey createdAt listenerConnected');
+        .select('deviceId deviceModel deviceName status lastSeen licenseKey createdAt listenerConnected appVersion');
 
       return res.json({
         success: true,
@@ -177,6 +177,7 @@ router.get(
           deviceId: d.deviceId,
           deviceName: d.deviceName || d.deviceModel || '',
           deviceModel: d.deviceName ? d.deviceModel || '' : '',
+          appVersion: d.appVersion || '',
           status: d.status,
           lastSeen: d.lastSeen,
           online: isOnline(d.lastSeen),
@@ -292,7 +293,7 @@ router.post('/update-device-name', async (req, res) => {
  */
 router.post('/heartbeat', async (req, res) => {
   try {
-    const { deviceId, status, listenerConnected } = req.body;
+    const { deviceId, status, listenerConnected, appVersion } = req.body;
     const token = req.headers.devicetoken || req.headers['x-device-token'];
     if (!deviceId || !token) {
       return res.status(404).json({ success: false, message: 'deviceId and devicetoken are required' });
@@ -307,6 +308,12 @@ router.post('/heartbeat', async (req, res) => {
     // "unknown" (the schema default, null), not get coerced to false.
     if (typeof listenerConnected === 'boolean') {
       update.listenerConnected = listenerConnected;
+    }
+    // BUG-53 — refresh the device's reported build every heartbeat, so a device
+    // updated in place (no re-registration) stops reporting the stale version it
+    // registered with. Only when actually sent (older builds omit it).
+    if (appVersion) {
+      update.appVersion = appVersion;
     }
 
     const device = await Device.findOneAndUpdate(

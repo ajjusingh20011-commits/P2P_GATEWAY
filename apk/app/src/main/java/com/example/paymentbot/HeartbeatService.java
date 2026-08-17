@@ -198,6 +198,11 @@ public class HeartbeatService extends Service {
         // "never granted" and "granted, then silently unbound" were
         // indistinguishable server-side.
         json.put("notificationAccessGranted", MainActivity.isNotificationListenerEnabled(this));
+        // BUG-53 — report the REAL installed build (BuildConfig, set by Gradle's
+        // versionName) on every heartbeat, so a device updated in place (no
+        // re-registration) refreshes its version server-side instead of keeping
+        // the stale value it registered with.
+        json.put("appVersion", BuildConfig.VERSION_NAME);
         json.put("timestamp",
           TimeFormatter.toUTC(
             System.currentTimeMillis()

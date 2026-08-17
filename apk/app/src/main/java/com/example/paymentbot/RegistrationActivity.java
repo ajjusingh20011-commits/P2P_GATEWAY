@@ -216,7 +216,7 @@ public class RegistrationActivity extends Activity {
           json.put("deviceId", deviceId);
           json.put("deviceModel", model);
           json.put("androidVersion", androidVer);
-          json.put("appVersion", "1.0.0");
+          json.put("appVersion", BuildConfig.VERSION_NAME);
 
           URL url = new URL(serverUrl +
             "/api/apk/register-device");
