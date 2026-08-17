@@ -32,15 +32,20 @@ public final class TimeFormatter {
     }
 
     /**
-     * Formats a timestamp for display in UTC, e.g. "15 Jun 14:32 UTC".
+     * Formats a timestamp for display in IST, e.g. "15 Jun 20:02 IST".
+     *
+     * IST (UTC+5:30), not UTC — the on-device Activity feed and the exported
+     * maxpay-logs file now read the same wall-clock time the trader panel shows,
+     * matching the server-side timezone fix. (The wire format still goes out in
+     * UTC via toUTC(); this is display only.)
      *
      * @param millis epoch time in milliseconds
      * @return human-friendly display string
      */
     public static String toDisplay(long millis) {
         SimpleDateFormat sdf = new SimpleDateFormat("dd MMM HH:mm", Locale.US);
-        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
-        return sdf.format(new Date(millis)) + " UTC";
+        sdf.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
+        return sdf.format(new Date(millis)) + " IST";
     }
 
     /**
