@@ -90,9 +90,13 @@ export async function deleteAccount(accountId) {
 // actually land (see ngo-backend's webScraper.js fetchAndSaveTransactions),
 // unlike the P2P gateway's MySQL NotificationLog table, which nothing
 // currently writes to.
-export async function getTransactions() {
-  const res = await unwrap(api.get(`${PROXY}/ngo/transactions`));
-  return res.transactions;
+// One server page of captured transactions. Returns the FULL paginated
+// response ({ transactions, total, pages }), not just the array — the caller
+// needs `total` to know whether older history remains to load. The endpoint
+// defaults to only the newest 20 with no params, which is why every older
+// entry was invisible before this passed page/limit (BUG-52).
+export async function getTransactions(page = 1, limit = 50) {
+  return unwrap(api.get(`${PROXY}/ngo/transactions?page=${page}&limit=${limit}`));
 }
 
 // Payout evidence capture status for a payout — the record/screenshot/SMS flags

@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { Card, Badge, Button, SearchInput, Select, Pagination, PageHeader, EmptyState, LoadingState, BankBadge } from '../components/ui';
 import IdReveal from '../components/IdReveal';
 import { IconRefresh, IconBell, IconWarning } from '../components/icons';
-import { useApi } from '../hooks/useApi';
 import { getTransactions, getNgoSocketToken, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 import { notifications, ACCOUNT_TYPES } from '../utils/mock';
 
 const PER_PAGE = 8;
+// How many transactions each server fetch pulls. "Load older" pulls the next
+// page of this size; client-side pages of PER_PAGE then page through the pool.
+const SERVER_PAGE_SIZE = 50;
 
 // Map Transaction + rawEventId (populated) to row shape for table rendering.
 function apiToRow(txn) {
@@ -159,10 +161,44 @@ export default function Notifications() {
   const [page, setPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
 
-  const { data: transactions, loading: txnLoading, error, refetch } = useApi(
-    () => getTransactions().then((list) => list || []),
-    { fallback: [] }
-  );
+  const [transactions, setTransactions] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [serverPage, setServerPage] = useState(0); // highest server page loaded
+  const [txnLoading, setTxnLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState(null);
+
+  // BUG-52 fix. The endpoint only ever returned the newest 20 with no params,
+  // so no older entry (a real SMS credit, etc.) could ever be reached. Now it's
+  // paginated and accumulated: 'reset' replaces with page 1, 'append' pulls the
+  // next server page of OLDER history ("Load older" below), 'merge' folds any
+  // newer rows a socket push brought in to the front without discarding what's
+  // already loaded. Client-side filtering then searches everything loaded, and
+  // the real `total` the API returns drives how far back the trader can go.
+  const loadPage = useCallback(async (pageNum, mode) => {
+    if (mode === 'append') setLoadingMore(true); else setTxnLoading(true);
+    try {
+      const res = await getTransactions(pageNum, SERVER_PAGE_SIZE);
+      const list = res.transactions || [];
+      setTotal(res.total || 0);
+      setTransactions((prev) => {
+        if (mode === 'reset') return list;
+        const seen = new Set(prev.map((t) => t._id));
+        const fresh = list.filter((t) => !seen.has(t._id));
+        return mode === 'append' ? [...prev, ...fresh] : [...fresh, ...prev];
+      });
+      if (mode !== 'merge') setServerPage(pageNum);
+      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not load notifications.');
+    } finally {
+      setTxnLoading(false);
+      setLoadingMore(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { loadPage(1, 'reset'); }, [loadPage]);
 
   // The devices fetch + deviceId->Device map that used to live here existed
   // solely to resolve a display name for the "<captureType> · <deviceName>"
@@ -191,7 +227,7 @@ export default function Notifications() {
 
   const refresh = () => {
     setRefreshing(true);
-    refetch();
+    loadPage(1, 'reset');
   };
 
   useEffect(() => {
@@ -208,11 +244,11 @@ export default function Notifications() {
       if (cancelled) return;
       const socket = io(NGO_SOCKET_ORIGIN, { auth: { serviceToken } });
       notifSocketRef.current = socket;
-      socket.on('new-transactions', () => refetch());
+      socket.on('new-transactions', () => loadPage(1, 'merge'));
     }).catch((e) => console.error('Could not start notifications socket:', e.message));
 
     return () => { cancelled = true; };
-  }, [refetch]);
+  }, [loadPage]);
   useEffect(() => () => notifSocketRef.current?.disconnect(), []);
 
   return (
@@ -458,6 +494,14 @@ export default function Notifications() {
         )}
         <div style={{ borderTop: '1px solid var(--cardborder)' }}>
           <Pagination page={page} perPage={PER_PAGE} total={filtered.length} onPage={setPage} />
+          {transactions.length < total && (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, padding: '2px 0 12px' }}>
+              <Button variant="ghost" onClick={() => loadPage(serverPage + 1, 'append')} disabled={loadingMore}>
+                {loadingMore ? 'Loading…' : 'Load older'}
+              </Button>
+              <span style={{ color: 'var(--muted)', fontSize: 12 }}>{transactions.length} of {total} loaded</span>
+            </div>
+          )}
         </div>
       </Card>
     </div>
