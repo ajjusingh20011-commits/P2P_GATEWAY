@@ -22,13 +22,12 @@ android {
         // versionName carries the commit the build's behaviour comes from, so
         // a phone in the field can be traced back to source.
         //
-        // The committed value here had drifted to 6 while the VPS already
-        // advertised 7 (GET /api/apk/latest-version, checked live before this
-        // build) — confirms the note above wasn't followed for that release.
-        // Set to 8 here, above the server's 7, carrying dfbb00c (the payout
-        // evidence capture + content-based SMS push commit this build ships).
-        versionCode = 8
-        versionName = "1.5-dfbb00c"
+        // Set to 9 here, above the server's live 8 (GET /api/apk/latest-version
+        // on ngo-api.adminmaxedge.com, checked before this build), carrying
+        // 970d1ba — this build ships BUG-53 (appVersion now reads
+        // BuildConfig.VERSION_NAME) plus the IST on-device timestamp fix.
+        versionCode = 9
+        versionName = "1.6-970d1ba"
 
         // Room schema export — not used for migrations yet (the app is
         // pre-install-base, so destructive fallback is acceptable), but
