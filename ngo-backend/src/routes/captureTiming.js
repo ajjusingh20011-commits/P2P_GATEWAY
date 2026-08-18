@@ -61,6 +61,14 @@ router.post('/capture-timing', async (req, res) => {
       notifTag: String(b.notifTag || ''),
       groupKey: String(b.groupKey || ''),
       rawPostTimeMs: Number.isFinite(Number(b.rawPostTimeMs)) ? Number(b.rawPostTimeMs) : null,
+      // Paytm Business investigation (temporary) — see the model's doc comment.
+      isGroupSummary: typeof b.isGroupSummary === 'boolean' ? b.isGroupSummary : null,
+      extrasDump: String(b.extrasDump || ''),
+      resolvedTitle: String(b.resolvedTitle || ''),
+      resolvedText: String(b.resolvedText || ''),
+      resolvedBigText: String(b.resolvedBigText || ''),
+      resolvedSubText: String(b.resolvedSubText || ''),
+      resolvedSummaryText: String(b.resolvedSummaryText || ''),
     });
 
     // One line carrying the whole picture, so the gaps are readable straight
@@ -75,7 +83,8 @@ router.post('/capture-timing', async (req, res) => {
       + ` | app -> server ${sec(doc.appReactionTimeMs, serverMs)}`
       + ` | total ${sec(doc.embeddedTimeMs || doc.systemPostTimeMs, serverMs)}\n`
       + `  key=${doc.notifKey || '(none)'} rawPost=${doc.rawPostTimeMs == null ? '(none)' : doc.rawPostTimeMs}`
-      + ` groupKey=${doc.groupKey || '(none)'}`
+      + ` groupKey=${doc.groupKey || '(none)'} isGroupSummary=${doc.isGroupSummary == null ? '(n/a)' : doc.isGroupSummary}\n`
+      + `  extrasDump=${doc.extrasDump || '(empty)'}`
     );
 
     return res.json({ success: true, id: doc._id });

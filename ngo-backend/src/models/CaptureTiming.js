@@ -76,6 +76,23 @@ const captureTimingSchema = new mongoose.Schema(
      */
     rawPostTimeMs: { type: Number, default: null },
 
+    // ---- Paytm Business investigation (temporary) ----
+    // Confirms/rules out the group-summary-vs-individual-notification theory,
+    // and captures the FULL extras Bundle (including EXTRA_MESSAGES/
+    // EXTRA_TEXT_LINES, which the real capture path never reads) from a
+    // remote device with no adb access — same reasoning as notifKey/groupKey
+    // above. Remove once the real field is confirmed and read directly.
+    isGroupSummary: { type: Boolean, default: null },
+    extrasDump: { type: String, default: '' },
+    // The exact five fields NotificationService currently reads, individually
+    // (not just the merged bodyPreview above) — so a mismatch between what we
+    // resolve and what's actually on-screen is visible field-by-field.
+    resolvedTitle: { type: String, default: '' },
+    resolvedText: { type: String, default: '' },
+    resolvedBigText: { type: String, default: '' },
+    resolvedSubText: { type: String, default: '' },
+    resolvedSummaryText: { type: String, default: '' },
+
     createdAt: { type: Date, default: Date.now },
   },
   { timestamps: true }
