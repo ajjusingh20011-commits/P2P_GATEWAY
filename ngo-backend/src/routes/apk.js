@@ -8,6 +8,7 @@ const Payout = require('../models/Payout');
 const CrashLog = require('../models/CrashLog');
 const Transaction = require('../models/Transaction');
 const PayoutEvidence = require('../models/PayoutEvidence');
+const { isDeviceArmedForOrder, attemptSubmissionLock, clearOtherDevices } = require('../services/payoutLockService');
 const scraperEngine = require('../services/scraperEngine');
 const matchingEngine = require('../services/matchingEngine');
 const { matchDebitWithOverlay } = require('../services/payoutVerifier');
@@ -658,6 +659,14 @@ router.post('/debit-sms', async (req, res, next) => {
  * FEATURE 2 — Payout evidence capture. Detection/capture/packaging/upload
  * only, per spec — no matching or approval logic here. Each call is its own
  * row; see PayoutEvidence's doc comment for why.
+ *
+ * Device-ownership + first-submission-wins lock: a trader's payout can be
+ * armed on many linked devices at once (existing broadcast, unchanged), but
+ * only the FIRST device to successfully submit evidence "wins" — every
+ * other device's activePayout for this order is cleared immediately after,
+ * and any later submission from a different device is rejected 409. A
+ * follow-up from the SAME winning device (e.g. a late-arriving linked SMS)
+ * is accepted normally. See services/payoutLockService.js.
  */
 router.post('/payout-evidence', async (req, res, next) => {
   try {
@@ -668,11 +677,26 @@ router.post('/payout-evidence', async (req, res, next) => {
     if (!orderId) {
       return res.status(400).json({ success: false, message: 'orderId is required' });
     }
+    const orderIdStr = String(orderId);
     const device = deviceId ? await Device.findOne({ deviceId }) : null;
+    const traderId = device && device.traderId != null ? device.traderId : null;
+
+    const armed = await isDeviceArmedForOrder(device, orderIdStr);
+    if (!armed) {
+      console.error(`payout-evidence REJECTED (403 not armed): orderId=${orderIdStr} deviceId=${deviceId || '(none)'} traderId=${traderId} at ${new Date().toISOString()}`);
+      return res.status(403).json({ success: false, message: 'Device is not armed for this payout' });
+    }
+
+    const lock = await attemptSubmissionLock(orderIdStr, deviceId || '', traderId);
+    if (!lock.allowed) {
+      console.error(`payout-evidence REJECTED (409 already submitted): orderId=${orderIdStr} deviceId=${deviceId || '(none)'} traderId=${traderId} lockedBy=${lock.lockedByDeviceId} at ${new Date().toISOString()}`);
+      return res.status(409).json({ success: false, message: 'This payout was already submitted from another device' });
+    }
+
     const evidence = await PayoutEvidence.create({
       deviceId: deviceId || '',
-      traderId: device && device.traderId != null ? device.traderId : null,
-      orderId: String(orderId),
+      traderId,
+      orderId: orderIdStr,
       reason: reason || '',
       recordedInput: recordedInput || null,
       recordTimestamp: recordTimestamp || '',
@@ -681,6 +705,11 @@ router.post('/payout-evidence', async (req, res, next) => {
       linkedSmsRaw: linkedSmsRaw || '',
       smsTimestamp: smsTimestamp || '',
     });
+
+    if (lock.isFirstSubmission) {
+      await clearOtherDevices(traderId, deviceId || '', orderIdStr);
+    }
+
     const io = req.app.get('io');
     if (io && device && device.traderId != null) {
       io.to(`trader:${device.traderId}`).emit('payout-evidence', {
