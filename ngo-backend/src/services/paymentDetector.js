@@ -112,6 +112,22 @@ const RECEIVED_PATTERNS = [
 // Same amount regex family as PaymentParser.java (Android), kept in sync
 // deliberately: ₹500, Rs.500, Rs 500, INR 500.
 const AMOUNT_PATTERN = /(?:₹|rs\.?|inr)\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/i;
+// BUG-56: BharatPe writes amounts with the number FIRST and the plain word
+// "Rupees" after it, no ₹/Rs/INR prefix at all — "Received 30.00 Rupees
+// From Chiranjit Kumar Biswas." AMOUNT_PATTERN above requires a currency
+// prefix, so it silently found nothing for this real, live format. A
+// fundamentally different shape (suffix, not prefix), so it needs its own
+// pattern — tried as a fallback wherever AMOUNT_PATTERN doesn't match, see
+// matchAmount() below. Kept in sync with SMSReceiver.AMOUNT_PATTERNS[1]
+// (Android) deliberately, same as the ₹-prefix pattern above.
+const AMOUNT_SUFFIX_PATTERN = /([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)\s*rupees\b/i;
+
+/** Tries the currency-PREFIX pattern first, then the "<number> Rupees" SUFFIX
+ *  pattern (BUG-56) as a fallback — two different real formats, tried in the
+ *  order real traffic favors (prefix is far more common across apps). */
+function matchAmount(text) {
+  return AMOUNT_PATTERN.exec(text) || AMOUNT_SUFFIX_PATTERN.exec(text);
+}
 const UPI_ID_PATTERN = /([a-zA-Z0-9][a-zA-Z0-9._-]{1,}@[a-zA-Z][a-zA-Z0-9.-]{1,})/;
 // Reuses the same label set PaymentParser.java's SENDER pattern uses.
 const SENDER_PATTERN = /(?:received\s+from|paid\s+by|from|by)\s+([A-Za-z][A-Za-z0-9 ._@-]{1,39})/i;
@@ -184,8 +200,8 @@ function detectRealPayment(evt) {
   // body meant a title-carried payment produced "received signal found but no
   // usable amount" and never became a Transaction at all — a real, settled
   // payment lost on wording alone. BUG-40.
-  const bodyAmount = AMOUNT_PATTERN.exec(evt.body || '');
-  const senderAmount = bodyAmount ? null : AMOUNT_PATTERN.exec(evt.sender || '');
+  const bodyAmount = matchAmount(evt.body || '');
+  const senderAmount = bodyAmount ? null : matchAmount(evt.sender || '');
   const amountMatch = bodyAmount || senderAmount;
   const amount = (evt.amount && evt.amount.trim()) || (amountMatch ? amountMatch[1].replace(/,/g, '') : '');
   if (!amount) {

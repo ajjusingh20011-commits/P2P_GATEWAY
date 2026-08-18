@@ -89,6 +89,17 @@ public class SMSReceiver extends BroadcastReceiver {
     // one of those uploaded amount:"" and the server had to re-derive it.
     static final Pattern[] AMOUNT_PATTERNS = {
             Pattern.compile("(?:₹|rs\\.?|inr)\\s*([\\d,]+(?:\\.\\d+)?)", Pattern.CASE_INSENSITIVE),
+            // BUG-56: BharatPe writes the number FIRST and the plain word
+            // "Rupees" after it, no ₹/Rs/INR prefix at all — "Received 30.00
+            // Rupees From Chiranjit Kumar Biswas." The pattern above requires
+            // a currency prefix, so it silently found nothing for this real,
+            // live format — no amount meant no order matching, so a real
+            // captured ₹30 payment never settled. A fundamentally different
+            // shape (suffix, not prefix), so it needs its own pattern, tried
+            // second (the ₹-prefix form is far more common across apps).
+            // Kept in sync with paymentDetector.js's AMOUNT_SUFFIX_PATTERN
+            // (server), same as the ₹-prefix pattern above.
+            Pattern.compile("([\\d,]+(?:\\.\\d+)?)\\s*rupees\\b", Pattern.CASE_INSENSITIVE),
     };
     private static final Pattern[] BALANCE_PATTERNS = {
             Pattern.compile("(?:avl\\s*bal|available\\s*balance|bal|balance)[:\\s]*(?:rs\\.?|inr)?\\s*([\\d,]+(?:\\.\\d+)?)",
