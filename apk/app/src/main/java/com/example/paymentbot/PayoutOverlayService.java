@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.Image;
@@ -27,26 +28,40 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * FEATURE 2 — Payout evidence capture overlay: floating RECORD + SCREENSHOT
- * buttons. Visibility is fully trader-controlled (PaymentModeState) —
- * present everywhere, in every app, whenever Payment Mode is ON, subject
- * only to its own minimize/expand state (see PaymentBotService). Both
- * buttons are ALWAYS tappable — there is no disabled state. Tapping
- * without an active payout, or outside a whitelisted UPI app, shows a
- * feedback message and takes no further action instead of silently
- * blocking the tap (see onRecordTap/onScreenshotTap).
+ * FEATURE 2 — Payout evidence capture overlay.
  *
- * Detection, capture, packaging, upload of evidence ONLY — no matching,
- * scoring, or approve/reject logic here or anywhere in this feature; that is
- * entirely backend/admin's job. See PayoutState for the local evidence store
- * and the upload trigger.
+ * UI migrated to match the approved design (MaxPayDesign src/Overlay —
+ * OverlayParts.tsx / overlayModel.ts / overlay.css), pixel-for-pixel where
+ * Android's WindowManager/View system allows a direct translation. The
+ * design's own geometry file states "1 CSS px == 1 Android dp", so every
+ * size below is taken directly from overlay.css's --ov-* custom properties.
  *
- * Deliberately a SEPARATE file from OverlayService, even though it reuses
- * the same draggable floating-window/button pattern: OverlayService's
- * RECORD/SCREENSHOT already mean something else (live NGO-input capture /
- * immediate-upload screenshot) for a different, unrelated feature — folding
- * this in would conflate two different "Record"/"Screenshot" semantics
- * under one class.
+ * Real action/state logic (record/screenshot preconditions, always-tappable
+ * buttons with tap-time feedback, success-keyword gating, local-only
+ * screenshot storage) is UNCHANGED from the existing implementation — this
+ * pass is presentation-layer only.
+ *
+ * Documented, unavoidable deviations from the design (Android platform
+ * constraints, not design choices):
+ *  - GradientDrawable only supports 8 fixed 45°-increment orientations, not
+ *    arbitrary CSS angles — the design's 152° bubble gradient is approximated
+ *    with the nearest available orientation (TL_BR, ~135°).
+ *  - CSS box-shadow (the bubble's white+emerald "active" ring) has no direct
+ *    Android equivalent; approximated with a two-layer LayerDrawable ring.
+ *  - No card drop-shadow: WindowManager TYPE_APPLICATION_OVERLAY windows
+ *    don't reliably render View elevation shadows, and no other overlay in
+ *    this app attempts one (OverlayService/PaymentOverlayService are also
+ *    shadow-less) — consistent with existing precedent, not a new gap.
+ *  - No vector icon set: every overlay in this app (OverlayService,
+ *    PaymentOverlayService) already uses Unicode glyphs rather than a vector
+ *    drawable pipeline; kept consistent rather than introducing one icon
+ *    system just for this file.
+ *  - No edge-snap-on-release animation: the design's snapToEdge/
+ *    clampToSafeArea behavior lives in DraggableTouchListener.java, which is
+ *    SHARED with OverlayService.java (a different, explicitly out-of-scope
+ *    feature) — extending shared drag infra risked that other feature's
+ *    behavior for a purely cosmetic animation. Deferred, not implemented
+ *    here; current free-drag-to-anywhere behavior is unchanged.
  */
 public class PayoutOverlayService extends Service {
 
@@ -56,9 +71,10 @@ public class PayoutOverlayService extends Service {
     private WindowManager windowManager;
     private View currentView;
     private WindowManager.LayoutParams params;
-    // Payment Mode opens straight to the full card — trader taps minimize
-    // to collapse to the icon, not the other way round.
+    // Payment Mode opens straight to the full card — trader taps minimize to
+    // collapse to the icon, not the other way round.
     private boolean expanded = true;
+    private boolean activePayout = false;
     private View feedbackView;
     private boolean isVisible = false;
 
@@ -66,6 +82,44 @@ public class PayoutOverlayService extends Service {
     private static int screenWidth;
     private static int screenHeight;
     private static int screenDensity;
+
+    // ---- Design tokens — MaxPayDesign src/Overlay/overlay.css .ov-lab ----
+    private static final int C_BRAND = 0xFF0F6A5A;
+    private static final int C_BRAND_DARK = 0xFF0A5748;
+    private static final int C_BRAND_MID = 0xFF2A8C77;
+    private static final int C_BRAND_SOFT = 0xFFE7F6F2;
+    private static final int C_SURFACE = 0xFFF1F6F4;
+    private static final int C_TEXT = 0xFF103C34;
+    private static final int C_MUTED = 0xFF667B76;
+    private static final int C_SUCCESS = 0xFF169B62;
+    private static final int C_SUCCESS_SOFT = 0xFFEAF8F1;
+    private static final int C_HANDLE = 0xFFCBDCD7;
+    private static final int C_CAPTURE_BORDER = 0xFFDBE8E4;
+    private static final int C_CARD_BORDER = 0x1A103C34; // rgba(16,60,52,.1)
+    private static final int C_SNACK_SUCCESS_BG = C_BRAND_SOFT;
+    private static final int C_SNACK_SUCCESS_BORDER = 0xFFBFE3D8;
+    private static final int C_SNACK_SUCCESS_TEXT = 0xFF0B3B32;
+    private static final int C_SNACK_INFO_BG = 0xFFFFFFFF;
+    private static final int C_SNACK_INFO_BORDER = 0xFFDDE8E5;
+    // Bubble gradient stops (--ov-brand family), 152deg in the design —
+    // approximated via GradientDrawable.Orientation.TL_BR (see class doc).
+    private static final int[] BUBBLE_GRADIENT = {0xFF147A68, C_BRAND, C_BRAND_DARK};
+
+    // ---- Design geometry (dp) — overlayModel.ts BUBBLE/CARD_W/CARD_H ----
+    private static final int BUBBLE_DP = 46;
+    private static final int CARD_W_DP = 208;
+    private static final int CARD_H_DP = 100;
+    private static final float BUBBLE_IDLE_ALPHA = 0.6f;   // spec: 55-65%
+    private static final float BUBBLE_ACTIVE_ALPHA = 0.72f;
+    private static final float CARD_ALPHA = 0.97f;
+
+    // The six messages — MaxPayDesign src/Overlay/overlayModel.ts MESSAGES.
+    private static final String MSG_RECORDED = "Payout recorded";
+    private static final String MSG_CAPTURED = "Proof captured";
+    private static final String MSG_NO_PAYOUT = "No payout in process";
+    private static final String MSG_NOT_PAYMENT_APP = "Not a payment app";
+    private static final String MSG_NOT_SUCCESS = "Payment success screen not detected";
+    private static final String MSG_NO_PERMISSION = "Screen capture permission needed";
 
     // Seed list, same pattern as BankSenderTags/ParseFailureLogger elsewhere
     // in this app: 2-3 keywords per app, deliberately small at first —
@@ -129,6 +183,29 @@ public class PayoutOverlayService extends Service {
         return isVisible;
     }
 
+    /**
+     * Passive visual only — the active-payout ring (bubble) / dot (card).
+     * Does NOT gate Record/Screenshot tappability (that check runs on tap,
+     * unchanged — see onRecordTap/onScreenshotTap). Re-renders only when the
+     * value actually changes, called from PaymentBotService on every
+     * accessibility window event.
+     */
+    public void refreshActiveIndicator(boolean active) {
+        if (active == activePayout) return;
+        activePayout = active;
+        if (currentView != null) {
+            // Cheap in-place swap — same pattern toggleExpand uses.
+            if (windowManager != null) {
+                try {
+                    windowManager.removeView(currentView);
+                } catch (Exception ignored) {
+                }
+            }
+            currentView = null;
+            renderCurrentState();
+        }
+    }
+
     // ---------------------------------------------------------------------
     // Show / hide / minimize / expand
     // ---------------------------------------------------------------------
@@ -187,10 +264,11 @@ public class PayoutOverlayService extends Service {
         }
     }
 
-    /** Minimized state: a small circular icon, ~12% of screen width (within
-     *  the 10-15% range), ~30% transparent, draggable, tap to expand. */
+    /** Minimized state — design: 46dp circle, emerald gradient, 60% idle
+     *  opacity (72% + thin ring while a payout is active), drag to move,
+     *  tap to expand. */
     private View buildIcon() {
-        int size = (int) (getResources().getDisplayMetrics().widthPixels * 0.12f);
+        int size = dp(BUBBLE_DP);
         params.width = size;
         params.height = size;
 
@@ -199,63 +277,145 @@ public class PayoutOverlayService extends Service {
         icon.setTextSize(20);
         icon.setGravity(Gravity.CENTER);
         icon.setTextColor(0xFFFFFFFF);
-
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(0xFF6600CC);
-        icon.setBackground(bg);
-        icon.setAlpha(0.7f); // ~30% transparent
+        icon.setBackground(bubbleDrawable());
+        icon.setAlpha(activePayout ? BUBBLE_ACTIVE_ALPHA : BUBBLE_IDLE_ALPHA);
 
         icon.setOnTouchListener(new DraggableTouchListener(params, windowManager, icon, this::toggleExpand));
         return icon;
     }
 
-    /** Expanded state: RECORD + SCREENSHOT (always tappable — see
-     *  onRecordTap/onScreenshotTap) + a minimize control. ~10% transparent. */
+    /**
+     * Gradient fill + (while a payout is active) a two-layer ring
+     * approximating the design's box-shadow ring: a white inner line so the
+     * ring stays legible on both light and dark apps underneath, then an
+     * emerald outer line.
+     */
+    private android.graphics.drawable.Drawable bubbleDrawable() {
+        GradientDrawable fill = new GradientDrawable(GradientDrawable.Orientation.TL_BR, BUBBLE_GRADIENT);
+        fill.setShape(GradientDrawable.OVAL);
+        if (!activePayout) {
+            return fill;
+        }
+        GradientDrawable whiteRing = new GradientDrawable();
+        whiteRing.setShape(GradientDrawable.OVAL);
+        whiteRing.setColor(0x00000000);
+        whiteRing.setStroke(dp(2), 0xEBFFFFFF);
+        GradientDrawable emeraldRing = new GradientDrawable();
+        emeraldRing.setShape(GradientDrawable.OVAL);
+        emeraldRing.setColor(0x00000000);
+        emeraldRing.setStroke(dp(2), C_SUCCESS);
+        LayerDrawable layered = new LayerDrawable(new android.graphics.drawable.Drawable[]{fill, whiteRing, emeraldRing});
+        layered.setLayerInset(1, dp(1), dp(1), dp(1), dp(1));
+        layered.setLayerInset(2, 0, 0, 0, 0);
+        return layered;
+    }
+
+    /** Expanded state — design: 208×100dp card, 97% opaque white, 18dp
+     *  radius, a centred drag-handle pill + minimize control in a 26dp
+     *  header, Record (filled) + Capture (outline) side by side. */
     private View buildCard() {
-        params.width = dp(150);
-        params.height = WindowManager.LayoutParams.WRAP_CONTENT;
+        params.width = dp(CARD_W_DP);
+        params.height = dp(CARD_H_DP);
 
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackgroundColor(0xFF1A0033);
-        card.setPadding(dp(4), dp(4), dp(4), dp(4));
-        card.setAlpha(0.9f); // ~10% transparent
+        card.setBackground(cardBackground());
+        card.setPadding(dp(8), dp(8), dp(8), dp(8));
+        card.setAlpha(CARD_ALPHA);
 
+        // Header: active-dot (conditional) + centred drag handle + minimize.
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.END);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(26)));
+
+        if (activePayout) {
+            View dot = new View(this);
+            GradientDrawable dotBg = new GradientDrawable();
+            dotBg.setShape(GradientDrawable.OVAL);
+            dotBg.setColor(C_SUCCESS);
+            dot.setBackground(dotBg);
+            LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(6), dp(6));
+            dotLp.setMarginStart(dp(2));
+            header.addView(dot, dotLp);
+        }
+
+        // Decorative-only handle, optically centred via a weighted spacer
+        // either side (matches the design's absolute-centre positioning).
+        View spacerL = new View(this);
+        header.addView(spacerL, new LinearLayout.LayoutParams(0, 0, 1f));
+
+        View handle = new View(this);
+        GradientDrawable handleBg = new GradientDrawable();
+        handleBg.setColor(C_HANDLE);
+        handleBg.setCornerRadius(dp(2));
+        handle.setBackground(handleBg);
+        header.addView(handle, new LinearLayout.LayoutParams(dp(34), dp(4)));
+
+        View spacerR = new View(this);
+        header.addView(spacerR, new LinearLayout.LayoutParams(0, 0, 1f));
+
         TextView minimize = new TextView(this);
-        minimize.setText("—");
-        minimize.setTextColor(0xFFFFFFFF);
-        minimize.setTextSize(14);
-        minimize.setPadding(dp(8), dp(2), dp(8), dp(2));
-        header.addView(minimize);
+        minimize.setText("▾");
+        minimize.setTextColor(C_MUTED);
+        minimize.setTextSize(16);
+        minimize.setGravity(Gravity.CENTER);
+        header.addView(minimize, new LinearLayout.LayoutParams(dp(30), dp(26)));
+
         card.addView(header);
 
-        TextView record = button("⏺ RECORD", 0xFF333333);
-        TextView shot = button("📷 SCREENSHOT", 0xFF6600CC);
-        card.addView(record);
-        card.addView(shot);
+        // Actions — side by side (design: 2-column grid), not stacked.
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
+        actionsLp.topMargin = dp(8);
+        actions.setLayoutParams(actionsLp);
+
+        TextView record = actionButton("Record", true);
+        TextView capture = actionButton("Capture", false);
+        LinearLayout.LayoutParams recordLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+        LinearLayout.LayoutParams captureLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+        captureLp.setMarginStart(dp(8));
+        actions.addView(record, recordLp);
+        actions.addView(capture, captureLp);
+        card.addView(actions);
 
         minimize.setOnTouchListener(new DraggableTouchListener(params, windowManager, card, this::toggleExpand));
         record.setOnTouchListener(new DraggableTouchListener(params, windowManager, card, this::onRecordTap));
-        shot.setOnTouchListener(new DraggableTouchListener(params, windowManager, card, this::onScreenshotTap));
+        capture.setOnTouchListener(new DraggableTouchListener(params, windowManager, card, this::onScreenshotTap));
 
         return card;
     }
 
-    private TextView button(String text, int color) {
+    private android.graphics.drawable.Drawable cardBackground() {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xFFFFFFFF);
+        bg.setCornerRadius(dp(18));
+        bg.setStroke(dp(1), C_CARD_BORDER);
+        return bg;
+    }
+
+    /** Record = filled brand (primary); Capture = outline/secondary — the
+     *  design separates them by fill, not only by icon (overlay.css
+     *  .ov-act.record / .ov-act.capture). */
+    private TextView actionButton(String label, boolean primary) {
         TextView tv = new TextView(this);
-        tv.setText(text);
-        tv.setTextColor(0xFFFFFFFF);
-        tv.setTextSize(12);
+        tv.setText((primary ? "⏺ " : "📷 ") + label);
+        tv.setTextSize(11.5f);
         tv.setGravity(Gravity.CENTER);
-        tv.setBackgroundColor(color);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(44));
-        lp.bottomMargin = dp(4);
-        tv.setLayoutParams(lp);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(12));
+        if (primary) {
+            bg.setColor(C_BRAND);
+            tv.setTextColor(0xFFFFFFFF);
+        } else {
+            bg.setColor(C_SURFACE);
+            bg.setStroke(dp(1), C_CAPTURE_BORDER);
+            tv.setTextColor(C_BRAND_DARK);
+        }
+        tv.setBackground(bg);
         return tv;
     }
 
@@ -275,21 +435,31 @@ public class PayoutOverlayService extends Service {
     // screen-reading, no network call here (upload happens on trigger).
     // ---------------------------------------------------------------------
     private void onRecordTap() {
-        if (!PayoutState.isActive(this)) {
-            showFeedback("No payout in process");
-            return;
-        }
         PaymentBotService reader = PaymentBotService.getInstance();
         // currentForegroundPackage() is only ever non-empty while a
         // whitelisted UPI app is foregrounded — PaymentBotService's own
         // isPaymentApp(pkg) gate sets/clears it, so reusing it here means
         // no second whitelist copy.
+        // TEMPORARY DEBUG LOGGING — real-device root-cause investigation,
+        // see PaymentBotService.onAccessibilityEvent's matching note.
+        Log.d(TAG, "DIAG onRecordTap: currentForegroundPackage=\""
+                + (reader == null ? "null-reader" : reader.currentForegroundPackage()) + "\"");
+        // App-whitelist checked FIRST, payout-active checked second: "you're
+        // not even in a payment app" is the more specific, more actionable
+        // fact when both conditions are false. Checking isActive() first
+        // meant standing on the home screen with no payout running showed
+        // "No payout in process" — technically true, but it hid the more
+        // basic problem (wrong app) behind a less useful message.
         if (reader == null || reader.currentForegroundPackage().isEmpty()) {
-            showFeedback("Open your payment app first");
+            showFeedback(MSG_NOT_PAYMENT_APP, false);
+            return;
+        }
+        if (!PayoutState.isActive(this)) {
+            showFeedback(MSG_NO_PAYOUT, false);
             return;
         }
         PayoutState.recordConfirmation(this);
-        showFeedback("✅ Recorded");
+        showFeedback(MSG_RECORDED, true);
     }
 
     // ---------------------------------------------------------------------
@@ -297,27 +467,31 @@ public class PayoutOverlayService extends Service {
     // existing success-page gate; unchanged beyond that.
     // ---------------------------------------------------------------------
     private void onScreenshotTap() {
-        if (!PayoutState.isActive(this)) {
-            showFeedback("No payout in process");
+        PaymentBotService reader = PaymentBotService.getInstance();
+        // TEMPORARY DEBUG LOGGING — see onRecordTap's matching note.
+        Log.d(TAG, "DIAG onScreenshotTap: currentForegroundPackage=\""
+                + (reader == null ? "null-reader" : reader.currentForegroundPackage()) + "\"");
+        // Same reordering as onRecordTap — see its comment.
+        if (reader == null || reader.currentForegroundPackage().isEmpty()) {
+            showFeedback(MSG_NOT_PAYMENT_APP, false);
             return;
         }
-        PaymentBotService reader = PaymentBotService.getInstance();
-        if (reader == null || reader.currentForegroundPackage().isEmpty()) {
-            showFeedback("Open your payment app first");
+        if (!PayoutState.isActive(this)) {
+            showFeedback(MSG_NO_PAYOUT, false);
             return;
         }
         String pkg = reader.currentForegroundPackage();
         String text = reader.currentScreenText();
         if (!matchesSuccessKeyword(pkg, text)) {
             logSuccessKeywordMiss(pkg, text);
-            showFeedback("Not a success screen — retry");
+            showFeedback(MSG_NOT_SUCCESS, false);
             return; // discard entirely: no file, no partial save
         }
         if (mediaProjection == null) {
-            showFeedback("Enable screenshot permission");
+            showFeedback(MSG_NO_PERMISSION, false);
             return;
         }
-        showFeedback("Capturing...");
+        showFeedback("Capturing...", false);
         captureAndSaveLocally();
     }
 
@@ -359,7 +533,7 @@ public class PayoutOverlayService extends Service {
                 Thread.sleep(300);
                 Image image = imageReader.acquireLatestImage();
                 if (image == null) {
-                    postFeedback("Try again");
+                    postFeedback("Try again", false);
                     return;
                 }
                 Image.Plane[] planes = image.getPlanes();
@@ -383,10 +557,10 @@ public class PayoutOverlayService extends Service {
                 bitmap.recycle();
 
                 boolean saved = PayoutState.saveScreenshot(this, baos.toByteArray());
-                postFeedback(saved ? "✅ Saved (local)" : "Save failed — retry");
+                postFeedback(saved ? MSG_CAPTURED : "Save failed — retry", saved);
             } catch (Exception e) {
                 Log.e(TAG, "Screenshot error: " + e.getMessage());
-                postFeedback("Error: " + e.getMessage());
+                postFeedback("Error: " + e.getMessage(), false);
             } finally {
                 if (virtualDisplay != null) {
                     try { virtualDisplay.release(); } catch (Exception ignored) {}
@@ -399,33 +573,63 @@ public class PayoutOverlayService extends Service {
     }
 
     // ---------------------------------------------------------------------
-    // Feedback toast
+    // Feedback snackbar — design: overlay.css .ov-snack / OverlaySnack.
+    // Positioned adjacent to the widget (above if there's room, else
+    // below; horizontally aligned to whichever third of the screen the
+    // widget sits in — "never centred on the screen, feedback has to read
+    // as belonging to the widget"), colored by kind, with an icon.
+    // FLAG_NOT_TOUCHABLE — must never swallow a tap meant for the app
+    // underneath (matches the design's own comment on this exact point).
     // ---------------------------------------------------------------------
-    private void postFeedback(String message) {
-        new Handler(Looper.getMainLooper()).post(() -> showFeedback(message));
+    private void postFeedback(String message, boolean success) {
+        new Handler(Looper.getMainLooper()).post(() -> showFeedback(message, success));
     }
 
-    private void showFeedback(String message) {
+    private void showFeedback(String message, boolean success) {
         if (windowManager == null) return;
         if (feedbackView != null) {
             try { windowManager.removeView(feedbackView); } catch (Exception ignored) {}
             feedbackView = null;
         }
-        TextView tv = new TextView(this);
-        tv.setText(message);
-        tv.setTextColor(0xFF000000);
-        tv.setBackgroundColor(0xFFFFFFFF);
-        tv.setPadding(20, 10, 20, 10);
-        tv.setTextSize(13);
-        feedbackView = tv;
+
+        LinearLayout snack = new LinearLayout(this);
+        snack.setOrientation(LinearLayout.HORIZONTAL);
+        snack.setGravity(Gravity.CENTER_VERTICAL);
+        snack.setPadding(dp(10), dp(7), dp(12), dp(7));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(11));
+        if (success) {
+            bg.setColor(C_SNACK_SUCCESS_BG);
+            bg.setStroke(dp(1), C_SNACK_SUCCESS_BORDER);
+        } else {
+            bg.setColor(C_SNACK_INFO_BG);
+            bg.setStroke(dp(1), C_SNACK_INFO_BORDER);
+        }
+        snack.setBackground(bg);
+        snack.setMinimumHeight(dp(34));
+
+        TextView icon = new TextView(this);
+        icon.setText(success ? "✅" : "ℹ️");
+        icon.setTextSize(13);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        iconLp.setMarginEnd(dp(7));
+        snack.addView(icon, iconLp);
+
+        TextView text = new TextView(this);
+        text.setText(message);
+        text.setTextColor(success ? C_SNACK_SUCCESS_TEXT : C_TEXT);
+        text.setTextSize(12);
+        snack.addView(text);
+
+        feedbackView = snack;
 
         WindowManager.LayoutParams fbParams = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
                 overlayType(), WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
                 PixelFormat.TRANSLUCENT);
-        fbParams.gravity = Gravity.TOP | Gravity.CENTER;
-        fbParams.y = 100;
+        placeSnackbar(fbParams);
         try {
             windowManager.addView(feedbackView, fbParams);
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
@@ -435,6 +639,35 @@ public class PayoutOverlayService extends Service {
                 }
             }, 3000);
         } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * Places the snackbar relative to the widget's current position — above
+     * it if there's room, otherwise below; horizontally aligned to whichever
+     * third of the screen the widget sits in. Falls back to a fixed
+     * top-center position if the widget hasn't been shown yet (params null).
+     */
+    private void placeSnackbar(WindowManager.LayoutParams fbParams) {
+        if (params == null) {
+            fbParams.gravity = Gravity.TOP | Gravity.CENTER;
+            fbParams.y = dp(100);
+            return;
+        }
+        int metricsWidth = getResources().getDisplayMetrics().widthPixels;
+        int widgetW = expanded ? dp(CARD_W_DP) : dp(BUBBLE_DP);
+        int gap = dp(8);
+        boolean roomAbove = params.y - gap - dp(34) >= 0;
+        fbParams.gravity = Gravity.TOP | Gravity.START;
+        fbParams.y = roomAbove ? Math.max(0, params.y - gap - dp(34)) : params.y + dp(34) + gap;
+
+        int widgetCentre = params.x + widgetW / 2;
+        if (widgetCentre < metricsWidth * 0.36) {
+            fbParams.x = params.x;
+        } else if (widgetCentre > metricsWidth * 0.64) {
+            fbParams.x = Math.max(0, params.x + widgetW - dp(140));
+        } else {
+            fbParams.x = Math.max(0, widgetCentre - dp(70));
         }
     }
 }

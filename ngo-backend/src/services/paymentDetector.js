@@ -172,8 +172,8 @@ function detectRealPayment(evt) {
   const text = `${evt.sender || ''} ${evt.body || ''}`;
 
   // Screen-capture events don't go through this route at all today (they
-  // use /api/apk/outgoing-payment or /api/apk/overlay-capture) — defensive
-  // only, not expected to actually be hit via POST /event.
+  // use /api/apk/outgoing-payment) — defensive only, not expected to
+  // actually be hit via POST /event.
   if (evt.type === 'SCREEN') {
     return { isRealPayment: false, reason: 'screen events use a different route' };
   }

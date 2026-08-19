@@ -15,8 +15,8 @@ import org.junit.Test;
  * MediaProjection screenshot capture, AccessibilityService text reads, the
  * actual SharedPreferences-backed PayoutState — touches real Android
  * framework classes this project has no instrumented/Robolectric harness
- * for. Same boundary OverlayService/PaymentBotService already draw (neither
- * has any unit test today, for the same reason) — those need a real device.
+ * for. Same boundary PaymentBotService already draws (no unit test today,
+ * for the same reason) — those need a real device.
  */
 public class PayoutStateTest {
 

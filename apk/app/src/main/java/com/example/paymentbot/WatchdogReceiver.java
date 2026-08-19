@@ -38,7 +38,6 @@ public class WatchdogReceiver extends BroadcastReceiver {
         // not onCreate()).
         try {
             context.startService(new Intent(context, PaymentOverlayService.class));
-            context.startService(new Intent(context, OverlayService.class));
         } catch (Exception e) {
             Log.e(TAG, "Watchdog: failed to start overlay services", e);
         }

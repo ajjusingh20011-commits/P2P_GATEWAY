@@ -155,7 +155,6 @@ public class MainActivity extends AppCompatActivity {
         startKeepAlive();
         ensureOverlayPermission();
         startOverlayService();
-        startScreenshotService();
         startPayoutOverlayIfEnabled();
         startService(new Intent(this, HeartbeatService.class));
         loadPersistedLogsIfNeeded();
@@ -255,14 +254,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /** Starts the floating screenshot-capture overlay service. */
-    private void startScreenshotService() {
-        try {
-            startService(new Intent(this, OverlayService.class));
-        } catch (Exception ignored) {
-        }
-    }
-
     /** Restores the payout overlay across app/process restarts if the
      *  trader had Payment Mode on — mirrors startOverlayService() above. */
     private void startPayoutOverlayIfEnabled() {
@@ -293,6 +284,12 @@ public class MainActivity extends AppCompatActivity {
     // MediaProjection (screenshot) permission
     // ---------------------------------------------------------------------
     private static final int SCREENSHOT_REQUEST_CODE = 1001;
+    // Tracks the one-time MediaProjection grant locally now that
+    // OverlayService.hasProjection() no longer exists — PayoutOverlayService
+    // holds the actual token in its own static field (untouched here per
+    // scope), this just remembers whether the grant happened, for the
+    // Permissions page row below.
+    private static boolean screenCaptureGranted = false;
 
     private void requestScreenshotPermission() {
         try {
@@ -326,11 +323,9 @@ public class MainActivity extends AppCompatActivity {
             android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
             getWindowManager().getDefaultDisplay().getMetrics(metrics);
 
-            OverlayService.setMediaProjection(
-                    mp, metrics.widthPixels, metrics.heightPixels, metrics.densityDpi);
-            // FEATURE 2 — same one-time consent grant, also handed to the
-            // payout-evidence overlay (separate static holder) so its
-            // Screenshot button works without a second permission prompt.
+            // Screen-capture consent grant, handed to the payout-evidence
+            // overlay's own static holder (PayoutOverlayService).
+            screenCaptureGranted = true;
             PayoutOverlayService.setMediaProjection(
                     mp, metrics.widthPixels, metrics.heightPixels, metrics.densityDpi);
 
@@ -487,48 +482,7 @@ public class MainActivity extends AppCompatActivity {
         content.addView(working);
         page.addView(content);
 
-        // Bottom "Enable screenshot capture" button.
-        Button enableBtn = new Button(this);
-        enableBtn.setText("Enable Screenshot Capture");
-        enableBtn.setAllCaps(false);
-        enableBtn.setTextColor(Color.WHITE);
-        enableBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        enableBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        enableBtn.setBackground(rounded(BRAND_PRIMARY, dp(12)));
-        enableBtn.setStateListAnimator(null);
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
-        btnLp.setMargins(dp(24), dp(16), dp(24), dp(24));
-        enableBtn.setLayoutParams(btnLp);
-        enableBtn.setOnClickListener(v -> onEnableScreenshotCapture());
-        page.addView(enableBtn);
-
         return page;
-    }
-
-    private void onEnableScreenshotCapture() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M
-                && !Settings.canDrawOverlays(this)) {
-            new AlertDialog.Builder(this)
-                    .setTitle("Allow floating windows")
-                    .setMessage("MaxPay needs permission to draw over other apps to verify payments.")
-                    .setNegativeButton("Cancel", (d, w) -> d.dismiss())
-                    .setPositiveButton("Open settings", (d, w) -> {
-                        d.dismiss();
-                        try {
-                            startActivity(new Intent(
-                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                    Uri.parse("package:" + getPackageName())));
-                        } catch (Exception e) {
-                            Toast.makeText(this, "Open Settings and grant access manually",
-                                    Toast.LENGTH_LONG).show();
-                        }
-                    })
-                    .show();
-        } else {
-            startOverlayService();
-            Toast.makeText(this, "Screenshot capture enabled!", Toast.LENGTH_SHORT).show();
-        }
     }
 
     // ---------------------------------------------------------------------
@@ -571,11 +525,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /** Payout evidence overlay toggle — persistent, trader-controlled,
-     *  independent of any server signal. Distinct from the Home page's
-     *  "Enable Screenshot Capture" button (onEnableScreenshotCapture),
-     *  which is an older, unrelated control for OverlayService's floating
-     *  screenshot button — was named "Enable payment mode" until the
-     *  rename that resolved the naming collision with this switch. See
+     *  independent of any server signal. The Home page used to have a
+     *  separate "Enable Screenshot Capture" button for the older,
+     *  now-removed OverlayService floating capture feature (an orphaned,
+     *  never-consumed NGO-dashboard capture flow) — that button and the
+     *  naming collision it once had with this switch are both gone. See
      *  PaymentModeState / PayoutOverlayService. */
     private View paymentModeRow() {
         LinearLayout row = new LinearLayout(this);
@@ -842,7 +796,7 @@ public class MainActivity extends AppCompatActivity {
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         boolean batteryExempt = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
         boolean accessibilityGranted = isAccessibilityEnabled(this);
-        boolean screenCaptureGranted = OverlayService.hasProjection();
+        boolean screenCaptureGrantedNow = screenCaptureGranted;
 
         permissionsListContainer.addView(permissionStatusRow("Notification access", notifGranted,
                 () -> startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))));
@@ -876,7 +830,7 @@ public class MainActivity extends AppCompatActivity {
         // Not one of the approved list's 5 named permissions, but a real,
         // separate runtime consent this build depends on for the
         // screen-capture engine — kept visible rather than hidden.
-        permissionsListContainer.addView(permissionStatusRow("Screen capture", screenCaptureGranted,
+        permissionsListContainer.addView(permissionStatusRow("Screen capture", screenCaptureGrantedNow,
                 this::requestScreenshotPermission));
     }
 

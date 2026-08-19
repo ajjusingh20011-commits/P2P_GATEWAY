@@ -15,7 +15,6 @@ public final class Config {
 
     // Endpoint paths.
     public static final String EP_DEBIT_SMS = SERVER_BASE_URL + "/api/apk/debit-sms";
-    public static final String EP_OVERLAY_CAPTURE = SERVER_BASE_URL + "/api/apk/overlay-capture";
     public static final String EP_OUTGOING_PAYMENT = SERVER_BASE_URL + "/api/apk/outgoing-payment";
     public static final String EP_UPDATE_PURPOSE = SERVER_BASE_URL + "/api/apk/update-purpose";
 

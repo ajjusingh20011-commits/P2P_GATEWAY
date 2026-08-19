@@ -16,10 +16,10 @@ const deviceSchema = new mongoose.Schema(
     licenseExpiresAt: { type: Date, default: null },
     // DEPRECATED (2026-08-06): superseded by traderId below, which is the
     // real authorization boundary now. NOT dead — still read by apk.js
-    // (stamped onto RawEvent.ngoId, and copied onto DebitSMS/OverlayCapture/
-    // OutgoingPayment) to feed the not-yet-retired donation-ledger matching
-    // path (matchingEngine.checkMatch) and payoutVerifier.js. Do not drop
-    // without first retiring/rekeying those.
+    // (stamped onto RawEvent.ngoId, and copied onto DebitSMS/OutgoingPayment)
+    // to feed the not-yet-retired donation-ledger matching path
+    // (matchingEngine.checkMatch). Do not drop without first retiring/
+    // rekeying that.
     ngoId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'NGO',

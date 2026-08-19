@@ -50,7 +50,16 @@ public class DraggableTouchListener implements View.OnTouchListener {
                     isDragging = true;
                 }
                 if (isDragging) {
-                    params.x = initialX - (int) dx;
+                    // Bug: params.x was computed as initialX - dx, inverting
+                    // horizontal drag against the finger (gravity is TOP|
+                    // START, so increasing x moves right — dragging right
+                    // must add dx, not subtract it, same as Y below). With
+                    // the overlay starting near the left edge (x=8), a
+                    // rightward drag drove x further negative instead,
+                    // producing little/no visible horizontal movement while
+                    // vertical drag worked normally — read as "vertical-only"
+                    // dragging. Y was never inverted.
+                    params.x = initialX + (int) dx;
                     params.y = initialY + (int) dy;
                     try {
                         windowManager.updateViewLayout(view, params);

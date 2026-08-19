@@ -195,10 +195,15 @@ public class PaymentBotService extends AccessibilityService {
         if (isWindowEvent) {
             if (PaymentModeState.isEnabled(this)) {
                 startService(new Intent(this, PayoutOverlayService.class));
+                final boolean payoutActiveNow = PayoutState.isActive(this);
                 runWhenOverlayReady(() -> {
                     PayoutOverlayService svc = PayoutOverlayService.getInstance();
                     if (svc == null) return false;
                     if (!svc.isVisible()) svc.show();
+                    // Presentation-only: the active-payout ring/dot. Does not
+                    // gate tappability — that check is unchanged, on the tap
+                    // itself, in PayoutOverlayService.
+                    svc.refreshActiveIndicator(payoutActiveNow);
                     return true;
                 });
             } else {
@@ -207,21 +212,12 @@ public class PaymentBotService extends AccessibilityService {
             }
         }
 
-        // Input recording: capture editable field text while RECORD is active.
-        if (type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
-            if (OverlayService.isRecording() && isPaymentApp(pkg)) {
-                captureRecordedField(event);
-            }
-            return;
-        }
-
         if (!isWindowEvent) {
             return;
         }
 
         if (isPaymentApp(pkg)) {
-            // When a payment app comes forward: passive "watching" badge plus the
-            // floating screenshot button.
+            // When a payment app comes forward: passive "watching" badge.
             if (!pkg.equals(currentPaymentApp)) {
                 currentPaymentApp = pkg;
                 final String appNameForBadge = getAppName(pkg);
@@ -231,14 +227,6 @@ public class PaymentBotService extends AccessibilityService {
                     PaymentOverlayService svc = PaymentOverlayService.getInstance();
                     if (svc == null) return false;
                     svc.showBadge(appNameForBadge);
-                    return true;
-                });
-
-                startService(new Intent(this, OverlayService.class));
-                runWhenOverlayReady(() -> {
-                    OverlayService svc = OverlayService.getInstance();
-                    if (svc == null) return false;
-                    if (!svc.isVisible()) svc.showFloatingButton();
                     return true;
                 });
             }
@@ -269,7 +257,7 @@ public class PaymentBotService extends AccessibilityService {
                 }
             }
         } else {
-            // Left the payment app — hide the badge and the screenshot button.
+            // Left the payment app — hide the badge.
             // No retry here (unlike show, above): if the services aren't
             // ready, nothing was ever shown in the first place, so there's
             // genuinely nothing to hide — that's a correct no-op, not the
@@ -282,12 +270,6 @@ public class PaymentBotService extends AccessibilityService {
                     overlaySvc.hideBadge();
                 } else {
                     Log.d(TAG, "hideBadge skipped — PaymentOverlayService not running (nothing to hide)");
-                }
-                OverlayService floatSvc = OverlayService.getInstance();
-                if (floatSvc != null) {
-                    floatSvc.hideFloatingButton();
-                } else {
-                    Log.d(TAG, "hideFloatingButton skipped — OverlayService not running (nothing to hide)");
                 }
             }
             // Payout overlay no longer hides on leaving a payment app — its
@@ -532,36 +514,6 @@ public class PaymentBotService extends AccessibilityService {
         instance = this;
         Log.d(TAG, "Accessibility service connected");
         MainActivity.addLog("● Screen engine connected");
-
-        // Clipboard monitoring — when recording, a copied account/IFSC/amount is
-        // captured too (users often paste these into payment forms).
-        try {
-            final android.content.ClipboardManager clipboard =
-                    (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            if (clipboard != null) {
-                clipboard.addPrimaryClipChangedListener(() -> {
-                    if (!OverlayService.isRecording()) {
-                        return;
-                    }
-                    android.content.ClipData clip = clipboard.getPrimaryClip();
-                    if (clip == null || clip.getItemCount() == 0) {
-                        return;
-                    }
-                    CharSequence cs = clip.getItemAt(0).getText();
-                    String copied = cs != null ? cs.toString().trim() : "";
-                    if (copied.isEmpty()) {
-                        return;
-                    }
-                    String fieldType = detectFieldType(null, copied);
-                    if (fieldType != null) {
-                        OverlayService.onFieldCaptured(fieldType, copied);
-                        Log.d(TAG, "Clipboard captured: " + fieldType + " = " + copied);
-                    }
-                });
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Clipboard listener error: " + e.getMessage());
-        }
     }
 
     @Override
@@ -589,81 +541,6 @@ public class PaymentBotService extends AccessibilityService {
      *  when none is. */
     public String currentForegroundPackage() {
         return currentPaymentApp;
-    }
-
-    // ---------------------------------------------------------------------
-    // Input recording (field capture)
-    // ---------------------------------------------------------------------
-    private void captureRecordedField(AccessibilityEvent event) {
-        AccessibilityNodeInfo source = event.getSource();
-        if (source == null) {
-            return;
-        }
-        try {
-            if (!source.isEditable()) {
-                return;
-            }
-            CharSequence text = source.getText();
-            if (text == null || text.length() == 0) {
-                return;
-            }
-            String value = text.toString().trim();
-            String fieldType = detectFieldType(source, value);
-            if (fieldType != null) {
-                OverlayService.onFieldCaptured(fieldType, value);
-            }
-        } finally {
-            try {
-                source.recycle();
-            } catch (Exception ignored) {
-            }
-        }
-    }
-
-    /**
-     * Classifies a captured value into ACCOUNT / IFSC / AMOUNT / NAME. When the
-     * source node is null (e.g. a clipboard capture) only the value pattern is
-     * used — no hint/description context is available.
-     */
-    private String detectFieldType(AccessibilityNodeInfo node, String value) {
-        if (value == null || value.isEmpty()) {
-            return null;
-        }
-
-        String combined = "";
-        if (node != null) {
-            String hint = node.getHintText() != null
-                    ? node.getHintText().toString().toLowerCase() : "";
-            String desc = node.getContentDescription() != null
-                    ? node.getContentDescription().toString().toLowerCase() : "";
-            combined = hint + " " + desc;
-        }
-
-        // IFSC: 4 letters + 7 alphanumerics.
-        if (value.matches("[A-Z]{4}[0-9A-Z]{7}")) {
-            return "IFSC";
-        }
-
-        // Account number: 9-18 digits.
-        if (value.matches("\\d{9,18}")) {
-            return "ACCOUNT";
-        }
-
-        // Amount: digits with optional 2-decimal, short.
-        if (value.matches("\\d+(\\.\\d{1,2})?") && value.length() <= 7) {
-            return "AMOUNT";
-        }
-
-        // Name: letters + spaces, 3+ chars — needs a name hint, or clipboard.
-        if (value.matches("[A-Za-z][A-Za-z\\s]{2,49}")
-                && (combined.contains("name")
-                    || combined.contains("beneficiary")
-                    || combined.contains("recipient")
-                    || node == null)) {
-            return "NAME";
-        }
-
-        return null;
     }
 
     private static boolean isPaymentApp(String pkg) {

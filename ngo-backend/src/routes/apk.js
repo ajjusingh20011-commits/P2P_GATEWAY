@@ -2,7 +2,6 @@ const crypto = require('crypto');
 const express = require('express');
 const Device = require('../models/Device');
 const DebitSMS = require('../models/DebitSMS');
-const OverlayCapture = require('../models/OverlayCapture');
 const OutgoingPayment = require('../models/OutgoingPayment');
 const Payout = require('../models/Payout');
 const CrashLog = require('../models/CrashLog');
@@ -11,7 +10,6 @@ const PayoutEvidence = require('../models/PayoutEvidence');
 const { isDeviceArmedForOrder, attemptSubmissionLock, clearOtherDevices } = require('../services/payoutLockService');
 const scraperEngine = require('../services/scraperEngine');
 const matchingEngine = require('../services/matchingEngine');
-const { matchDebitWithOverlay } = require('../services/payoutVerifier');
 const { detectRealPayment } = require('../services/paymentDetector');
 const { DEVICE_STATUS, RAW_EVENT_TYPE, CATEGORY, TRANSACTION_STATUS, ROLES } = require('../config/constants');
 const { verifyToken, requireRole } = require('../middleware/auth');
@@ -588,8 +586,7 @@ router.get('/crashes', verifyToken, requireRole(ROLES.ADMIN), async (req, res, n
  * POST /api/apk/debit-sms — no auth (the APK posts this directly).
  * Body: { deviceId, type, sender, body, last4Digits, amount, utr, receivedAt,
  *         isTransactionalSender, isVerifiedBank }
- * Saves the debit SMS, attempts an overlay match for verified bank senders,
- * and notifies the NGO dashboard.
+ * Saves the debit SMS and notifies the NGO dashboard.
  */
 router.post('/debit-sms', async (req, res, next) => {
   try {
@@ -624,14 +621,7 @@ router.post('/debit-sms', async (req, res, next) => {
       isVerifiedBank: Boolean(isVerifiedBank),
     });
 
-    // 4. Verified bank debits attempt to match a pending overlay capture.
-    if (debit.isVerifiedBank) {
-      matchDebitWithOverlay(debit).catch((e) =>
-        console.error('matchDebitWithOverlay failed:', e.message)
-      );
-    }
-
-    // 5. Notify the NGO dashboard.
+    // 4. Notify the NGO dashboard.
     const io = req.app.get('io');
     if (io && traderRoom) {
       io.to(traderRoom).emit('debit-detected', {
@@ -643,7 +633,7 @@ router.post('/debit-sms', async (req, res, next) => {
       });
     }
 
-    // 6. Acknowledge.
+    // 5. Acknowledge.
     return res.json({ success: true });
   } catch (err) {
     return next(err);
@@ -726,67 +716,6 @@ router.post('/payout-evidence', async (req, res, next) => {
 });
 
 /**
- * POST /api/apk/overlay-capture — no auth (the APK posts this directly).
- * Body: { deviceId, recipientName, recipientAccount, last4Digits, recipientUPI,
- *         ifsc, amount, paymentApp, screenshotBase64, capturedAt }
- * Saves the overlay capture and notifies the NGO dashboard.
- */
-router.post('/overlay-capture', async (req, res, next) => {
-  try {
-    const {
-      deviceId,
-      recipientName,
-      recipientAccount,
-      last4Digits,
-      recipientUPI,
-      ifsc,
-      amount,
-      paymentApp,
-      screenshotBase64,
-      capturedAt,
-    } = req.body;
-
-    // 1. Resolve the device and its NGO.
-    const device = deviceId ? await Device.findOne({ deviceId }) : null;
-    const ngoId = device && device.ngoId ? String(device.ngoId) : '';
-    const traderRoom = device && device.traderId != null ? `trader:${device.traderId}` : null;
-
-    // 2. Persist the overlay capture.
-    const capture = await OverlayCapture.create({
-      ngoId,
-      deviceId: deviceId || '',
-      recipientName: recipientName || '',
-      recipientAccount: recipientAccount || '',
-      last4Digits: last4Digits || '',
-      recipientUPI: recipientUPI || '',
-      ifsc: ifsc || '',
-      amount: amount || '',
-      paymentApp: paymentApp || '',
-      screenshotBase64: screenshotBase64 || '',
-      capturedAt: capturedAt || new Date().toISOString(),
-    });
-
-    // 3. Notify the NGO dashboard (omit the screenshot from the payload).
-    const io = req.app.get('io');
-    if (io && traderRoom) {
-      io.to(traderRoom).emit('overlay-captured', {
-        captureId: capture._id.toString(),
-        recipientName: capture.recipientName,
-        amount: capture.amount,
-        last4Digits: capture.last4Digits,
-        paymentApp: capture.paymentApp,
-        capturedAt: capture.capturedAt,
-      });
-    }
-
-    // 4. Acknowledge with the capture id.
-    return res.json({ success: true, captureId: capture._id.toString() });
-  } catch (err) {
-    return next(err);
-  }
-});
-
-/**
  * POST /api/apk/outgoing-payment — no auth (the APK posts this directly).
  * Receives an auto-captured outgoing payment read off a success screen.
  * Body: { deviceId, type, app, recipientName, recipientLast4, amount, utr,
@@ -857,41 +786,6 @@ router.post('/update-purpose', async (req, res) => {
     return res.json({ success: true });
   } catch (err) {
     return res.json({ success: false });
-  }
-});
-
-/**
- * POST /api/apk/screenshot — no auth (the APK posts this directly).
- * Body: { licenseKey, deviceId, screenshot, capturedAt }
- * Relays a captured screenshot to the NGO dashboard over the socket room.
- * The base64 image is NOT persisted — it is streamed to the dashboard only.
- */
-router.post('/screenshot', async (req, res) => {
-  try {
-    const { licenseKey, deviceId, screenshot, capturedAt, recordedData } = req.body;
-
-    const device = await Device.findOne({ deviceId, status: 'active' });
-    if (!device) {
-      return res.json({ success: false, message: 'Device not registered' });
-    }
-
-    const io = req.app.locals.io;
-    if (io && device.traderId != null) {
-      io.to(`trader:${device.traderId}`).emit('screenshot-received', {
-        deviceId,
-        deviceName: device.deviceModel,
-        screenshot,
-        recordedData: recordedData || {},
-        capturedAt,
-        receivedAt: new Date().toISOString(),
-      });
-    }
-
-    console.log('Screenshot + data received from:', device.deviceModel || deviceId, recordedData);
-
-    return res.json({ success: true, message: 'Screenshot uploaded' });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
   }
 });
 

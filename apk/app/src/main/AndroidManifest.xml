@@ -127,11 +127,6 @@
             android:foregroundServiceType="mediaProjection"/>
 
         <service
-            android:name=".OverlayService"
-            android:exported="false"
-            android:foregroundServiceType="mediaProjection"/>
-
-        <service
             android:name=".HeartbeatService"
             android:exported="false"/>
 

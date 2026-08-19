@@ -43,7 +43,6 @@ public class BootReceiver extends BroadcastReceiver {
             // relies on for KeepAliveService.
             try {
                 context.startService(new Intent(context, PaymentOverlayService.class));
-                context.startService(new Intent(context, OverlayService.class));
             } catch (Exception e) {
                 Log.e(TAG, "Boot: failed to start overlay services", e);
             }
