@@ -7,10 +7,13 @@ import { getTransactions, getNgoSocketToken, NGO_SOCKET_ORIGIN } from '../lib/ng
 import { notifications, ACCOUNT_TYPES } from '../utils/mock';
 import { formatAmount } from '../utils/amount';
 
-const PER_PAGE = 8;
-// How many transactions each server fetch pulls. "Load older" pulls the next
-// page of this size; client-side pages of PER_PAGE then page through the pool.
-const SERVER_PAGE_SIZE = 50;
+// Rows per page in the single, unified pager below.
+const PER_PAGE = 20;
+// Each server fetch pulls a full page (the endpoint caps limit at 100). The page
+// shows the newest 100 immediately, then backfills the rest of the trader's real
+// history in the background so ONE pager and every filter operate across the
+// complete set — not just whatever's currently loaded (see loadAll).
+const FETCH_LIMIT = 100;
 
 // Map Transaction + rawEventId (populated) to row shape for table rendering.
 function apiToRow(txn) {
@@ -152,54 +155,126 @@ function fmtTime(value) {
   return { time: timeStr, date: dateStr };
 }
 
+// The row's calendar day in IST as 'YYYY-MM-DD', to compare against the native
+// date-range inputs (which also emit 'YYYY-MM-DD'). Same IST pinning as fmtTime:
+// the day a payment "belongs to" is its Indian calendar day, for every viewer.
+function istDateKey(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-CA', { timeZone: IST }); // en-CA => YYYY-MM-DD
+}
+
+// Native date input styled to match the panel's other filter controls — a real
+// browser calendar, no extra dependency. The label overlays the empty state so
+// it reads "From" / "To" instead of a bare mm/dd/yyyy.
+function DateField({ label, value, onChange, min, max }) {
+  return (
+    <div className="relative">
+      {!value && (
+        <span
+          style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: 'var(--muted)', pointerEvents: 'none' }}
+        >
+          {label}
+        </span>
+      )}
+      <input
+        type="date"
+        value={value}
+        min={min}
+        max={max}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={label}
+        className="w-full rounded-xl py-2 px-3 text-sm outline-none focus:ring-2"
+        style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: value ? 'var(--text)' : 'transparent' }}
+      />
+    </div>
+  );
+}
+
 const METHOD_OPTIONS = [
   { value: 'all', label: 'All methods' },
   ...Object.entries(ACCOUNT_TYPES).map(([value, v]) => ({ value, label: v.label })),
 ];
 
+const LINKED_OPTIONS = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'linked', label: 'Linked only' },
+  { value: 'unlinked', label: 'Unlinked only' },
+];
+
 export default function Notifications() {
-  const [filters, setFilters] = useState({ transactionId: '', amount: '', method: 'all', date: '', bankDetails: '' });
+  const [filters, setFilters] = useState({
+    transactionId: '', amount: '', method: 'all',
+    dateFrom: '', dateTo: '', device: 'all', linked: 'all', bankDetails: '',
+  });
   const [page, setPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
 
   const [transactions, setTransactions] = useState([]);
   const [total, setTotal] = useState(0);
-  const [serverPage, setServerPage] = useState(0); // highest server page loaded
   const [txnLoading, setTxnLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
   const [error, setError] = useState(null);
 
-  // BUG-52 fix. The endpoint only ever returned the newest 20 with no params,
-  // so no older entry (a real SMS credit, etc.) could ever be reached. Now it's
-  // paginated and accumulated: 'reset' replaces with page 1, 'append' pulls the
-  // next server page of OLDER history ("Load older" below), 'merge' folds any
-  // newer rows a socket push brought in to the front without discarding what's
-  // already loaded. Client-side filtering then searches everything loaded, and
-  // the real `total` the API returns drives how far back the trader can go.
-  const loadPage = useCallback(async (pageNum, mode) => {
-    if (mode === 'append') setLoadingMore(true); else setTxnLoading(true);
+  // Item 1 — ONE pagination system. The page loads the newest FETCH_LIMIT rows
+  // first (so the table paints immediately), then backfills the rest of the
+  // trader's real history in the background until everything the server reports
+  // (`total`) is in hand. With the complete set loaded, the single pager below
+  // and every filter operate across all records — there is no second "load
+  // older" control, and no filter that silently only searches the newest page.
+  // (This supersedes BUG-52's on-demand "load older": history is still reached
+  // in full, just without the confusing second pagination layered on top.)
+  const loadAll = useCallback(async () => {
+    setTxnLoading(true);
+    setError(null);
     try {
-      const res = await getTransactions(pageNum, SERVER_PAGE_SIZE);
-      const list = res.transactions || [];
-      setTotal(res.total || 0);
-      setTransactions((prev) => {
-        if (mode === 'reset') return list;
-        const seen = new Set(prev.map((t) => t._id));
-        const fresh = list.filter((t) => !seen.has(t._id));
-        return mode === 'append' ? [...prev, ...fresh] : [...fresh, ...prev];
-      });
-      if (mode !== 'merge') setServerPage(pageNum);
-      setError(null);
+      const first = await getTransactions(1, FETCH_LIMIT);
+      const totalCount = first.total || 0;
+      let acc = first.transactions || [];
+      setTotal(totalCount);
+      setTransactions(acc);
+      setTxnLoading(false); // newest page is visible; keep filling behind it
+      let pageNum = 2;
+      while (acc.length < totalCount) {
+        setBackfilling(true);
+        const res = await getTransactions(pageNum, FETCH_LIMIT);
+        const list = res.transactions || [];
+        if (list.length === 0) break;
+        const seen = new Set(acc.map((t) => t._id));
+        acc = [...acc, ...list.filter((t) => !seen.has(t._id))];
+        setTransactions(acc);
+        setTotal(res.total || totalCount);
+        pageNum += 1;
+      }
     } catch (e) {
       setError(e.message || 'Could not load notifications.');
     } finally {
       setTxnLoading(false);
-      setLoadingMore(false);
+      setBackfilling(false);
       setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => { loadPage(1, 'reset'); }, [loadPage]);
+  // A socket push means newer rows exist. Pull the newest page and fold in only
+  // the genuinely new ones at the front, leaving the already-loaded history (and
+  // the trader's current page/filters) untouched.
+  const mergeNew = useCallback(async () => {
+    try {
+      const res = await getTransactions(1, FETCH_LIMIT);
+      const list = res.transactions || [];
+      setTotal((t) => res.total || t);
+      setTransactions((prev) => {
+        const seen = new Set(prev.map((t) => t._id));
+        const fresh = list.filter((t) => !seen.has(t._id));
+        return fresh.length ? [...fresh, ...prev] : prev;
+      });
+    } catch (e) {
+      // Non-fatal: the next refresh / socket push catches up.
+    }
+  }, []);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
 
   // The devices fetch + deviceId->Device map that used to live here existed
   // solely to resolve a display name for the "<captureType> · <deviceName>"
@@ -213,22 +288,62 @@ export default function Notifications() {
     setPage(1);
   };
 
+  const clearFilters = () => {
+    setFilters({
+      transactionId: '', amount: '', method: 'all',
+      dateFrom: '', dateTo: '', device: 'all', linked: 'all', bankDetails: '',
+    });
+    setPage(1);
+  };
+
+  // Item 3 — the device filter is built from the same deviceName the Description
+  // column already shows, so it only ever lists devices the trader really has
+  // captures from. Populates as the background backfill completes.
+  const deviceOptions = useMemo(() => {
+    const names = [...new Set(rows.map((n) => n.deviceName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    return [{ value: 'all', label: 'All devices' }, ...names.map((nm) => ({ value: nm, label: nm }))];
+  }, [rows]);
+
+  const anyFilterActive =
+    !!filters.transactionId || !!filters.amount || filters.method !== 'all' ||
+    !!filters.dateFrom || !!filters.dateTo || filters.device !== 'all' ||
+    filters.linked !== 'all' || !!filters.bankDetails;
+
   // Filter rows
   const filtered = useMemo(() => {
     return rows.filter((n) => {
       if (filters.transactionId && !String(n.notificationId).toLowerCase().includes(filters.transactionId.toLowerCase())) return false;
       if (filters.amount && !String(n.amount).includes(filters.amount.trim())) return false;
       if (filters.method !== 'all' && n.method !== filters.method) return false;
-      // date and bankDetails filters are placeholders for now
+      // Item 2 — calendar date range, compared on the IST calendar day.
+      if (filters.dateFrom || filters.dateTo) {
+        const key = istDateKey(n.time);
+        if (!key) return false;
+        if (filters.dateFrom && key < filters.dateFrom) return false;
+        if (filters.dateTo && key > filters.dateTo) return false;
+      }
+      // Item 3 — only captures from the chosen device.
+      if (filters.device !== 'all' && n.deviceName !== filters.device) return false;
+      // Item 4 — linked (matched to an order) / unlinked only.
+      if (filters.linked === 'linked' && !n.isLinked) return false;
+      if (filters.linked === 'unlinked' && n.isLinked) return false;
+      // bankDetails remains a placeholder (unchanged).
       return true;
     });
   }, [rows, filters]);
 
   const pageRows = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
+  // A filter can shrink the result set below the current page — clamp so the
+  // pager and the visible rows never disagree (e.g. filtering while on page 20).
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+    if (page > maxPage) setPage(maxPage);
+  }, [filtered.length, page]);
+
   const refresh = () => {
     setRefreshing(true);
-    loadPage(1, 'reset');
+    loadAll();
   };
 
   useEffect(() => {
@@ -245,11 +360,11 @@ export default function Notifications() {
       if (cancelled) return;
       const socket = io(NGO_SOCKET_ORIGIN, { auth: { serviceToken } });
       notifSocketRef.current = socket;
-      socket.on('new-transactions', () => loadPage(1, 'merge'));
+      socket.on('new-transactions', () => mergeNew());
     }).catch((e) => console.error('Could not start notifications socket:', e.message));
 
     return () => { cancelled = true; };
-  }, [loadPage]);
+  }, [mergeNew]);
   useEffect(() => () => notifSocketRef.current?.disconnect(), []);
 
   return (
@@ -270,13 +385,32 @@ export default function Notifications() {
       />
 
       <Card className="mb-4 p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <SearchInput value={filters.date} onChange={set('date')} placeholder="Date" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Item 2 — real calendar date-range picker (native input, no new dep). */}
+          <DateField label="From date" value={filters.dateFrom} max={filters.dateTo || undefined} onChange={set('dateFrom')} />
+          <DateField label="To date" value={filters.dateTo} min={filters.dateFrom || undefined} onChange={set('dateTo')} />
+          {/* Item 3 — filter by a specific paired device. */}
+          <Select value={filters.device} onChange={set('device')} options={deviceOptions} />
+          {/* Item 4 — Linked / Unlinked status. */}
+          <Select value={filters.linked} onChange={set('linked')} options={LINKED_OPTIONS} />
           <SearchInput value={filters.amount} onChange={set('amount')} placeholder="Amount" />
-          <SearchInput value={filters.bankDetails} onChange={set('bankDetails')} placeholder="My bank details" />
           <Select value={filters.method} onChange={set('method')} options={METHOD_OPTIONS} />
           <SearchInput value={filters.transactionId} onChange={set('transactionId')} placeholder="Transaction ID" />
+          <SearchInput value={filters.bankDetails} onChange={set('bankDetails')} placeholder="My bank details" />
         </div>
+        {anyFilterActive && (
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+              {filtered.length.toLocaleString()} of {rows.length.toLocaleString()} shown
+            </span>
+            <button
+              onClick={clearFilters}
+              style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+            >
+              Clear filters
+            </button>
+          </div>
+        )}
       </Card>
 
       {/* New table-based layout */}
@@ -362,8 +496,10 @@ export default function Notifications() {
                   </div>
 
                   {/* 3. Amount */}
-                  <div style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text)' }}>
-                    ₹{formatAmount(n.amount)}
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--text)' }}>
+                      ₹{formatAmount(n.amount)}
+                    </div>
                   </div>
 
                   {/* 4. Method (badge + full, unmasked UPI ID — no bank/SMS-source label) */}
@@ -495,12 +631,15 @@ export default function Notifications() {
         )}
         <div style={{ borderTop: '1px solid var(--cardborder)' }}>
           <Pagination page={page} perPage={PER_PAGE} total={filtered.length} onPage={setPage} />
-          {transactions.length < total && (
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, padding: '2px 0 12px' }}>
-              <Button variant="ghost" onClick={() => loadPage(serverPage + 1, 'append')} disabled={loadingMore}>
-                {loadingMore ? 'Loading…' : 'Load older'}
-              </Button>
-              <span style={{ color: 'var(--muted)', fontSize: 12 }}>{transactions.length} of {total} loaded</span>
+          {/* Passive indicator only — the full history is being pulled in the
+              background so the single pager above already spans every record.
+              No second pagination control. */}
+          {backfilling && transactions.length < total && (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, padding: '2px 0 12px' }}>
+              <IconRefresh className="h-3.5 w-3.5 animate-spin" style={{ color: 'var(--muted)' }} />
+              <span style={{ color: 'var(--muted)', fontSize: 12 }}>
+                Loading full history… {transactions.length.toLocaleString()} of {total.toLocaleString()}
+              </span>
             </div>
           )}
         </div>
