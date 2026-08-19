@@ -1,6 +1,7 @@
 const Ledger = require('../models/Ledger');
 const NGO = require('../models/NGO');
 const { generateHash, getLastHash, GENESIS_HASH } = require('../utils/hashChain');
+const { cleanAmountString } = require('../utils/amountHelper');
 
 /**
  * Append-only, hash-chained public ledger of verified donations.
@@ -45,7 +46,8 @@ async function createEntry(data) {
   });
 
   // Keep the NGO running total in sync for quick reads.
-  const amountNum = parseFloat(String(data.amount || '').replace(/,/g, ''));
+  // BUG-54: shared cleaner, not an ad hoc .replace(/,/g, '') — see amountHelper.js.
+  const amountNum = parseFloat(cleanAmountString(data.amount));
   if (!Number.isNaN(amountNum) && data.ngoId) {
     await NGO.findByIdAndUpdate(data.ngoId, { $inc: { totalDonations: amountNum } });
   }

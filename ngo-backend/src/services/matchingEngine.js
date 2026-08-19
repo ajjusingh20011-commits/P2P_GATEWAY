@@ -7,6 +7,7 @@ const Device = require('../models/Device');
 const ledgerService = require('./ledgerService');
 const { detectRealPayment } = require('./paymentDetector');
 const { isWithinMinutes } = require('../utils/timeHelper');
+const { cleanAmountString } = require('../utils/amountHelper');
 const {
   WEBHOOK_STATUS,
   WEBHOOK_EXPIRY_MINUTES,
@@ -20,8 +21,11 @@ const {
 
 const MATCH_WINDOW_MINUTES = 10; // transaction must land within 10 min
 
+// BUG-54: routes through the one shared string-cleaner (Unicode digit
+// variants + thousand-separator commas) instead of its own ad hoc
+// .replace(/,/g, '') — see utils/amountHelper.js.
 function normalizeAmount(amount) {
-  return parseFloat(String(amount || '').replace(/,/g, '').trim());
+  return parseFloat(cleanAmountString(amount));
 }
 
 function emit(io, ngoId, event, payload) {

@@ -555,13 +555,60 @@ public class SMSReceiver extends BroadcastReceiver {
         if (body == null || body.isEmpty()) {
             return "";
         }
+        // BUG-54a: PhonePe notifications sometimes render digits using
+        // Unicode "Mathematical" digit variants (e.g. bold "𝟐𝟎" for "20" —
+        // real, different code points, not ASCII 0-9). Every pattern this
+        // is called with (AMOUNT_PATTERNS, UTR_PATTERNS, LAST4_PATTERNS,
+        // BALANCE_PATTERNS) is [0-9]/\d-based and simply cannot match them —
+        // normalize once here, at the single shared entry point both
+        // SMSReceiver and NotificationService funnel through, rather than
+        // at each of the four pattern arrays' call sites.
+        String normalized = normalizeUnicodeDigits(body);
         for (Pattern p : patterns) {
-            Matcher m = p.matcher(body);
+            Matcher m = p.matcher(normalized);
             if (m.find() && m.groupCount() >= 1 && m.group(1) != null) {
                 return m.group(1).trim();
             }
         }
         return "";
+    }
+
+    // Every Unicode block that renders 0-9 as visually digit-shaped code
+    // points with a real numeric value, in order 0->9 within each block.
+    // Bold is the confirmed PhonePe case; its siblings (Double-Struck,
+    // Sans-Serif, Sans-Serif Bold, Monospace) cost nothing extra to cover.
+    // Mirrors ngo-backend/src/utils/amountHelper.js's normalizeUnicodeDigits
+    // — same fix, same reasoning, kept in sync deliberately.
+    private static final int[] DIGIT_BLOCK_STARTS = {0x1D7CE, 0x1D7D8, 0x1D7E2, 0x1D7EC, 0x1D7F6};
+
+    static String normalizeUnicodeDigits(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        StringBuilder out = null; // only allocated if something actually changes
+        int i = 0;
+        while (i < text.length()) {
+            int cp = text.codePointAt(i);
+            int cpLen = Character.charCount(cp);
+            int digit = -1;
+            for (int start : DIGIT_BLOCK_STARTS) {
+                if (cp >= start && cp <= start + 9) {
+                    digit = cp - start;
+                    break;
+                }
+            }
+            if (digit >= 0) {
+                if (out == null) {
+                    out = new StringBuilder(text.length());
+                    out.append(text, 0, i);
+                }
+                out.append((char) ('0' + digit));
+            } else if (out != null) {
+                out.appendCodePoint(cp);
+            }
+            i += cpLen;
+        }
+        return out == null ? text : out.toString();
     }
 
     // ---------------------------------------------------------------------

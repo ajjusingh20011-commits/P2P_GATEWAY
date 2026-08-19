@@ -7,6 +7,7 @@ const ledgerService = require('../services/ledgerService');
 const NGO = require('../models/NGO');
 const Ledger = require('../models/Ledger');
 const Device = require('../models/Device');
+const { cleanAmountString } = require('../utils/amountHelper');
 
 const router = express.Router();
 
@@ -27,7 +28,8 @@ function startOfToday() {
 
 function sumAmounts(entries) {
   return entries.reduce((acc, e) => {
-    const n = parseFloat(String(e.amount || '').replace(/,/g, ''));
+    // BUG-54: shared cleaner, not an ad hoc .replace(/,/g, '') — see amountHelper.js.
+    const n = parseFloat(cleanAmountString(e.amount));
     return acc + (Number.isNaN(n) ? 0 : n);
   }, 0);
 }

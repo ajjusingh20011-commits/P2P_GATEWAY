@@ -28,6 +28,8 @@
  *                    [Time] by [Info/Sender]-Bal: Rs [Balance]"
  */
 
+const { normalizeUnicodeDigits, cleanAmountString } = require('../utils/amountHelper');
+
 // Reject outright — money moving OUT, not in, or not money at all.
 // Matched before the RECEIVED signals below so an SMS that happens to
 // contain both ("You paid ₹500... cashback ₹5 credited") is correctly
@@ -164,7 +166,7 @@ function cleanPayerName(raw) {
  * @param {string} evt.type - RAW_EVENT_TYPE (SMS/NOTIFICATION/SCREEN)
  * @param {string} evt.sender
  * @param {string} evt.body
- * @param {string} evt.amount - already extracted client-side (PaymentParser.java), may be empty
+ * @param {string} evt.amount - already extracted client-side (NotificationService.java/SMSReceiver.java's shared AMOUNT_PATTERNS), may be empty
  * @param {string} evt.utr - already extracted client-side, may be empty
  * @returns {{ isRealPayment: boolean, reason: string, amount: string, payerName: string, payerUpiId: string }}
  */
@@ -189,9 +191,10 @@ function detectRealPayment(evt) {
     return { isRealPayment: false, reason: 'no received/credited signal found' };
   }
 
-  // Prefer the client's own extraction (PaymentParser.java runs the same
-  // amount regex on-device already) — only fall back to re-deriving from the
-  // captured text if the client didn't send one.
+  // Prefer the client's own extraction (already extracted client-side —
+  // NotificationService.java/SMSReceiver.java run the same amount regex
+  // on-device) — only fall back to re-deriving from the captured text if
+  // the client didn't send one.
   //
   // The body is searched first, then the sender. `sender` is
   // "<app name>: <notification title>", and the title is where the payment
@@ -200,10 +203,24 @@ function detectRealPayment(evt) {
   // body meant a title-carried payment produced "received signal found but no
   // usable amount" and never became a Transaction at all — a real, settled
   // payment lost on wording alone. BUG-40.
-  const bodyAmount = matchAmount(evt.body || '');
-  const senderAmount = bodyAmount ? null : matchAmount(evt.sender || '');
+  //
+  // BUG-54a: normalize Unicode "Mathematical" digit variants (PhonePe
+  // notifications sometimes render "20" as "𝟐𝟎" — real, different code
+  // points) BEFORE running AMOUNT_PATTERN — [0-9] does not match them at
+  // all, so an un-normalized body/sender would simply fail to find an
+  // amount here, same as the client-side regex.
+  const normalizedBody = normalizeUnicodeDigits(evt.body || '');
+  const normalizedSender = normalizeUnicodeDigits(evt.sender || '');
+  const bodyAmount = matchAmount(normalizedBody);
+  const senderAmount = bodyAmount ? null : matchAmount(normalizedSender);
   const amountMatch = bodyAmount || senderAmount;
-  const amount = (evt.amount && evt.amount.trim()) || (amountMatch ? amountMatch[1].replace(/,/g, '') : '');
+  // BUG-54b: this used to be `(evt.amount && evt.amount.trim()) ||
+  // (amountMatch ? amountMatch[1].replace(/,/g, '') : '')` — the regex
+  // fallback stripped commas, the client-supplied branch didn't, so
+  // "1,000" from evt.amount reached Transaction.amount uncleaned while a
+  // same-shaped amount re-derived by the regex came out clean. Both
+  // branches now go through the one shared cleaner.
+  const amount = cleanAmountString(evt.amount) || (amountMatch ? cleanAmountString(amountMatch[1]) : '');
   if (!amount) {
     // Transaction.amount is a required field — never create one with an
     // empty/fabricated amount. Better to skip and leave the RawEvent as

@@ -9,6 +9,7 @@ const { assertUpiAvailable, UpiTakenError } = require('../utils/upiUniqueness');
 const axios = require('axios');
 const { resolveSourceApp } = require('../utils/sourceApp');
 const { paymentText } = require('../utils/captureText');
+const { cleanAmountString } = require('../utils/amountHelper');
 const { internalAuthHeaders } = require('../middleware/internalAuth');
 const Device = require('../models/Device');
 const ledgerService = require('../services/ledgerService');
@@ -37,7 +38,8 @@ function startOfToday() {
 
 function sumAmounts(entries) {
   return entries.reduce((acc, e) => {
-    const n = parseFloat(String(e.amount || '').replace(/,/g, ''));
+    // BUG-54: shared cleaner, not an ad hoc .replace(/,/g, '') — see amountHelper.js.
+    const n = parseFloat(cleanAmountString(e.amount));
     return acc + (Number.isNaN(n) ? 0 : n);
   }, 0);
 }

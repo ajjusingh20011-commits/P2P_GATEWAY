@@ -5,6 +5,7 @@ import IdReveal from '../components/IdReveal';
 import { IconRefresh, IconBell, IconWarning } from '../components/icons';
 import { getTransactions, getNgoSocketToken, NGO_SOCKET_ORIGIN } from '../lib/ngoApi';
 import { notifications, ACCOUNT_TYPES } from '../utils/mock';
+import { formatAmount } from '../utils/amount';
 
 const PER_PAGE = 8;
 // How many transactions each server fetch pulls. "Load older" pulls the next
@@ -362,7 +363,7 @@ export default function Notifications() {
 
                   {/* 3. Amount */}
                   <div style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text)' }}>
-                    ₹{Number(n.amount || 0).toLocaleString('en-IN')}
+                    ₹{formatAmount(n.amount)}
                   </div>
 
                   {/* 4. Method (badge + full, unmasked UPI ID — no bank/SMS-source label) */}
