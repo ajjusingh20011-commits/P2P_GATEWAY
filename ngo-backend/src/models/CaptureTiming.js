@@ -93,6 +93,20 @@ const captureTimingSchema = new mongoose.Schema(
     resolvedSubText: { type: String, default: '' },
     resolvedSummaryText: { type: String, default: '' },
 
+    // ---- BUG-57 confirmation signal (temporary) ----
+    // Paytm Business renders its real payment line into a custom RemoteViews
+    // layout (android.contains.customView=true), invisible to every standard
+    // extra above — confirmed via the Paytm Business investigation. The fix
+    // inflates that layout via the public RemoteViews.apply() API (never
+    // reflection) and reads real TextView content back. The team confirming
+    // this works has no adb access, so — same reasoning as isGroupSummary/
+    // extrasDump above — "did inflation actually succeed, and what did it
+    // read" has to be answerable from this upload, not a phone screen.
+    customViewAttempted: { type: Boolean, default: null }, // standard extras had no amount, so the fallback ran at all
+    customViewSucceeded: { type: Boolean, default: null }, // RemoteViews.apply() completed without throwing
+    customViewExtractedText: { type: String, default: '' }, // what was actually read, if anything
+    customViewError: { type: String, default: '' }, // exception class+message if inflation threw
+
     createdAt: { type: Date, default: Date.now },
   },
   { timestamps: true }

@@ -69,6 +69,11 @@ router.post('/capture-timing', async (req, res) => {
       resolvedBigText: String(b.resolvedBigText || ''),
       resolvedSubText: String(b.resolvedSubText || ''),
       resolvedSummaryText: String(b.resolvedSummaryText || ''),
+      // BUG-57 confirmation signal (temporary) — see the model's doc comment.
+      customViewAttempted: typeof b.customViewAttempted === 'boolean' ? b.customViewAttempted : null,
+      customViewSucceeded: typeof b.customViewSucceeded === 'boolean' ? b.customViewSucceeded : null,
+      customViewExtractedText: String(b.customViewExtractedText || ''),
+      customViewError: String(b.customViewError || ''),
     });
 
     // One line carrying the whole picture, so the gaps are readable straight
@@ -84,7 +89,11 @@ router.post('/capture-timing', async (req, res) => {
       + ` | total ${sec(doc.embeddedTimeMs || doc.systemPostTimeMs, serverMs)}\n`
       + `  key=${doc.notifKey || '(none)'} rawPost=${doc.rawPostTimeMs == null ? '(none)' : doc.rawPostTimeMs}`
       + ` groupKey=${doc.groupKey || '(none)'} isGroupSummary=${doc.isGroupSummary == null ? '(n/a)' : doc.isGroupSummary}\n`
-      + `  extrasDump=${doc.extrasDump || '(empty)'}`
+      + `  extrasDump=${doc.extrasDump || '(empty)'}\n`
+      + `  customView: attempted=${doc.customViewAttempted == null ? '(n/a)' : doc.customViewAttempted}`
+      + ` succeeded=${doc.customViewSucceeded == null ? '(n/a)' : doc.customViewSucceeded}`
+      + ` error=${doc.customViewError || '(none)'}`
+      + ` extractedText=${doc.customViewExtractedText || '(empty)'}`
     );
 
     return res.json({ success: true, id: doc._id });

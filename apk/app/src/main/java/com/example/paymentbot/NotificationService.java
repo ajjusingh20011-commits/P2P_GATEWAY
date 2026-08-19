@@ -1,13 +1,23 @@
 package com.example.paymentbot;
 
 import android.app.Notification;
+import android.content.Context;
 import android.os.Bundle;
+import android.os.Parcelable;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.text.TextUtils;
 import android.util.Log;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.RemoteViews;
+import android.widget.TextView;
 
 import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * NotificationListenerService that captures notifications from EVERY app
@@ -154,6 +164,18 @@ public class NotificationService extends NotificationListenerService {
             String subText = charSeq(extras, Notification.EXTRA_SUB_TEXT);
             String summaryText = charSeq(extras, Notification.EXTRA_SUMMARY_TEXT);
 
+            // TEMPORARY DIAGNOSTIC — Paytm Business investigation. Confirms or
+            // rules out the group-summary-vs-individual-notification theory,
+            // and dumps every extra present (including EXTRA_MESSAGES/
+            // EXTRA_TEXT_LINES, which we never read for the real capture) so
+            // we can see where the real "₹X Received from Y" line actually
+            // lives, on a remote device with no adb access — routed through
+            // CaptureTiming's existing server upload, same pattern as the
+            // duplicate-capture investigation above. Remove once the real
+            // field is confirmed and read directly instead.
+            boolean isGroupSummary = (notification.flags & Notification.FLAG_GROUP_SUMMARY) != 0;
+            String extrasDump = dumpExtras(extras);
+
             // Skip promotional / marketing notifications — keep only real
             // transaction alerts.
             String combined = title + " " + text;
@@ -191,6 +213,48 @@ public class NotificationService extends NotificationListenerService {
                 displayBody = title;
             } else {
                 displayBody = text;
+            }
+
+            // BUG-57 — custom-layout fallback (DecoratedCustomViewStyle etc.).
+            // Confirmed real: Paytm Business renders the actual payment line
+            // ("₹20.00 Received from Chiranjit Kumar Biswas") into a custom
+            // RemoteViews layout, not any standard extra — every field above
+            // was null/generic for a real captured example
+            // (android.contains.customView=true). Standard-extras reading
+            // genuinely cannot see this content for such notifications.
+            //
+            // Only attempted when the standard-extras text has no findable
+            // amount already, so this adds no cost to the common case
+            // (GPay/PhonePe/etc. all use standard extras and never reach
+            // here). Uses ONLY the public, documented RemoteViews.apply() API
+            // — an earlier investigation explicitly assessed and rejected
+            // reflecting into RemoteViews' internal fields as too fragile
+            // across Android versions/OEMs; see extractCustomViewText's own
+            // doc comment for the full reasoning.
+            //
+            // The four customView* locals below are the confirmation signal
+            // for this fix (TEMPORARY, same reasoning as the earlier Paytm
+            // diagnostic instrumentation): the team verifying this is
+            // remote with no adb access, so "did inflation actually work,
+            // and what did it read" has to be answerable from the server
+            // upload (see CaptureTiming.record below), not by watching a
+            // phone screen. Remove once this fix is confirmed working for
+            // real and these questions no longer need answering per-event.
+            boolean customViewAttempted = false;
+            boolean customViewSucceeded = false;
+            String customViewExtractedText = "";
+            String customViewError = "";
+            if (SMSReceiver.firstMatch(displayBody, SMSReceiver.AMOUNT_PATTERNS).isEmpty()) {
+                customViewAttempted = true;
+                CustomViewResult customViewResult = extractCustomViewText(packageName, notification);
+                customViewSucceeded = customViewResult.inflationSucceeded;
+                customViewExtractedText = customViewResult.extractedText;
+                customViewError = customViewResult.error;
+                if (!customViewResult.extractedText.isEmpty()
+                        && !SMSReceiver.firstMatch(customViewResult.extractedText, SMSReceiver.AMOUNT_PATTERNS).isEmpty()) {
+                    Log.i(TAG, "Custom-view fallback found an amount standard extras missed: " + packageName);
+                    displayBody = customViewResult.extractedText;
+                }
             }
 
             if (TextUtils.isEmpty(displayBody)) {
@@ -264,10 +328,16 @@ public class NotificationService extends NotificationListenerService {
             // TimeFormatter output as the key, so the two uploads join. Also
             // carries the notification's Android identity + RAW post time
             // (sbn.getPostTime() BEFORE the <=0 fallback that produced
-            // `timestamp` above) for the duplicate-capture investigation.
+            // `timestamp` above) for the duplicate-capture investigation,
+            // the group-summary flag + full extras dump + each individually-
+            // resolved field (Paytm Business investigation), and (TEMPORARY
+            // — BUG-57 confirmation signal) whether the custom-view fallback
+            // was attempted/succeeded and what it actually read.
             CaptureTiming.record(this, "NOTIFICATION", packageName, displayBody, amount,
                     timestamp, appReactionMs, TimeFormatter.toUTC(timestamp),
-                    sbn.getKey(), sbn.getPostTime(), sbn.getId(), sbn.getTag(), sbn.getGroupKey());
+                    sbn.getKey(), sbn.getPostTime(), sbn.getId(), sbn.getTag(), sbn.getGroupKey(),
+                    isGroupSummary, extrasDump, title, text, bigText, subText, summaryText,
+                    customViewAttempted, customViewSucceeded, customViewExtractedText, customViewError);
 
         } catch (Exception e) {
             Log.e(TAG, "NotificationService error", e);
@@ -391,6 +461,134 @@ public class NotificationService extends NotificationListenerService {
         return labels.toArray(new String[0]);
     }
 
+    // ---------------------------------------------------------------------
+    // BUG-57 — custom-layout (DecoratedCustomViewStyle) text extraction.
+    // See the call site in onNotificationPosted for the real evidence this
+    // is built on.
+    //
+    // Deliberately uses ONLY RemoteViews.apply() — the public, documented
+    // API for actually rendering a RemoteViews into a real View tree — and
+    // never reflects into RemoteViews' internal fields (mActions etc.). That
+    // reflection-based approach was explicitly assessed and rejected: field
+    // names are undocumented and have changed across AOSP versions, and
+    // Android 9+'s hidden-API enforcement specifically targets exactly this
+    // kind of framework-internal access, so it could work today and break
+    // silently on the next OS update with no compile-time warning. apply()
+    // carries none of that risk — it's the same call SystemUI itself makes
+    // to actually render the notification.
+    // ---------------------------------------------------------------------
+
+    /**
+     * Outcome of one custom-view extraction attempt. Reused two ways: to
+     * decide whether to replace displayBody, and — since the team verifying
+     * this is remote with no adb access, same constraint as the Paytm
+     * diagnostic investigation — as the confirmation signal routed through
+     * CaptureTiming's server upload so "did inflation actually work" is
+     * answerable from the database, not by watching a phone screen.
+     */
+    private static final class CustomViewResult {
+        final boolean inflationSucceeded;
+        final String extractedText; // "" if nothing readable was found
+        final String error;         // "" if no exception was thrown
+
+        CustomViewResult(boolean inflationSucceeded, String extractedText, String error) {
+            this.inflationSucceeded = inflationSucceeded;
+            this.extractedText = extractedText;
+            this.error = error;
+        }
+    }
+
+    /**
+     * Inflates a notification's custom RemoteViews layout (preferring the
+     * expanded/big version, same "most complete first" precedent as
+     * bigText above) and reads real TextView content from the result.
+     *
+     * The layout and any resources or custom View classes it references
+     * belong to the SOURCE APP's package, not ours — createPackageContext
+     * resolves those resources, but inflation can still legitimately fail
+     * (a custom View subclass we can't resolve, a missing resource,
+     * anything). That is a real limitation of reading a foreign app's
+     * layout, not a bug in this code — caught, logged, and reported back
+     * (not thrown) rather than crash capture or fabricate data. The
+     * caller's existing ParseFailureLogger path already covers "nothing
+     * extracted here either."
+     *
+     * The returned text is a single TextView's content that itself contains
+     * a findable amount — the real payment line, identified by content via
+     * the same AMOUNT_PATTERNS matching used everywhere else, not by
+     * position/order in the tree — or every found TextView's text joined
+     * together if no single node matches alone (amount and payer name split
+     * across separate views), or "" if nothing readable was found.
+     */
+    private CustomViewResult extractCustomViewText(String packageName, Notification notification) {
+        // .contentView/.bigContentView are marked @Deprecated by the SDK —
+        // checked (compiled with -Xlint:deprecation): that's Android
+        // discouraging apps from depending on custom layouts in general,
+        // not a signal there's a working replacement for reading another
+        // app's RemoteViews from a NotificationListenerService. This is the
+        // only way to reach it; harmless, expected, not fixable.
+        RemoteViews remoteViews = notification.bigContentView != null
+                ? notification.bigContentView : notification.contentView;
+        if (remoteViews == null) {
+            return new CustomViewResult(false, "", "no contentView/bigContentView present");
+        }
+
+        List<String> texts = new ArrayList<>();
+        try {
+            Context pkgContext = getApplicationContext()
+                    .createPackageContext(packageName, Context.CONTEXT_IGNORE_SECURITY);
+            // Never actually shown on screen — only inflated so its bound
+            // text content can be read back. RemoteViews.apply() executes
+            // every setText()/setImageResource()/etc. action synchronously
+            // as part of this call; the returned View is already fully
+            // populated, no attach-to-window or layout pass needed.
+            FrameLayout scratchParent = new FrameLayout(pkgContext);
+            View inflated = remoteViews.apply(pkgContext, scratchParent);
+            collectTextViewText(inflated, texts);
+        } catch (Exception e) {
+            String err = e.getClass().getSimpleName() + ": " + e.getMessage();
+            Log.w(TAG, "Custom-view inflation failed for " + packageName + ": " + err);
+            return new CustomViewResult(false, "", err);
+        }
+
+        if (texts.isEmpty()) {
+            // Inflation itself worked — just nothing readable came out of
+            // it (e.g. the layout is all images/icons, no TextView nodes).
+            return new CustomViewResult(true, "", "");
+        }
+
+        for (String candidate : texts) {
+            if (!SMSReceiver.firstMatch(candidate, SMSReceiver.AMOUNT_PATTERNS).isEmpty()) {
+                return new CustomViewResult(true, candidate, "");
+            }
+        }
+        return new CustomViewResult(true, TextUtils.join(" ", texts), "");
+    }
+
+    /** Recurses the real, inflated View tree collecting TextView content —
+     *  standard Android View traversal, no reflection involved. */
+    private void collectTextViewText(View view, List<String> out) {
+        if (view == null) {
+            return;
+        }
+        try {
+            if (view instanceof TextView) {
+                CharSequence t = ((TextView) view).getText();
+                if (t != null && t.length() > 0) {
+                    out.add(t.toString());
+                }
+            }
+            if (view instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) view;
+                for (int i = 0; i < group.getChildCount(); i++) {
+                    collectTextViewText(group.getChildAt(i), out);
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "collectTextViewText error: " + e.getMessage());
+        }
+    }
+
     private static String charSeq(Bundle extras, String key) {
         try {
             CharSequence cs = extras.getCharSequence(key);
@@ -405,5 +603,81 @@ public class NotificationService extends NotificationListenerService {
             // fall through to empty
         }
         return "";
+    }
+
+    // ---------------------------------------------------------------------
+    // TEMPORARY DIAGNOSTIC — Paytm Business investigation (see the call site
+    // in onNotificationPosted for why). Dumps every key in the notification's
+    // extras Bundle, recursing into nested Bundles/Parcelable[] so structured
+    // styles (MessagingStyle's EXTRA_MESSAGES, InboxStyle's EXTRA_TEXT_LINES)
+    // are actually readable, not just object-identity strings. Defensive on
+    // purpose — this runs on a real remote device we cannot debug directly,
+    // and must never be able to crash or block real notification capture.
+    // Remove this whole block once the real field is confirmed.
+    // ---------------------------------------------------------------------
+    private static String dumpExtras(Bundle extras) {
+        if (extras == null) {
+            return "(null extras)";
+        }
+        StringBuilder sb = new StringBuilder();
+        try {
+            for (String key : extras.keySet()) {
+                Object value;
+                try {
+                    value = extras.get(key);
+                } catch (Exception e) {
+                    value = "(unreadable: " + e.getMessage() + ")";
+                }
+                sb.append(key).append('=').append(describeExtraValue(value)).append(" | ");
+            }
+        } catch (Exception e) {
+            sb.append("(dump error: ").append(e.getMessage()).append(")");
+        }
+        String result = sb.toString();
+        // Cap generously — this is meant to be read in full, but must not
+        // let one pathological notification balloon the upload forever.
+        return result.length() > 4000 ? result.substring(0, 4000) + "...(truncated)" : result;
+    }
+
+    private static String describeExtraValue(Object value) {
+        if (value == null) {
+            return "(null)";
+        }
+        try {
+            if (value instanceof CharSequence) {
+                return "\"" + value + "\"";
+            }
+            if (value instanceof CharSequence[]) {
+                CharSequence[] arr = (CharSequence[]) value;
+                StringBuilder lines = new StringBuilder("[");
+                for (int i = 0; i < arr.length; i++) {
+                    if (i > 0) lines.append(", ");
+                    lines.append('"').append(arr[i]).append('"');
+                }
+                return lines.append(']').toString();
+            }
+            // MessagingStyle's EXTRA_MESSAGES is a Parcelable[] of Bundles,
+            // each carrying its own "text"/"sender"/"time" keys — this is
+            // the specific shape the Paytm Business theory needs to see.
+            if (value instanceof Parcelable[]) {
+                Parcelable[] arr = (Parcelable[]) value;
+                StringBuilder items = new StringBuilder("[");
+                for (int i = 0; i < arr.length; i++) {
+                    if (i > 0) items.append(", ");
+                    if (arr[i] instanceof Bundle) {
+                        items.append('{').append(dumpExtras((Bundle) arr[i])).append('}');
+                    } else {
+                        items.append(String.valueOf(arr[i]));
+                    }
+                }
+                return items.append(']').toString();
+            }
+            if (value instanceof Bundle) {
+                return "{" + dumpExtras((Bundle) value) + "}";
+            }
+            return String.valueOf(value);
+        } catch (Exception e) {
+            return "(error: " + e.getMessage() + ")";
+        }
     }
 }

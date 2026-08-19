@@ -123,9 +123,13 @@ public final class CaptureTiming {
                               String body, String amount, long systemPostMs,
                               long appReactionMs, String utcTimestamp) {
         // SMS path has no Android notification identity — rawPostTime is just the
-        // telephony timestamp (no <=0 fallback distinction there).
+        // telephony timestamp (no <=0 fallback distinction there), and none of
+        // the group-summary/extras-dump/custom-view diagnostic fields apply to
+        // SMS either.
         record(context, captureSource, origin, body, amount, systemPostMs,
-                appReactionMs, utcTimestamp, "", systemPostMs, 0, "", "");
+                appReactionMs, utcTimestamp, "", systemPostMs, 0, "", "",
+                false, "", "", "", "", "", "",
+                false, false, "", "");
     }
 
     /**
@@ -135,12 +139,25 @@ public final class CaptureTiming {
      * {@code notifKey} after a listener rebind — from a genuinely new GPay post,
      * and see whether the uploaded timestamp came from GPay or from our fallback
      * wall clock. Part of the duplicate-capture investigation.
+     *
+     * TEMPORARY — isGroupSummary through summaryText are the Paytm Business
+     * investigation; customViewAttempted through customViewError are BUG-57's
+     * confirmation signal (did the RemoteViews-inflation fallback actually work,
+     * and what did it read). Both route real-device data through this same
+     * server upload since the team verifying them has no adb access. Remove
+     * each once its question is answered for good and the fix is trusted
+     * without per-event confirmation.
      */
     public static void record(Context context, String captureSource, String origin,
                               String body, String amount, long systemPostMs,
                               long appReactionMs, String utcTimestamp,
                               String notifKey, long rawPostTimeMs, int notifId,
-                              String notifTag, String groupKey) {
+                              String notifTag, String groupKey,
+                              boolean isGroupSummary, String extrasDump,
+                              String title, String text, String bigText,
+                              String subText, String summaryText,
+                              boolean customViewAttempted, boolean customViewSucceeded,
+                              String customViewExtractedText, String customViewError) {
         try {
             JSONObject json = new JSONObject();
             json.put("captureSource", captureSource == null ? "" : captureSource);
@@ -159,6 +176,19 @@ public final class CaptureTiming {
             json.put("notifTag", notifTag == null ? "" : notifTag);
             json.put("groupKey", groupKey == null ? "" : groupKey);
             json.put("rawPostTimeMs", rawPostTimeMs);
+            // TEMPORARY — Paytm Business investigation.
+            json.put("isGroupSummary", isGroupSummary);
+            json.put("extrasDump", extrasDump == null ? "" : extrasDump);
+            json.put("resolvedTitle", title == null ? "" : title);
+            json.put("resolvedText", text == null ? "" : text);
+            json.put("resolvedBigText", bigText == null ? "" : bigText);
+            json.put("resolvedSubText", subText == null ? "" : subText);
+            json.put("resolvedSummaryText", summaryText == null ? "" : summaryText);
+            // TEMPORARY — BUG-57 confirmation signal.
+            json.put("customViewAttempted", customViewAttempted);
+            json.put("customViewSucceeded", customViewSucceeded);
+            json.put("customViewExtractedText", customViewExtractedText == null ? "" : customViewExtractedText);
+            json.put("customViewError", customViewError == null ? "" : customViewError);
             EventQueue.enqueue(context, ENDPOINT, json.toString(), true);
 
             // Also on-device, so the same numbers are readable over adb even
