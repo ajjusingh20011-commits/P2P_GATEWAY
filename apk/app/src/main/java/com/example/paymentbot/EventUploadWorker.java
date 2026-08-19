@@ -272,8 +272,23 @@ public class EventUploadWorker extends Worker {
             event.lastError = "HTTP " + code;
             // 400 = malformed payload — a genuine client-side bug, not
             // something a retry with the same bytes will ever fix.
-            // Everything else (401/404/409/5xx) is left transient: a 401
-            // can resolve itself if the device re-registers before the next
+            // Payout-evidence specifically: 403 (device was never armed for
+            // this order) and 409 (another device already won the
+            // first-submission-wins lock) are ALSO permanent for this exact
+            // queued row — retrying the same payload can never turn either
+            // into a success. Surface the 409 to the overlay, if it's
+            // running, so the trader sees why instead of silent retries.
+            if ("/api/apk/payout-evidence".equals(event.endpointPath) && (code == 403 || code == 409)) {
+                if (code == 409) {
+                    PayoutOverlayService svc = PayoutOverlayService.getInstance();
+                    if (svc != null) {
+                        svc.postFeedback(PayoutOverlayService.MSG_ALREADY_SUBMITTED_ELSEWHERE, false);
+                    }
+                }
+                return Outcome.PERMANENT_FAILURE;
+            }
+            // Everything else (401/404/5xx) is left transient: a 401 can
+            // resolve itself if the device re-registers before the next
             // attempt, and the rest are plausibly transient server states.
             return (code == 400) ? Outcome.PERMANENT_FAILURE : Outcome.TRANSIENT_FAILURE;
         } catch (Exception e) {

@@ -120,6 +120,11 @@ public class PayoutOverlayService extends Service {
     private static final String MSG_NOT_PAYMENT_APP = "Not a payment app";
     private static final String MSG_NOT_SUCCESS = "Payment success screen not detected";
     private static final String MSG_NO_PERMISSION = "Screen capture permission needed";
+    // Package-visible — read by EventUploadWorker, which owns the actual
+    // HTTP delivery of PayoutState.uploadBundle()'s queued POST (see
+    // EventQueue's offline-durable pipeline) and is the only place a 409
+    // from /payout-evidence is actually observed.
+    static final String MSG_ALREADY_SUBMITTED_ELSEWHERE = "Already submitted from another device";
 
     // Seed list, same pattern as BankSenderTags/ParseFailureLogger elsewhere
     // in this app: 2-3 keywords per app, deliberately small at first —
@@ -581,7 +586,8 @@ public class PayoutOverlayService extends Service {
     // FLAG_NOT_TOUCHABLE — must never swallow a tap meant for the app
     // underneath (matches the design's own comment on this exact point).
     // ---------------------------------------------------------------------
-    private void postFeedback(String message, boolean success) {
+    // Package-visible for the same reason as the constant above.
+    void postFeedback(String message, boolean success) {
         new Handler(Looper.getMainLooper()).post(() -> showFeedback(message, success));
     }
 
