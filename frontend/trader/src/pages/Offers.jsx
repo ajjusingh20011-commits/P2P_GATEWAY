@@ -6,6 +6,7 @@ import {
   IconPlus, IconEdit, IconTrash, IconChevron, IconRobot, IconWarning, IconDots, IconLock, IconGlobe, IconPhone,
 } from '../components/icons';
 import { ACCOUNT_TYPES } from '../utils/mock';
+import { BANK_CATALOG } from '../assets/logos/bankCatalog';
 import { ACCOUNT_STATE, STATE_META, accountState, isLive } from '../utils/accountState';
 import { traderApi } from '../services/api';
 import { toast } from '../components/Toaster';
@@ -26,31 +27,13 @@ const DEVICE_ONLINE_WINDOW_MS = 15 * 1000;
 const LIVE_ICON_POLL_MS = 15 * 1000;
 
 // ---------------------------------------------------------------------------
-// Bank catalog for the "Select Bank" step. Each maps to a valid account_type.
-// Only gpay | phonepe | paytm | bharat_pe | airtel are accepted by the API;
-// every non-wallet bank defaults to `gpay`.
+// Bank catalog for the "Select Bank" step. Each maps to a valid account_type —
+// only gpay | phonepe | paytm | bharat_pe | airtel are accepted by the API, so
+// every non-wallet bank defaults to `gpay`. The list and its per-bank logos are
+// defined once in assets/logos/bankCatalog.js (single source of truth, so the
+// options and the logo lookup can't drift apart).
 // ---------------------------------------------------------------------------
-const BANKS = [
-  { name: 'GPay Business', type: 'gpay', color: 'sky' },
-  { name: 'PhonePe Business', type: 'phonepe', color: 'violet' },
-  { name: 'Paytm Business', type: 'paytm', color: 'sky' },
-  { name: 'Airtel Payments Bank', type: 'airtel', color: 'red' },
-  { name: 'BharatPe Business', type: 'bharat_pe', color: 'amber' },
-  { name: 'AU Bank', type: 'gpay', color: 'amber' },
-  { name: 'Axis Bank', type: 'gpay', color: 'red' },
-  { name: 'Bandhan Bank', type: 'gpay', color: 'red' },
-  { name: 'Bank of Baroda', type: 'gpay', color: 'amber' },
-  { name: 'Bank of India', type: 'gpay', color: 'sky' },
-  { name: 'Canara Bank', type: 'gpay', color: 'amber' },
-  { name: 'HDFC Bank', type: 'gpay', color: 'sky' },
-  { name: 'ICICI Bank', type: 'gpay', color: 'amber' },
-  { name: 'IDFC First Bank', type: 'gpay', color: 'violet' },
-  { name: 'IndusInd Bank', type: 'gpay', color: 'red' },
-  { name: 'Kotak Mahindra Bank', type: 'gpay', color: 'red' },
-  { name: 'PNB', type: 'gpay', color: 'violet' },
-  { name: 'SBI', type: 'gpay', color: 'sky' },
-  { name: 'Yes Bank', type: 'gpay', color: 'sky' },
-];
+const BANKS = BANK_CATALOG;
 
 // Empty string → undefined so Joi defaults apply; a value → Number.
 const num = (v) => (v === '' || v == null ? undefined : Number(v));

@@ -8,6 +8,9 @@ import { IconSearch, IconChevron, IconX, IconInfo } from './icons';
 import gpayLogo from '../assets/logos/gpay-business-bank.svg';
 import phonePeLogo from '../assets/logos/phone-pe-mqr.svg';
 import paytmLogo from '../assets/logos/paytm.svg';
+import airtelLogo from '../assets/logos/airtel.svg';
+import bharatPeLogo from '../assets/logos/bharatpe.svg';
+import { BANK_LOGOS, slugify } from '../assets/logos/bankCatalog';
 
 /* Map a named accent (legacy usage) or a hex string to a hex color. */
 const ACCENT_HEX = {
@@ -209,35 +212,42 @@ export function Pagination({ page, perPage, total, onPage }) {
 }
 
 /*
- * Per-provider visual identity for BankBadge. Providers with a real logo
- * asset (from MaxPayDesign's shared/assets/logos) render it; the rest fall
- * back to a colored-initials glyph — never a bare, untinted letter. Airtel
- * and BharatPe have no design asset, so they stay initials-only.
+ * Per-provider visual identity for BankBadge, keyed by the canonical
+ * account_type. Drives the tint + initials fallback, and carries the logo for
+ * the five wallet/UPI-app providers that map 1:1 to an account_type.
+ *
+ * Plain banks (HDFC, SBI, ICICI, …) are all stored as `gpay`, so a *type*-keyed
+ * logo can't distinguish them — their per-bank logos come from the name-based
+ * BANK_LOGOS layer instead (see bankCatalog.js), resolved first in BankBadge.
  */
 const BANK_VISUALS = {
   gpay: { initials: 'G', hex: '#4285f4', logo: gpayLogo },
   paytm: { initials: 'P', hex: '#00a7e1', logo: paytmLogo },
   phonepe: { initials: 'Ph', hex: '#5f259f', logo: phonePeLogo },
-  airtel: { initials: 'A', hex: '#ed1c24' },
-  bharat_pe: { initials: 'B', hex: '#8b5cf6' },
+  airtel: { initials: 'A', hex: '#ed1c24', logo: airtelLogo },
+  bharat_pe: { initials: 'B', hex: '#8b5cf6', logo: bharatPeLogo },
   // NGO-backend accounts use a differently-spelled platform enum
   // ('bharatpe', no underscore) for the same provider as trader-native
-  // `bharat_pe` — alias it so BankBadge tints both consistently.
-  bharatpe: { initials: 'B', hex: '#8b5cf6' },
+  // `bharat_pe` — alias it so BankBadge tints (and now logos) both consistently.
+  bharatpe: { initials: 'B', hex: '#8b5cf6', logo: bharatPeLogo },
 };
 
 export function BankBadge({ type, label, size = 28 }) {
   const visual = BANK_VISUALS[type];
   const hex = visual?.hex || accentHex();
   const initials = visual?.initials || (label || type || '?').slice(0, 2).toUpperCase();
+  // Resolve the logo name-first (per-bank, from the label), then fall back to
+  // the type's wallet logo, then to colored initials. Name-first is what lets
+  // 40+ banks that all share account_type `gpay` each show their own logo.
+  const logo = BANK_LOGOS[slugify(label)] || visual?.logo || null;
   return (
     <span
       title={label || type}
       className="inline-flex flex-shrink-0 items-center justify-center overflow-hidden font-bold"
       style={{ width: size, height: size, borderRadius: Math.round(size * 0.32), background: hexA(hex, 0.14), color: hex, fontSize: Math.round(size * 0.4) }}
     >
-      {visual?.logo ? (
-        <img src={visual.logo} alt={label || type} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+      {logo ? (
+        <img src={logo} alt={label || type} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
       ) : (
         initials
       )}

@@ -11,7 +11,12 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { usdt } from '../utils/mock';
+import usdtLogo from '../assets/logos/usdt.svg';
+
+// Balance amount only (no unit suffix) — the sidebar shows the USDT unit as the
+// real logo instead of the word "USDT".
+const usdtAmount = (n) =>
+  Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // ₹ lakh-compact formatter, matching the reference's `compact()` helper —
 // used only for the sidebar's secondary (INR-equivalent) balance line.
@@ -91,8 +96,9 @@ export default function Sidebar({ balance, baseRate, online, onToggleOnline, bad
       {!collapsed && (
         <div style={{ margin: '10px 2px 18px', padding: 16, borderRadius: 14, background: 'linear-gradient(145deg,#4f46e5,#3730a3)', color: '#fff' }}>
           <p style={{ opacity: 0.72, fontSize: 12, margin: 0 }}>Available balance</p>
-          <p style={{ fontWeight: 800, fontSize: 21, margin: '7px 0 0' }}>
-            {usdt(balance)}
+          <p style={{ fontWeight: 800, fontSize: 21, margin: '7px 0 0', display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+            <span>{usdtAmount(balance)}</span>
+            <img src={usdtLogo} alt="USDT" style={{ width: 22, height: 22, objectFit: 'contain', display: 'block' }} />
           </p>
           {baseRate > 0 && (
             <div className="flex items-center justify-between" style={{ fontSize: 12 }}>
