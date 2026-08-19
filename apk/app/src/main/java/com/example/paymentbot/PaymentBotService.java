@@ -157,6 +157,13 @@ public class PaymentBotService extends AccessibilityService {
         int type = event.getEventType();
         String pkg = event.getPackageName() != null ? event.getPackageName().toString() : "";
 
+        // TEMPORARY DEBUG LOGGING — real-device root-cause investigation for
+        // the "PhonePe success screen not detected as foreground" bug.
+        // Remove once diagnosed. Logs every event unconditionally, including
+        // ones from this app's own overlay windows, to see whether a
+        // self-generated event is what's clearing currentPaymentApp.
+        Log.d(TAG, "DIAG onAccessibilityEvent: type=" + type + " pkg=" + pkg);
+
         // Computed once — reused below instead of repeating the same type
         // check three times (mechanical, not a behavior change).
         boolean isWindowEvent = type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
@@ -216,9 +223,26 @@ public class PaymentBotService extends AccessibilityService {
             return;
         }
 
+        // CONFIRMED FIX — self-generated events must not participate in
+        // foreground-app tracking. accessibility_config.xml has no
+        // packageNames filter, so this service also receives events from
+        // its own overlay windows (success toasts, feedback snackbars,
+        // badge views). PaymentOverlayService.showSuccessNotification()
+        // adding a WindowManager view the instant the real success screen
+        // is detected produced a self-generated event with
+        // pkg == getPackageName(), which fell into the `else` branch below
+        // and cleared currentPaymentApp even though the real foreground app
+        // (PhonePe) never changed. Skip entirely — currentPaymentApp holds
+        // its last real value through any self-generated event.
+        if (pkg.equals(getPackageName())) {
+            return;
+        }
+
         if (isPaymentApp(pkg)) {
             // When a payment app comes forward: passive "watching" badge.
             if (!pkg.equals(currentPaymentApp)) {
+                // TEMPORARY DEBUG LOGGING — see note at top of this method.
+                Log.d(TAG, "DIAG currentPaymentApp SET: \"" + currentPaymentApp + "\" -> \"" + pkg + "\"");
                 currentPaymentApp = pkg;
                 final String appNameForBadge = getAppName(pkg);
 
@@ -264,6 +288,9 @@ public class PaymentBotService extends AccessibilityService {
             // same silent-fail bug. Logged at debug level purely for
             // visibility while diagnosing the overlay-service lifecycle.
             if (!currentPaymentApp.isEmpty()) {
+                // TEMPORARY DEBUG LOGGING — see note at top of this method.
+                Log.d(TAG, "DIAG currentPaymentApp CLEARED: was \"" + currentPaymentApp
+                        + "\" (event pkg=\"" + pkg + "\" not whitelisted)");
                 currentPaymentApp = "";
                 PaymentOverlayService overlaySvc = PaymentOverlayService.getInstance();
                 if (overlaySvc != null) {
