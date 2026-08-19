@@ -30,6 +30,7 @@ const { Op } = require('sequelize');
 const db = require('../models');
 const logger = require('../utils/logger');
 const smartMerge = require('./smartMerge');
+const { canonicalBankCode } = require('../utils/bankIdentity');
 
 const MATCH_TIER = { EXACT_UTR: 0, UTR_MISMATCH: 1, AMOUNT_ONLY: 2 };
 
@@ -90,6 +91,80 @@ async function upiIdsForDevice(deviceId) {
   return details.map((d) => d.upi_id).filter(Boolean);
 }
 
+/**
+ * The device's accounts WITH their platform (account_type), for BUG-58's
+ * sibling disambiguation. Same rows as upiIdsForDevice, plus the account_type
+ * needed to tell which sibling a capture actually landed on.
+ */
+async function accountsForDevice(deviceId) {
+  const details = await db.PaymentDetail.findAll({
+    where: { ngo_device_id: deviceId },
+    attributes: ['upi_id', 'account_type', 'bank_name'],
+  });
+  return details.map((d) => ({ upi_id: d.upi_id, account_type: d.account_type, bank_name: d.bank_name }));
+}
+
+/**
+ * BUG-58 — decide which of a device's UPI(s) to match a capture against when
+ * ONE device backs SEVERAL sibling accounts. Device scoping alone can't do
+ * this: a payment landing on the device's GPay account must not settle a
+ * same-amount order on its Paytm sibling. Pure (no DB) so it is unit-tested
+ * directly.
+ *
+ * Two capture types carry two different receiver signals, and they are mutually
+ * exclusive per capture: a NOTIFICATION names the app (→ account_type, via
+ * receivingPlatform); an SMS names the bank (→ the trader's declared bank_name,
+ * via receivingBankCode). Whichever is present pins the sibling; if neither
+ * does, we hold rather than guess.
+ *
+ * @param {{upi_id:string, account_type:string, bank_name:string}[]} deviceAccounts
+ * @param {string|null} receivingPlatform - account_type the capture identifies
+ *   (notification source app). null for SMS / unknown apps.
+ * @param {string|null} receivingBankCode - canonical DLT bank code the SMS
+ *   identifies. null for notifications / unrecognised senders.
+ * @returns {{upiIds:string[]}|{refuse:true, reason:string}} either the UPI(s)
+ *   to match against, or a refusal to settle (held for manual confirmation) —
+ *   never a guess across indistinguishable siblings.
+ */
+function resolveReceivingUpis(deviceAccounts, receivingPlatform, receivingBankCode) {
+  const upisOf = (accts) => accts.map((a) => a.upi_id).filter(Boolean);
+
+  // 0 or 1 account on the device: no sibling ambiguity — behave as before.
+  if (deviceAccounts.length <= 1) {
+    return { upiIds: upisOf(deviceAccounts) };
+  }
+
+  // Multiple siblings share this device. The receiver MUST be pinned, or we
+  // refuse — settling by amount alone here is exactly BUG-58.
+
+  // NOTIFICATION path — the app (account_type) identifies the sibling.
+  if (receivingPlatform) {
+    const targets = deviceAccounts.filter((a) => a.account_type === receivingPlatform);
+    if (targets.length === 1) return { upiIds: upisOf(targets) };
+    if (targets.length === 0) return { refuse: true, reason: 'receiving_platform_not_linked' };
+    // Two+ siblings of the SAME platform (e.g. two GPay accounts) — a
+    // notification cannot tell them apart. Hold rather than guess.
+    return { refuse: true, reason: 'ambiguous_same_platform_siblings' };
+  }
+
+  // SMS path — the bank the SMS names, matched against the bank the trader
+  // DECLARED for each account (bank_name → canonical code). A sibling with a
+  // blank/unrecognised bank_name resolves to null and simply can't be the
+  // match, so "blank bank_name" naturally holds unless another sibling clearly
+  // matches.
+  if (receivingBankCode) {
+    const targets = deviceAccounts.filter((a) => canonicalBankCode(a.bank_name) === receivingBankCode);
+    if (targets.length === 1) return { upiIds: upisOf(targets) };
+    if (targets.length === 0) return { refuse: true, reason: 'receiving_bank_not_linked' };
+    // Two+ siblings declared as the same bank — indistinguishable by SMS. Hold.
+    return { refuse: true, reason: 'ambiguous_same_bank_siblings' };
+  }
+
+  // Neither signal (unknown app, or an SMS whose sender we can't identify) —
+  // cannot disambiguate. Hold, never guess.
+  return { refuse: true, reason: 'ambiguous_sibling_accounts' };
+}
+
 /** Whether this trader links any account to a device at all. */
 async function traderUsesDeviceLinking(traderId) {
   const linked = await db.PaymentDetail.count({
@@ -146,7 +221,7 @@ function pickClosestByTime(candidates, eventTimestamp) {
  *   as smartMerge's `engine` tag and the discrepancy log's `source`.
  * @returns {Promise<{matched: boolean, reason?: string, tier?: number, order_id?: number}>}
  */
-async function matchAndSettle({ upiIds, deviceId, traderId, amount, utr, eventTimestamp, payerName, payerUpi, source }) {
+async function matchAndSettle({ upiIds, deviceId, traderId, amount, utr, eventTimestamp, payerName, payerUpi, source, receivingPlatform, receivingBankCode }) {
   let normalizedUpiIds = (Array.isArray(upiIds) ? upiIds : [upiIds]).filter(Boolean);
   const normalizedAmount = Number(amount);
   const normalizedTraderId = Number(traderId);
@@ -160,10 +235,39 @@ async function matchAndSettle({ upiIds, deviceId, traderId, amount, utr, eventTi
   //                          linked to any UPI; never strand a real payment.
   if (!normalizedUpiIds.length) {
     if (normalizedDeviceId) {
-      normalizedUpiIds = await upiIdsForDevice(normalizedDeviceId);
-      if (normalizedUpiIds.length) {
-        logger.info(`matchingEngineV2: device-scoped to ${normalizedUpiIds.length} upi(s) for device ${normalizedDeviceId} — ${normalizedUpiIds.join(',')} (source=${source || 'unknown'})`);
+      const deviceAccounts = await accountsForDevice(normalizedDeviceId);
+
+      if (deviceAccounts.length > 1) {
+        // BUG-58 — one device backs several sibling accounts. Matching by amount
+        // alone across them settled the WRONG account's order when a payment
+        // landed on a sibling (confirmed live: a GPay payment closed a Paytm
+        // order on the same phone). Pin the receiver by the capture's own
+        // signal: a notification names the app (receivingPlatform ==
+        // account_type); an SMS names the bank (receivingBankCode, matched
+        // against each account's DECLARED bank_name). Otherwise refuse and hold.
+        const resolution = resolveReceivingUpis(deviceAccounts, receivingPlatform, receivingBankCode);
+        if (resolution.refuse) {
+          logger.warn(
+            `matchingEngineV2: REFUSING to settle — device ${normalizedDeviceId} backs ${deviceAccounts.length} sibling `
+            + `accounts and the receiving account is not uniquely identifiable (receivingPlatform=${receivingPlatform || 'none'}, `
+            + `receivingBankCode=${receivingBankCode || 'none'}, reason=${resolution.reason}). Settling by amount alone here is `
+            + `BUG-58; the payment is held for manual confirmation (source=${source || 'unknown'}, amount=${normalizedAmount}).`
+          );
+          return { matched: false, reason: resolution.reason, upis_checked: deviceAccounts.map((a) => a.upi_id).filter(Boolean) };
+        }
+        normalizedUpiIds = resolution.upiIds;
+        logger.info(
+          `matchingEngineV2: device ${normalizedDeviceId} backs ${deviceAccounts.length} sibling accounts — disambiguated to `
+          + `${normalizedUpiIds.join(',') || '(none)'} by ${receivingPlatform ? `platform ${receivingPlatform}` : `bank ${receivingBankCode}`} (source=${source || 'unknown'})`
+        );
+      } else if (deviceAccounts.length === 1) {
+        normalizedUpiIds = [deviceAccounts[0].upi_id].filter(Boolean);
+        if (normalizedUpiIds.length) {
+          logger.info(`matchingEngineV2: device-scoped to 1 upi for device ${normalizedDeviceId} — ${normalizedUpiIds.join(',')} (source=${source || 'unknown'})`);
+        }
       }
+      // deviceAccounts.length === 0 → device linked to no account; falls through
+      // to the trader-wide guard below (unchanged BUG-41 behaviour).
     }
 
     if (!normalizedUpiIds.length && Number.isFinite(normalizedTraderId)) {
@@ -267,4 +371,4 @@ async function matchAndSettle({ upiIds, deviceId, traderId, amount, utr, eventTi
   return { matched: true, tier, order_id: order.id };
 }
 
-module.exports = { matchAndSettle, findCandidateOrders, pickClosestByTime, upiIdsForTrader, upiIdsForDevice, MATCH_TIER };
+module.exports = { matchAndSettle, findCandidateOrders, pickClosestByTime, upiIdsForTrader, upiIdsForDevice, accountsForDevice, resolveReceivingUpis, MATCH_TIER };

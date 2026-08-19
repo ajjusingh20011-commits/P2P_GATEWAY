@@ -46,7 +46,7 @@ jest.mock('../src/models', () => {
         .filter((p) =>
           (!('ngo_device_id' in where) || p.ngo_device_id === where.ngo_device_id) &&
           (!('trader_id' in where) || p.trader_id === where.trader_id))
-        .map((p) => ({ upi_id: p.upi_id })),
+        .map((p) => ({ upi_id: p.upi_id, account_type: p.account_type, bank_name: p.bank_name })),
     },
     Order: {
       ACTIVE_STATUSES: ['pending', 'checkout_open', 'claimed_paid', 'under_review'],
@@ -121,19 +121,51 @@ describe('matchingEngineV2 — device-scoped resolution (wrong-match regression)
     expect(settledOrderId).toBe(2001);
   });
 
-  test('a device linked to multiple UPIs disambiguates within its own UPIs by closest time', async () => {
+  // BUG-58 — a device backing MULTIPLE sibling accounts must NOT settle by time
+  // across them: a payment on one sibling settling a same-amount order on the
+  // OTHER is the wrong-account bug (confirmed live — a GPay payment closed a
+  // Paytm order on the same phone). The engine now pins the receiver by the
+  // capture's platform (account_type), or refuses (holds) rather than guess.
+  // This deliberately SUPERSEDES the earlier "disambiguate by closest time
+  // across sibling UPIs" behaviour — that behaviour was itself the bug.
+  function twoSiblingFortyRupeeOrders() {
     mockPds = [
-      { id: 1, trader_id: 1, upi_id: 'a@okaxis', ngo_device_id: 'DEV-MULTI' },
-      { id: 2, trader_id: 1, upi_id: 'b@okhdfc', ngo_device_id: 'DEV-MULTI' },
+      { id: 1, trader_id: 1, upi_id: 'a@okaxis', ngo_device_id: 'DEV-MULTI', account_type: 'gpay' },
+      { id: 2, trader_id: 1, upi_id: 'b@okhdfc', ngo_device_id: 'DEV-MULTI', account_type: 'paytm' },
     ];
     mockOrders = [
+      // 3001 (GPay) is OLDER; 3002 (Paytm) is closer to the event time, so a
+      // time-only disambiguation would wrongly pick it for a GPay payment.
       { id: 3001, status: 'pending', amount_inr: 40, upi_id: 'a@okaxis', created_at: '2026-08-12T01:21:00Z', donor_submitted_utr: null },
       { id: 3002, status: 'pending', amount_inr: 40, upi_id: 'b@okhdfc', created_at: '2026-08-12T01:23:10Z', donor_submitted_utr: null },
     ];
+  }
+
+  test('BUG-58: a sibling device with NO platform info refuses rather than settling by time', async () => {
+    twoSiblingFortyRupeeOrders();
     const { result, settledOrderId } = await settle({
       deviceId: 'DEV-MULTI', traderId: 1, amount: 40, utr: '', eventTimestamp: EVENT_TIME, source: 'apk_notification',
     });
-    expect(result.matched).toBe(true);
+    expect(result.matched).toBe(false);
+    expect(result.reason).toBe('ambiguous_sibling_accounts');
+    expect(settledOrderId).toBeNull();
+  });
+
+  test('BUG-58: a GPay payment settles the GPay sibling (3001), NOT the Paytm sibling (3002) even though 3002 is closer in time', async () => {
+    twoSiblingFortyRupeeOrders();
+    const { result, settledOrderId } = await settle({
+      deviceId: 'DEV-MULTI', traderId: 1, amount: 40, utr: '', eventTimestamp: EVENT_TIME, source: 'apk_notification', receivingPlatform: 'gpay',
+    });
+    expect(result).toMatchObject({ matched: true, order_id: 3001 });
+    expect(settledOrderId).toBe(3001);
+  });
+
+  test('BUG-58: a Paytm payment settles the Paytm sibling (3002)', async () => {
+    twoSiblingFortyRupeeOrders();
+    const { result, settledOrderId } = await settle({
+      deviceId: 'DEV-MULTI', traderId: 1, amount: 40, utr: '', eventTimestamp: EVENT_TIME, source: 'apk_notification', receivingPlatform: 'paytm',
+    });
+    expect(result).toMatchObject({ matched: true, order_id: 3002 });
     expect(settledOrderId).toBe(3002);
   });
 });

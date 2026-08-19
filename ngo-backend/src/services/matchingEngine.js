@@ -6,6 +6,8 @@ const NGO = require('../models/NGO');
 const Device = require('../models/Device');
 const ledgerService = require('./ledgerService');
 const { detectRealPayment } = require('./paymentDetector');
+const { resolveSourceApp } = require('../utils/sourceApp');
+const { settlementBankCode } = require('../utils/bankSenders');
 const { isWithinMinutes } = require('../utils/timeHelper');
 const { cleanAmountString } = require('../utils/amountHelper');
 const {
@@ -378,7 +380,29 @@ async function triggerOrderSettlementFromRawEvent(rawEvent) {
     console.warn(`${tag}: device ${rawEvent.deviceId || '(none)'} has no Device document — matching will fall back to trader scope`);
   }
 
-  console.log(`${tag}: attempting — device=${rawEvent.deviceId || '(none)'} (_id=${device ? device._id : 'none'}) trader=${rawEvent.traderId} amount=${target} utr=${rawEvent.utr || '(none)'}`);
+  // BUG-58 — which of the device's sibling accounts actually received this,
+  // when one device backs several. Two capture types carry two signals:
+  //
+  //   • NOTIFICATION: the source app names the platform (GPay Business vs Paytm
+  //     Business), and resolveSourceApp's key IS the account_type.
+  //   • SMS: the sender header names the BANK (VM-SBIBNK -> State Bank of India),
+  //     which the gateway compares against the bank the trader DECLARED for each
+  //     account (payment_details.bank_name).
+  //
+  // For SMS the code comes from settlementBankCode(), which yields a code ONLY
+  // for a Tier 1 EXACT header match. A Tier 2 prefix inference (HDFCBF→HDFC) or
+  // a Tier 3 blacklist trap (CANFIN) deliberately returns null here — good
+  // enough to DISPLAY, not to auto-settle money. Both signals null when
+  // unresolvable, which the gateway treats as "cannot disambiguate, don't
+  // guess" — it holds for manual confirmation instead of settling blind.
+  const isSms = String(rawEvent.type || '').toUpperCase() === 'SMS';
+  const receivingPlatform = resolveSourceApp({
+    platform: isSms ? 'apk-sms' : 'apk-notification',
+    rawSender: rawEvent.sender,
+  }).key || null;
+  const receivingBankCode = isSms ? settlementBankCode(rawEvent.sender) : null;
+
+  console.log(`${tag}: attempting — device=${rawEvent.deviceId || '(none)'} (_id=${device ? device._id : 'none'}) trader=${rawEvent.traderId} amount=${target} platform=${receivingPlatform || '(none)'} bankCode=${receivingBankCode || '(none)'} utr=${rawEvent.utr || '(none)'}`);
   return callMatchSettlement({
     device_id: device ? String(device._id) : null,
     trader_id: rawEvent.traderId,
@@ -386,6 +410,8 @@ async function triggerOrderSettlementFromRawEvent(rawEvent) {
     utr: rawEvent.utr || '',
     event_time: rawEvent.createdAt || rawEvent.utcTimestamp || new Date().toISOString(),
     source: 'apk_notification',
+    receiving_platform: receivingPlatform,
+    receiving_bank_code: receivingBankCode,
   });
 }
 

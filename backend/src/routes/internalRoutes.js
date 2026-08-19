@@ -49,7 +49,7 @@ router.get('/upi-check', asyncHandler(async (req, res) => {
 // UPI (BUG-30). The scraper still sends upi_ids: it knows the exact receiving
 // account, which is strictly more precise.
 router.post('/match-settlement', asyncHandler(async (req, res) => {
-  const { upi_ids, device_id, trader_id, amount, utr, event_time, payer_name, payer_upi, source } = req.body || {};
+  const { upi_ids, device_id, trader_id, amount, utr, event_time, payer_name, payer_upi, source, receiving_platform, receiving_bank_code } = req.body || {};
 
   const result = await matchingEngineV2.matchAndSettle({
     upiIds: upi_ids,
@@ -61,6 +61,12 @@ router.post('/match-settlement', asyncHandler(async (req, res) => {
     payerName: payer_name,
     payerUpi: payer_upi,
     source,
+    // BUG-58 — which sibling account the capture landed on, when one device
+    // backs several. A notification names the app (receiving_platform); an SMS
+    // names the bank (receiving_bank_code, matched against the declared
+    // bank_name). Both null → the gateway holds rather than guess.
+    receivingPlatform: receiving_platform || null,
+    receivingBankCode: receiving_bank_code || null,
   });
 
   if (!result.matched && result.reason === 'duplicate_utr') {

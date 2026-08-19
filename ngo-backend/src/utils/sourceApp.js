@@ -1,5 +1,7 @@
 'use strict';
 
+const { identifyBankFromSender } = require('./bankSenders');
+
 /**
  * Resolves which real payment app a captured transaction came from, and over
  * which channel we captured it.
@@ -136,13 +138,23 @@ function resolveSourceApp({ platform, rawSender } = {}) {
   }
 
   const mapped = APP_BY_SENDER_PREFIX[senderPrefix(rawSender)];
-  return {
-    key: mapped ? mapped.key : null,
-    // No sender at all, or an app we don't have a name for: say so plainly
-    // instead of inventing one or falling back to the capture tag.
-    label: mapped ? mapped.label : 'Unknown app',
-    channel,
-  };
+  if (mapped) {
+    return { key: mapped.key, label: mapped.label, channel };
+  }
+
+  // No known payment-app prefix. For a bank SMS the sender is a TRAI DLT header
+  // (VM-SBIBNK), so identify the bank via the tiered system — for DISPLAY, any
+  // tier that resolves is fine to show (settlement gates on tier separately, in
+  // settlementBankCode). This turns a bare "Unknown app" into the real bank
+  // name + logo (Tier 1/2), or an honest non-bank label (Tier 3 blacklist).
+  const bank = identifyBankFromSender(rawSender);
+  if (bank) {
+    return { key: null, label: bank.name, channel, bankTier: bank.tier, isBank: bank.isBank };
+  }
+
+  // No sender at all, or a source we genuinely can't name: say so plainly
+  // instead of inventing one or falling back to the capture tag.
+  return { key: null, label: 'Unknown app', channel };
 }
 
 module.exports = { resolveSourceApp, senderPrefix, APP_BY_SENDER_PREFIX, APP_BY_PLATFORM };
