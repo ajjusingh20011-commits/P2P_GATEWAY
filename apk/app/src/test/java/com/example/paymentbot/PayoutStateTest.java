@@ -34,6 +34,18 @@ public class PayoutStateTest {
     }
 
     @Test
+    public void phonePeRealTransactionSuccessfulScreenMatches() {
+        // Real, complete PhonePe success screen (team device evidence 2026-08-20).
+        // Its header is "Transaction Successful"; the old seed only had "transfer
+        // successful" and wrongly rejected this genuine, correct payment.
+        String real = "Transaction Successful 08:52 PM on 20 Aug 2026 "
+                + "Paid to Apu Bala XXXXXXXXXX8906 Jio Payments Bank "
+                + "PhonePe Transaction ID T260820205229597621870B "
+                + "Debited from XXXXXX1551 UTR 919634090229 ₹10";
+        assertTrue(PayoutOverlayService.matchesSuccessKeyword("com.phonepe.app", real));
+    }
+
+    @Test
     public void paytmSuccessKeywordMatches() {
         assertTrue(PayoutOverlayService.matchesSuccessKeyword("net.one97.paytm", "Money Sent Successfully"));
     }

@@ -54,6 +54,21 @@ public class SuccessScreenParserTest {
     }
 
     @Test
+    public void phonePeRealScreen_extractsAmountLast4Utr() {
+        // The same real PhonePe screen the keyword fix unblocks — confirm the
+        // downstream field extraction gets what the match gate needs (amount +
+        // the recipient account last-4 that matches the payout order).
+        String real = "Transaction Successful 08:52 PM on 20 Aug 2026 "
+                + "Paid to Apu Bala XXXXXXXXXX8906 Jio Payments Bank "
+                + "PhonePe Transaction ID T260820205229597621870B "
+                + "Debited from XXXXXX1551 UTR 919634090229 ₹10";
+        assertEquals("10", SuccessScreenParser.amount(real));
+        assertTrue(SuccessScreenParser.last4List(real).contains("8906"));
+        assertTrue(SuccessScreenParser.last4List(real).contains("1551"));
+        assertEquals("919634090229", SuccessScreenParser.utr(real));
+    }
+
+    @Test
     public void bothSidesLast4_bothCaptured() {
         String text = "₹100 from A/c XX1111 to A/c XX2222 UTR 998877665544";
         List<String> last4 = SuccessScreenParser.last4List(text);

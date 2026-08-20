@@ -87,8 +87,16 @@ android {
         // (MainActivity, BootReceiver, WatchdogReceiver, AndroidManifest). Now the
         // ONLY payout capture is the trader's deliberate Capture tap; inbound
         // detection stays event-driven (NotificationService / SMSReceiver).
-        versionCode = 21
-        versionName = "2.8-kill-passive-capture"
+        // 22 / 2.9-phonepe-success-fix — the tap-only success-screen detector
+        // rejected a genuine PhonePe success screen: its header reads
+        // "Transaction Successful" but the per-app seed only had "transfer
+        // successful"/"money sent". Added the real wording + a general
+        // success-phrase fallback (any recognized payout app; unknown/non-payout
+        // packages still fail closed), so a real success screen is never rejected
+        // on exact wording again. Safe because capture is tap-triggered and the
+        // amount/last-4 field match is the real guard.
+        versionCode = 22
+        versionName = "2.9-phonepe-success-fix"
 
         // Room schema export — not used for migrations yet (the app is
         // pre-install-base, so destructive fallback is acceptable), but

@@ -139,10 +139,12 @@ public class PayoutOverlayService extends Service {
     // from /payout-evidence is actually observed.
     static final String MSG_ALREADY_SUBMITTED_ELSEWHERE = "Already submitted from another device";
 
-    // Seed list, same pattern as BankSenderTags/ParseFailureLogger elsewhere
-    // in this app: 2-3 keywords per app, deliberately small at first —
-    // misses are logged via logSuccessKeywordMiss() below for real-traffic
-    // review before this list gets extended.
+    // Per-app success wording seeds (a fast path). The REAL guard is
+    // matchesSuccessKeyword's GENERAL_SUCCESS fallback below (any recognized
+    // payout app) plus the downstream amount/last-4 field match. PhonePe's real
+    // success header is "Transaction Successful" — NOT "Transfer Successful"
+    // (real-device team evidence, 2026-08-20). The old seed only had the latter,
+    // so it rejected a genuine, correct PhonePe success screen outright.
     private static final Map<String, String[]> SUCCESS_KEYWORDS = new HashMap<>();
     static {
         SUCCESS_KEYWORDS.put("com.google.android.apps.nbu.paisa.user",
@@ -150,15 +152,27 @@ public class PayoutOverlayService extends Service {
         SUCCESS_KEYWORDS.put("com.google.android.apps.nbu.paisa.merchant",
                 new String[]{"payment successful", "money sent", "completed"});
         SUCCESS_KEYWORDS.put("com.phonepe.app",
-                new String[]{"transfer successful", "money sent"});
+                new String[]{"transaction successful", "transfer successful", "payment successful", "money sent"});
         SUCCESS_KEYWORDS.put("com.phonepe.app.business",
-                new String[]{"transfer successful", "money sent"});
+                new String[]{"transaction successful", "transfer successful", "payment successful", "money sent"});
         SUCCESS_KEYWORDS.put("net.one97.paytm",
-                new String[]{"payment successful", "money sent successfully"});
+                new String[]{"payment successful", "transaction successful", "money sent successfully"});
         SUCCESS_KEYWORDS.put("com.paytm.business",
-                new String[]{"payment successful", "money sent successfully"});
+                new String[]{"payment successful", "transaction successful", "money sent successfully"});
         // BHIM intentionally omitted — package id unverified, see PR notes.
     }
+
+    // General UPI success wording, checked for ANY recognized payout app (see
+    // matchesSuccessKeyword). Capture is tap-triggered — the trader deliberately
+    // taps on the screen they're viewing — so a broad success match is safe here;
+    // the amount/last-4 field match downstream is the real guard against a wrong
+    // screen. This is what keeps a genuine success screen from ever being
+    // rejected on exact wording again.
+    private static final String[] GENERAL_SUCCESS_KEYWORDS = {
+            "transaction successful", "payment successful", "transfer successful",
+            "successfully sent", "successfully paid", "sent successfully",
+            "paid successfully", "money sent",
+    };
 
     public static PayoutOverlayService getInstance() {
         return instance;
@@ -590,11 +604,23 @@ public class PayoutOverlayService extends Service {
 
     /** Pure — package-visible + static for PayoutStateTest. */
     static boolean matchesSuccessKeyword(String pkg, String screenText) {
-        String[] keywords = SUCCESS_KEYWORDS.get(pkg);
-        if (keywords == null || screenText == null) return false;
+        if (screenText == null) return false;
         String t = screenText.toLowerCase();
-        for (String k : keywords) {
-            if (t.contains(k)) return true;
+        // Per-app seed wording (fast path).
+        String[] keywords = SUCCESS_KEYWORDS.get(pkg);
+        if (keywords != null) {
+            for (String k : keywords) {
+                if (t.contains(k)) return true;
+            }
+        }
+        // General success wording — ONLY for a recognized payout app, so an
+        // unknown / non-payout package still fails closed. This is what stops a
+        // real success screen (e.g. PhonePe's "Transaction Successful") being
+        // rejected just because its exact phrase wasn't in the per-app seed.
+        if (PaymentApps.isPayoutApp(pkg)) {
+            for (String k : GENERAL_SUCCESS_KEYWORDS) {
+                if (t.contains(k)) return true;
+            }
         }
         return false;
     }
