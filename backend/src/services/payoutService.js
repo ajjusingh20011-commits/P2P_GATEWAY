@@ -422,18 +422,51 @@ async function transferred(traderId, id, { receipt_url } = {}) {
   return row;
 }
 
-/** in_processing → canceled (trader backs out before transferring). */
+/**
+ * in_processing → back to the GLOBAL pool (a trader releases a payout they'd
+ * picked up). Mirrors returnDisputesToPool's reset: clears the assignment and
+ * accept-time timers so the request becomes awaiting_processing/unassigned and
+ * ANY trader (including the same one) can pick it up again — instead of the old
+ * behaviour, which marked it terminally 'canceled' and stranded the merchant's
+ * payout so it was never processed at all.
+ *
+ * Race-safe: locks the row inside a transaction and only proceeds if it's still
+ * in_processing and still owned by this trader (so it can't collide with the
+ * expiry sweep or a concurrent transfer). Best-effort device-disarm + pool
+ * broadcast happen after the commit, same as returnDisputesToPool.
+ */
 async function cancelByTrader(traderId, id) {
   const row = await getForTrader(traderId, id);
   if (row.status !== 'in_processing') throw Object.assign(new Error(`Cannot cancel from ${row.status}`), { status: 409 });
 
-  await row.update({ status: 'canceled', canceled_at: new Date() });
-  const summary = { id: row.id, uuid: row.uuid, trader_id: traderId, status: row.status };
-  broadcast('payout:canceled', summary);
-  emitToAdmin('payout:canceled', summary);
-  emitToMerchant(row.merchant_id, 'payout:canceled', summary);
-  logger.info(`payout: trader ${traderId} canceled ${row.uuid}`);
-  return row;
+  await db.sequelize.transaction(async (transaction) => {
+    const fresh = await db.PayoutRequest.findByPk(row.id, { transaction, lock: transaction.LOCK.UPDATE });
+    if (!fresh || fresh.status !== 'in_processing' || fresh.assigned_trader_id !== traderId) {
+      throw Object.assign(new Error(`Cannot cancel from ${fresh ? fresh.status : 'missing'}`), { status: 409 });
+    }
+    await fresh.update(
+      {
+        status: 'awaiting_processing',
+        assigned_trader_id: null,
+        accepted_at: null,
+        expires_at: null,
+      },
+      { transaction }
+    );
+  });
+
+  // No longer this trader's — stop any of their devices still armed for it, and
+  // put it back in every trader's pool view (same signals returnDisputesToPool
+  // emits so all panels react identically to a pool return).
+  await clearTraderDevicesPayout(traderId, row.uuid);
+  const summary = { id: row.id, uuid: row.uuid, status: 'awaiting_processing' };
+  broadcast('payout:returned-to-pool', summary);
+  emitToAdmin('payout:returned-to-pool', summary);
+  // Tell the releasing trader's own panel to drop it from their in-processing
+  // list immediately, rather than waiting for the next poll.
+  emitToTrader(traderId, 'payout:canceled', { id: row.id, uuid: row.uuid, trader_id: traderId, status: 'awaiting_processing' });
+  logger.info(`payout: trader ${traderId} released ${row.uuid} back to the global pool`);
+  return db.PayoutRequest.findByPk(row.id);
 }
 
 /** in_processing → dispute (trader hit a problem). */

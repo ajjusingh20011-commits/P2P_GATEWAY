@@ -284,7 +284,7 @@ export default function BuyUsdt() {
           busy={busyId === selected.id}
           onClose={() => setSelected(null)}
           onTransferred={(receiptUrl) => submitTransferred(selected.id, receiptUrl ? { receipt_url: receiptUrl } : {})}
-          onCancel={() => act(() => traderApi.cancelPayout(selected.id), selected.id, 'canceled')}
+          onCancel={() => act(() => traderApi.cancelPayout(selected.id), selected.id, 'awaiting_processing')}
           onProblem={() => act(() => traderApi.problemPayout(selected.id, { reason: 'Trader reported a problem' }), selected.id, 'dispute')}
         />
       )}

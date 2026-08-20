@@ -45,7 +45,7 @@ export default function Settings() {
     exchange_rate_mode: 'binance',
     admin_default_margin: '5',
     trader_default_margin: '4',
-    payout_expiry_minutes: '15',
+    payout_expiry_minutes: '40',
     order_expiry_minutes: '15',
     min_order_amount: '100',
     max_order_amount: '100000',
