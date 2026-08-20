@@ -16,13 +16,15 @@ import java.util.regex.Pattern;
 /**
  * Engine 1 — Screen reader (AccessibilityService).
  *
- * <p>Fully automatic outgoing-payment capture: whenever a payment app shows a
- * success screen, the bot silently reads the amount / recipient / UTR and posts
- * it to the backend — the NGO team does nothing. A passive badge indicates the
- * bot is watching, and a brief success notification confirms each capture.
+ * <p>Foreground-app tracking + on-demand screen text. OUTGOING/payout details
+ * are NEVER read passively — the old "read every success screen automatically"
+ * behaviour was removed (it would falsely capture an OLD transaction a trader
+ * merely scrolled to). Payout fields are extracted ONLY when the trader taps
+ * Capture (PayoutOverlayService.onScreenshotTap reads currentScreenText() once,
+ * at that moment, via SuccessScreenParser).
  *
  * <p>The original inbound-payment screen capture (for watched UPI apps) is
- * preserved for non-success screens.
+ * preserved for non-success screens — that is the separate receiving path.
  */
 public class PaymentBotService extends AccessibilityService {
 
@@ -37,34 +39,11 @@ public class PaymentBotService extends AccessibilityService {
     // Every banking / UPI app the bot watches — drives the floating screenshot
     // button and (for UPI apps) the outgoing success-screen capture.
     //
-    // Kept in sync with NotificationService.ALLOWED_PACKAGES (overlay
-    // investigation, item 2: this list had drifted 4 packages behind that
-    // one — the "for Business"/merchant variants below were watched for
-    // notifications but never triggered the overlay at all).
-    private static final String[] PAYMENT_APPS = {
-            "com.phonepe.app",
-            "com.google.android.apps.nbu.paisa.user",
-            // Google Pay for Business — merchant/business variant.
-            "com.google.android.apps.nbu.paisa.merchant",
-            "net.one97.paytm",
-            "com.bharatpe.merchant",
-            // BharatPe for Business — verified against the Play Store listing
-            // (see the matching note in NotificationService.ALLOWED_PACKAGES).
-            "com.bharatpe.app",
-            // Paytm for Business — unverified, see NotificationService note.
-            "com.paytm.business",
-            // PhonePe Business — unverified, see NotificationService note.
-            "com.phonepe.app.business",
-            "in.amazon.mShop.android.shopping",
-            "com.freecharge.android",
-            "com.airtelpeymentsbank",
-            "com.csam.icici.bank.imobile",
-            "com.sbi.SBIFreedomPlus",
-            "com.axis.mobile",
-            "com.dreamplug.androidapp",
-            "com.mobikwik_new",
-            "com.snapwork.hdfc"
-    };
+    // The overlay/success-screen payment-app allowlist now lives in ONE place —
+    // PaymentApps.isPaymentApp (Phase 1b). This file's old PAYMENT_APPS copy had
+    // drifted, still carrying the Amazon/CRED/MobiKwik/FreeCharge apps that
+    // NotificationService had dropped under BUG-38; consolidating removes them
+    // from the overlay path too.
 
     // Subset used for the legacy inbound-payment (non-success-screen) capture
     // path. Deliberately NOT extended with the 4 business-variant packages
@@ -239,20 +218,14 @@ public class PaymentBotService extends AccessibilityService {
         }
 
         if (isPaymentApp(pkg)) {
-            // When a payment app comes forward: passive "watching" badge.
+            // A payment app is foregrounded — track it. BUG 2: no separate
+            // "watching" banner. The single unified overlay (PayoutOverlayService
+            // bubble/card) and its foreground-verification light already convey
+            // this; the old PaymentOverlayService badge was a SECOND floating
+            // element stacked on top of that overlay.
             if (!pkg.equals(currentPaymentApp)) {
-                // TEMPORARY DEBUG LOGGING — see note at top of this method.
                 Log.d(TAG, "DIAG currentPaymentApp SET: \"" + currentPaymentApp + "\" -> \"" + pkg + "\"");
                 currentPaymentApp = pkg;
-                final String appNameForBadge = getAppName(pkg);
-
-                startService(new Intent(this, PaymentOverlayService.class));
-                runWhenOverlayReady(() -> {
-                    PaymentOverlayService svc = PaymentOverlayService.getInstance();
-                    if (svc == null) return false;
-                    svc.showBadge(appNameForBadge);
-                    return true;
-                });
             }
 
             AccessibilityNodeInfo root = getRootInActiveWindow();
@@ -266,10 +239,16 @@ public class PaymentBotService extends AccessibilityService {
                     return;
                 }
 
-                if (isSuccessScreen(screenText)) {
-                    handleSuccessScreen(pkg, screenText);
-                } else if (isWatched(pkg)) {
-                    // Preserved inbound-payment capture for non-success screens.
+                // OUTGOING/payout details are NEVER read passively. The old
+                // isSuccessScreen() -> handleSuccessScreen() branch here
+                // auto-extracted and auto-posted EVERY outgoing success screen
+                // the instant it appeared — which would falsely capture an OLD
+                // transaction the trader merely scrolled to in their history.
+                // Removed: outgoing/payout fields are now extracted ONLY when the
+                // trader deliberately taps Capture (PayoutOverlayService
+                // .onScreenshotTap -> SuccessScreenParser). This block keeps only
+                // the inbound (receiving) capture, which is a separate pay-in path.
+                if (isWatched(pkg)) {
                     handleInboundCapture(pkg, screenText);
                 }
             } catch (Exception e) {
@@ -281,123 +260,38 @@ public class PaymentBotService extends AccessibilityService {
                 }
             }
         } else {
-            // Left the payment app — hide the badge.
-            // No retry here (unlike show, above): if the services aren't
-            // ready, nothing was ever shown in the first place, so there's
-            // genuinely nothing to hide — that's a correct no-op, not the
-            // same silent-fail bug. Logged at debug level purely for
-            // visibility while diagnosing the overlay-service lifecycle.
-            if (!currentPaymentApp.isEmpty()) {
-                // TEMPORARY DEBUG LOGGING — see note at top of this method.
+            // BUG 1 — a NON-payment package took focus, but do NOT clear the
+            // payment-app state for a TRANSIENT SYSTEM overlay briefly appearing
+            // ON TOP of the payment app: fingerprint/biometric prompts, permission
+            // dialogs, the notification shade, the keyboard. Confirmed on-device:
+            // PhonePe's "Pay with fingerprint" prompt surfaced as a
+            // com.android.systemui TYPE_WINDOW_CONTENT_CHANGED (2048) event and
+            // was wrongly clearing state — flashing the light red mid-payment,
+            // even though the trader never left PhonePe. Only a genuine SWITCH —
+            // a window-STATE change to a different REAL app — clears.
+            boolean genuineAppSwitch = type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                    && !isTransientSystemOverlay(pkg);
+            if (genuineAppSwitch && !currentPaymentApp.isEmpty()) {
                 Log.d(TAG, "DIAG currentPaymentApp CLEARED: was \"" + currentPaymentApp
-                        + "\" (event pkg=\"" + pkg + "\" not whitelisted)");
+                        + "\" (switched to real app \"" + pkg + "\")");
                 currentPaymentApp = "";
-                PaymentOverlayService overlaySvc = PaymentOverlayService.getInstance();
-                if (overlaySvc != null) {
-                    overlaySvc.hideBadge();
-                } else {
-                    Log.d(TAG, "hideBadge skipped — PaymentOverlayService not running (nothing to hide)");
-                }
             }
-            // Payout overlay no longer hides on leaving a payment app — its
-            // visibility is now driven solely by PaymentModeState above,
-            // not by which app is currently foregrounded.
+            // Payout overlay visibility is driven solely by PaymentModeState
+            // above, not by which app is foregrounded.
         }
     }
 
     // ---------------------------------------------------------------------
     // Outgoing success capture (automatic)
     // ---------------------------------------------------------------------
-    private void handleSuccessScreen(String pkg, String screenText) {
-        String amount = extractSuccessAmount(screenText);
-        String name = extractSuccessName(screenText);
-        String last4 = extractSuccessLast4(screenText);
-        String utr = extractSuccessUTR(screenText);
-        String appName = getAppName(pkg);
 
-        long now = System.currentTimeMillis();
-        boolean isDuplicate = utr != null && !utr.isEmpty() && utr.equals(lastCapturedUTR);
-        boolean tooSoon = (now - lastCaptureTime) < 8000;
-
-        if (amount == null || amount.isEmpty()) {
-            // Item 5: this passed isSuccessScreen()'s keyword gate, so it's a
-            // real success screen — but if no amount extracted, that's an
-            // app/format our AMOUNT_PATTERN doesn't handle. Log for review
-            // (skip logging plain duplicate/debounce returns below — those
-            // aren't parse failures, they're working as intended).
-            ParseFailureLogger.log(this, "SCREEN", appName, screenText, "success_screen_no_amount_matched");
-            return;
-        }
-        if (isDuplicate || tooSoon) {
-            return;
-        }
-
-        lastCapturedUTR = utr != null ? utr : "";
-        lastCaptureTime = now;
-
-        Log.d(TAG, "SUCCESS DETECTED: " + appName + " Rs." + amount
-                + " to " + name + " UTR:" + utr);
-
-        // AUTO capture and send — no user interaction.
-        autoCaptureAndSend(appName, name, amount, last4, utr);
-
-        // Confirm to the NGO with a brief notification. Retried the same way
-        // as showBadge() above — by the time a success screen appears the
-        // service has almost always finished starting already (it was
-        // started when the app came to the foreground, seconds earlier),
-        // but the race is the same shape, so it gets the same fix.
-        final String fAppName = appName;
-        final String fName = name;
-        final String fAmount = amount;
-        final String fUtr = utr;
-        runWhenOverlayReady(() -> {
-            PaymentOverlayService svc = PaymentOverlayService.getInstance();
-            if (svc == null) return false;
-            svc.showSuccessNotification(fAppName, fName, fAmount, fUtr);
-            return true;
-        });
-
-        MainActivity.addLog("💸 OUTGOING: Rs." + amount + " to " + name
-                + " via " + appName + " UTR:" + utr);
-    }
 
     /**
      * Queues the auto-captured outgoing payment for delivery (item 3:
      * Room-backed, survives offline/process death — this used to be a
      * direct fire-and-forget POST that silently lost the event on failure).
      */
-    private void autoCaptureAndSend(String app, String recipientName,
-                                    String amount, String last4, String utr) {
-        final String deviceId = android.provider.Settings.Secure.getString(
-                getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
-        final String capturedAt = TimeFormatter.toUTC(System.currentTimeMillis());
-        final String fName = recipientName != null ? recipientName : "";
-        final String fLast4 = last4 != null ? last4 : "";
-        final String fUtr = utr != null ? utr : "";
-        final String fApp = app != null ? app : "";
-        final String fAmount = amount != null ? amount : "";
 
-        try {
-            JSONObject json = new JSONObject();
-            json.put("deviceId", deviceId == null ? "" : deviceId);
-            json.put("type", "OUTGOING");
-            json.put("app", fApp);
-            json.put("recipientName", fName);
-            json.put("recipientLast4", fLast4);
-            json.put("amount", fAmount);
-            json.put("utr", fUtr);
-            json.put("capturedAt", capturedAt);
-            json.put("capturedFrom", "SUCCESS_SCREEN");
-            json.put("autoCapture", true);
-
-            // /api/apk/outgoing-payment keys off the deviceId field in the
-            // JSON body (see ngo-backend/src/routes/apk.js) — no
-            // devicetoken header needed.
-            EventQueue.enqueue(this, "/api/apk/outgoing-payment", json.toString(), false);
-        } catch (Exception e) {
-            Log.e(TAG, "autoCaptureAndSend buildJson error: " + e.getMessage());
-        }
-    }
 
     // ---------------------------------------------------------------------
     // Inbound capture (preserved from the original engine)
@@ -546,7 +440,19 @@ public class PaymentBotService extends AccessibilityService {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        instance = null;
+        // Only clear the singleton if WE are still the current instance. On a
+        // permission toggle-off/on (or a system rebind) the OLD instance's
+        // onDestroy() can run AFTER the NEW instance's onServiceConnected()
+        // already set `instance = this`. An unconditional `instance = null` here
+        // then wiped the live reference, so getInstance() returned null forever
+        // — the "null-reader" the overlay logs — despite a connected service
+        // existing. Guarding on identity fixes that stale-null race.
+        boolean wasCurrent = (instance == this);
+        if (wasCurrent) {
+            instance = null;
+        }
+        Log.d(TAG, "Accessibility service DESTROYED (wasCurrentInstance=" + wasCurrent
+                + ", instanceNowNull=" + (instance == null) + ")");
     }
 
     /** Current foreground window's visible text — used by
@@ -571,10 +477,26 @@ public class PaymentBotService extends AccessibilityService {
     }
 
     private static boolean isPaymentApp(String pkg) {
-        for (String p : PAYMENT_APPS) {
-            if (p.equals(pkg)) return true;
-        }
-        return false;
+        // Single source of truth (Phase 1b) — payment apps only, no bank apps.
+        return PaymentApps.isPaymentApp(pkg);
+    }
+
+    /**
+     * BUG 1 — a transient system UI window that appears ON TOP of the real
+     * foreground app without the user ever leaving it: the fingerprint/biometric
+     * prompt, a runtime-permission dialog, the notification shade / quick
+     * settings (all com.android.systemui or "android"), and the on-screen
+     * keyboard. An event from one of these must never clear the tracked payment
+     * app. An empty package (some content events carry none) is treated the same
+     * — it is never a genuine switch to a different app.
+     */
+    private static boolean isTransientSystemOverlay(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return true;
+        return pkg.equals("com.android.systemui")
+                || pkg.equals("android")
+                || pkg.equals("com.android.permissioncontroller")
+                || pkg.equals("com.google.android.permissioncontroller")
+                || pkg.contains("inputmethod");
     }
 
     private static boolean isWatched(String pkg) {

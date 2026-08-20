@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { QrCode, Landmark, Check, ArrowRight } from 'lucide-react';
+import { QrCode, Landmark, Check, ArrowRight, AlertTriangle } from 'lucide-react';
 import { Card, Badge, Button, PageHeader, Modal, EmptyState, LoadingState } from '../components/ui';
 import { traderApi } from '../services/api';
 import { getPayoutEvidence } from '../lib/ngoApi';
+import { evaluatePayoutMatch } from '../utils/payoutMatch';
 import { inr } from '../utils/mock';
 
 /*
@@ -366,6 +367,19 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProb
     return () => { active = false; clearInterval(t); };
   }, [req?.uuid, req?.id]);
 
+  // Feature 2 — the active match gate. For BANK-account payouts, the fields the
+  // APK captured from the success screen (evidence.extractedFields) must
+  // hard-match this order's amount + account last-4 before "I have transferred"
+  // becomes clickable. Same rule the gateway enforces server-side, so this is
+  // the honest reflection of it, not a second, looser check. UPI payouts aren't
+  // gated (match.applicable === false), so they behave exactly as before.
+  const match = useMemo(
+    () => evaluatePayoutMatch(req || {}, evidence?.extractedFields),
+    [req, evidence?.extractedFields]
+  );
+  const gateBlocks = match.applicable && !match.hardMatch;
+  const gatePassed = match.applicable && match.hardMatch;
+
   if (!req) return null;
 
   // Only in_processing rows can actually be acted on — payoutService's
@@ -451,11 +465,33 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProb
             />
           </div>
 
+          {/* Feature 2 — match-gate feedback. Blocked: a clear, specific reason
+              (not just a greyed-out button). Passed: a short confirmation so the
+              trader knows why it's now clickable. */}
+          {gateBlocks && (
+            <div style={{ margin: '2px 0 10px', padding: '10px 12px', borderRadius: 12, background: 'rgba(245,158,11,.1)', border: '1px solid rgba(245,158,11,.35)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#b45309', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
+                <AlertTriangle size={14} /> Can't submit yet — details don't match
+              </div>
+              {match.reasons.map((r) => (
+                <div key={r.code} style={{ color: '#92400e', fontSize: 12, lineHeight: 1.5 }}>{r.message}</div>
+              ))}
+              <div style={{ color: 'var(--muted)', fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
+                Re-capture the correct success screen on your phone, or use “I have a problem” if you can’t.
+              </div>
+            </div>
+          )}
+          {gatePassed && (
+            <div style={{ margin: '2px 0 10px', padding: '9px 12px', borderRadius: 12, background: 'rgba(34,197,94,.1)', border: '1px solid rgba(34,197,94,.35)', color: '#15803d', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Check size={14} /> Captured payment matches this payout — you can submit.
+            </div>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
-            <Button variant="primary" disabled={busy} onClick={() => handleTransferred(receipt)}>
+            <Button variant="primary" disabled={busy || gateBlocks} onClick={() => handleTransferred(receipt)}>
               {busy ? 'Working…' : <>I have transferred <ArrowRight size={16} /></>}
             </Button>
-            <Button variant="ghost" disabled={busy} onClick={() => handleTransferred('')}>
+            <Button variant="ghost" disabled={busy || gateBlocks} onClick={() => handleTransferred('')}>
               I transferred, but can't attach the receipt
             </Button>
             <div className="flex gap-2">

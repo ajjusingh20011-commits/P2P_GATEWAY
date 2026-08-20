@@ -92,10 +92,88 @@ public final class PayoutState {
                 .remove("order_id").remove("payee_name").remove("account_number")
                 .remove("ifsc").remove("amount").remove("activated_at")
                 .remove("recorded_at").remove("screenshot_path").remove("screenshot_at")
-                .remove("linked_sms_raw").remove("linked_sms_at")
+                .remove("linked_sms_raw").remove("linked_sms_at").remove("extracted_fields")
                 .remove("uploaded_initial").remove("uploaded_final").remove("click_triggered")
                 .apply();
         Log.d(TAG, "PayoutState cleared: " + orderId);
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 1a — the LIST of up to 3 active payouts mirrored from the server
+    // (Scenario 10). The device now KNOWS every armed payout, not just one, so
+    // a second arm can never overwrite a first. The single working slot above
+    // stays the payout evidence is captured against for the common one-payout
+    // case; resolving WHICH of several a capture belongs to (by success-screen /
+    // debit-SMS content) is Phase 2c and is where per-order evidence lands.
+    // ---------------------------------------------------------------------
+
+    /**
+     * Apply the server's full activePayouts list. Always stores the list (so
+     * Phase 2c can match a capture to the right one). For the single-payout case
+     * it activates the working slot exactly as before; with several active it
+     * stores the list but does NOT guess a working slot — a wrong guess would
+     * capture evidence against the wrong payout.
+     */
+    public static synchronized void applyServerStateList(Context ctx, org.json.JSONArray list) {
+        final int n = (list == null) ? 0 : list.length();
+        prefs(ctx).edit().putString("active_payouts_json", n == 0 ? "[]" : list.toString()).apply();
+
+        if (n == 0) {
+            clear(ctx);
+            return;
+        }
+
+        final java.util.Set<String> ids = new java.util.HashSet<>();
+        for (int i = 0; i < n; i++) {
+            org.json.JSONObject p = list.optJSONObject(i);
+            if (p != null) ids.add(p.optString("orderId", ""));
+        }
+
+        final String working = orderId(ctx);
+        if (!working.isEmpty() && ids.contains(working)) {
+            return; // working payout still armed — keep its evidence untouched
+        }
+
+        if (n == 1) {
+            org.json.JSONObject p = list.optJSONObject(0);
+            applyServerState(ctx,
+                    p.optString("orderId", ""), p.optString("payeeName", ""),
+                    p.optString("accountNumber", ""), p.optString("ifsc", ""),
+                    p.optString("amount", ""));
+        } else if (!working.isEmpty()) {
+            // Several armed and the working payout is no longer among them: clear
+            // the working slot (its evidence), keep the list — Phase 2c reselects
+            // by content at capture time. clear() leaves active_payouts_json.
+            clear(ctx);
+        }
+    }
+
+    /** The full mirrored list of up to 3 active payouts (descriptors only). */
+    public static org.json.JSONArray activePayouts(Context ctx) {
+        try {
+            return new org.json.JSONArray(prefs(ctx).getString("active_payouts_json", "[]"));
+        } catch (Exception e) {
+            return new org.json.JSONArray();
+        }
+    }
+
+    /** Order ids of every currently-armed payout (up to 3). */
+    public static java.util.List<String> activeOrderIds(Context ctx) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        org.json.JSONArray arr = activePayouts(ctx);
+        for (int i = 0; i < arr.length(); i++) {
+            org.json.JSONObject p = arr.optJSONObject(i);
+            if (p != null) {
+                String id = p.optString("orderId", "");
+                if (!id.isEmpty()) out.add(id);
+            }
+        }
+        return out;
+    }
+
+    /** How many payouts are armed right now (0-3). Drives the overlay indicator. */
+    public static int activeCount(Context ctx) {
+        return activeOrderIds(ctx).size();
     }
 
     public static boolean isActive(Context ctx) {
@@ -189,6 +267,20 @@ public final class PayoutState {
     }
 
     // ---------------------------------------------------------------------
+    // Extracted success-screen fields — captured ONLY at the trader's Capture
+    // tap (SuccessScreenParser), saved here alongside the screenshot, uploaded
+    // with the evidence bundle. Never populated passively.
+    // ---------------------------------------------------------------------
+    public static synchronized void saveExtractedFields(Context ctx, String json) {
+        if (!isActive(ctx)) return;
+        prefs(ctx).edit().putString("extracted_fields", json == null ? "" : json).apply();
+    }
+
+    public static String extractedFields(Context ctx) {
+        return prefs(ctx).getString("extracted_fields", "");
+    }
+
+    // ---------------------------------------------------------------------
     // SMS linking — SMSReceiver
     // ---------------------------------------------------------------------
 
@@ -262,6 +354,17 @@ public final class PayoutState {
                 if (bytes != null) {
                     json.put("screenshotBase64", android.util.Base64.encodeToString(bytes, android.util.Base64.DEFAULT));
                     json.put("screenshotTimestamp", TimeFormatter.toUTC(prefs(ctx).getLong("screenshot_at", 0L)));
+                }
+            }
+
+            // Fields extracted at the Capture tap (tap-only), sent alongside the
+            // screenshot so the trader panel / admin queue can show both.
+            String extracted = extractedFields(ctx);
+            if (!extracted.isEmpty()) {
+                try {
+                    json.put("extractedFields", new JSONObject(extracted));
+                } catch (Exception e) {
+                    json.put("extractedFields", extracted);
                 }
             }
 

@@ -41,6 +41,7 @@ const {
 } = require('../websocket');
 const axios = require('axios');
 const { internalAuthHeaders } = require('./ngoServiceAuth');
+const { evaluatePayoutMatch } = require('../utils/payoutMatch');
 
 // ngo-backend holds the devices; the P2P backend arms them for capture on
 // pickup and clears them when a payout leaves processing.
@@ -353,10 +354,62 @@ async function accept(traderId, id) {
   return row;
 }
 
+/**
+ * Feature 2 — the server-side half of the "I have transferred" match gate. Reads
+ * the fields the APK extracted from the trader's payment success screen (held in
+ * ngo-backend as PayoutEvidence) so transferred() can enforce the amount/last-4
+ * hard match itself, not merely trust the panel's disabled button. Returns the
+ * extractedFields object (or null if nothing captured / ngo unreachable — the
+ * caller decides how to treat that). Passes BOTH the order uuid and numeric id,
+ * since a capture may have keyed off either.
+ */
+async function fetchCapturedFields(row) {
+  const ids = [row.uuid, row.id].filter((v) => v != null && v !== '').join(',');
+  const resp = await axios.get(`${NGO_BASE}/api/internal/payout-evidence`, {
+    params: { orderId: ids },
+    timeout: 5000,
+    headers: internalAuthHeaders(),
+  });
+  return (resp.data && resp.data.extractedFields) || null;
+}
+
 /** in_processing → awaiting_settlement (trader confirms they sent the money). */
 async function transferred(traderId, id, { receipt_url } = {}) {
   const row = await getForTrader(traderId, id);
   if (row.status !== 'in_processing') throw Object.assign(new Error(`Cannot mark transferred from ${row.status}`), { status: 409 });
+
+  // Feature 2 — active match gate (BANK-account payouts only). The fields the
+  // APK captured from the success screen must hard-match this order (amount +
+  // recipient account last-4) before the transfer can be submitted. This is the
+  // real, unbypassable block; the trader panel's disabled button only mirrors
+  // it. Fail CLOSED: if the evidence can't be fetched or doesn't match, the
+  // trader must re-capture or use "I have a problem" (dispute → admin review) —
+  // we never let a mismatched (or unverifiable) bank transfer through. UPI-id
+  // payouts have no account last-4 to match and are not gated here.
+  if (String(row.payment_method || '').toLowerCase() === 'bank' && row.account_number) {
+    let captured = null;
+    try {
+      captured = await fetchCapturedFields(row);
+    } catch (err) {
+      logger.warn(`payout: could not fetch evidence to gate transfer for ${row.uuid}: ${err.message}`);
+      throw Object.assign(
+        new Error('Could not verify your payment evidence right now — please try again in a moment. If it keeps failing, use "I have a problem".'),
+        { status: 503 }
+      );
+    }
+    const verdict = evaluatePayoutMatch(
+      { payment_method: row.payment_method, amount_inr: row.amount_inr, account_number: row.account_number },
+      captured
+    );
+    if (verdict.applicable && !verdict.hardMatch) {
+      const why = verdict.reasons.map((r) => r.message).join(' ');
+      logger.warn(`payout: transfer BLOCKED by match gate for ${row.uuid} (trader ${traderId}): ${verdict.reasons.map((r) => r.code).join(',')}`);
+      throw Object.assign(
+        new Error(`Captured payment details don't match this payout. ${why}`),
+        { status: 422, code: 'payout_match_failed', reasons: verdict.reasons }
+      );
+    }
+  }
 
   await row.update({ status: 'awaiting_settlement', transferred_at: new Date(), receipt_url: receipt_url || row.receipt_url });
   // The capture window for this order is over — stop the trader's devices

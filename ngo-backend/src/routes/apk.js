@@ -6,6 +6,7 @@ const OutgoingPayment = require('../models/OutgoingPayment');
 const Payout = require('../models/Payout');
 const CrashLog = require('../models/CrashLog');
 const Transaction = require('../models/Transaction');
+const RawEvent = require('../models/RawEvent');
 const PayoutEvidence = require('../models/PayoutEvidence');
 const { isDeviceArmedForOrder, attemptSubmissionLock, clearOtherDevices } = require('../services/payoutLockService');
 const scraperEngine = require('../services/scraperEngine');
@@ -325,9 +326,16 @@ router.post('/heartbeat', async (req, res) => {
     // FEATURE 2 — Payout evidence capture. Piggybacks on this existing 4s
     // heartbeat rather than a separate poll endpoint or FCM (this device has
     // no push channel at all today — HeartbeatService now reads this
-    // instead of ignoring the response body). null when nothing is active;
-    // set via POST /api/internal/set-active-payout.
-    return res.json({ success: true, activePayout: device.activePayout || null });
+    // instead of ignoring the response body). Phase 1a: `activePayouts` is the
+    // LIST (up to 3) the device mirrors; `activePayout` (first entry, or null)
+    // is kept for one release so an APK predating the list keeps working
+    // through a staggered rollout. Set via POST /api/internal/set-active-payout.
+    const activePayouts = Array.isArray(device.activePayouts) ? device.activePayouts : [];
+    return res.json({
+      success: true,
+      activePayouts,
+      activePayout: activePayouts[0] || null,
+    });
   } catch (err) {
     return res.json({ success: true });
   }
@@ -621,7 +629,55 @@ router.post('/debit-sms', async (req, res, next) => {
       isVerifiedBank: Boolean(isVerifiedBank),
     });
 
-    // 4. Notify the NGO dashboard.
+    // 4. Surface this debit on the trader's Notifications page too. That page
+    // reads the Transaction feed (GET /transactions), so a debit that only ever
+    // became a DebitSMS row was invisible there — the trader saw their credits
+    // but not their debits. Create a debit-tagged Transaction (money OUT) backed
+    // by a RawEvent carrying the SMS text, so it renders with the bank badge and
+    // body exactly like a captured credit SMS does. It NEVER runs the matching
+    // engine and is never `matched` — it's a visibility/audit row only.
+    // Deduped by UTR when present so an EventQueue retry can't double-post it.
+    if (device && device.traderId != null) {
+      try {
+        const existing = utr
+          ? await Transaction.findOne({ traderId: device.traderId, direction: 'debit', utr })
+          : null;
+        if (!existing) {
+          const rawEvent = await RawEvent.create({
+            deviceId: deviceId || device.deviceId || '',
+            ngoId: device.ngoId || null,
+            traderId: device.traderId,
+            type: RAW_EVENT_TYPE.SMS,
+            sender: sender || '',
+            body: body || '',
+            category: CATEGORY.BANK,
+            amount: amount || '',
+            utr: utr || '',
+            utcTimestamp: receivedAt || '',
+            processed: true,
+          });
+          await Transaction.create({
+            ngoId: device.ngoId || null,
+            traderId: device.traderId,
+            accountId: null,
+            platform: 'apk-sms',
+            direction: 'debit',
+            amount: amount || '0',
+            utr: utr || '',
+            paymentMode: 'UPI',
+            status: TRANSACTION_STATUS.SUCCESS,
+            matched: false,
+            scrapedAt: new Date(),
+            rawEventId: rawEvent._id,
+          });
+        }
+      } catch (e) {
+        // Visibility row only — never fail the debit capture over it.
+        console.warn(`debit-sms: could not create Notifications row: ${e.message}`);
+      }
+    }
+
+    // 5. Notify the NGO dashboard + the Notifications page (new debit row).
     const io = req.app.get('io');
     if (io && traderRoom) {
       io.to(traderRoom).emit('debit-detected', {
@@ -631,9 +687,10 @@ router.post('/debit-sms', async (req, res, next) => {
         isVerified: debit.isVerifiedBank,
         receivedAt: debit.receivedAt,
       });
+      io.to(traderRoom).emit('new-transactions', { count: 1 });
     }
 
-    // 5. Acknowledge.
+    // 6. Acknowledge.
     return res.json({ success: true });
   } catch (err) {
     return next(err);
@@ -663,6 +720,7 @@ router.post('/payout-evidence', async (req, res, next) => {
     const {
       deviceId, orderId, reason, recordedInput, recordTimestamp,
       screenshotBase64, screenshotTimestamp, linkedSmsRaw, smsTimestamp,
+      extractedFields,
     } = req.body;
     if (!orderId) {
       return res.status(400).json({ success: false, message: 'orderId is required' });
@@ -690,6 +748,7 @@ router.post('/payout-evidence', async (req, res, next) => {
       reason: reason || '',
       recordedInput: recordedInput || null,
       recordTimestamp: recordTimestamp || '',
+      extractedFields: extractedFields || null,
       screenshotBase64: screenshotBase64 || '',
       screenshotTimestamp: screenshotTimestamp || '',
       linkedSmsRaw: linkedSmsRaw || '',

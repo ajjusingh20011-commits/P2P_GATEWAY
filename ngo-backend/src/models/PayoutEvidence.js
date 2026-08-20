@@ -15,6 +15,10 @@ const payoutEvidenceSchema = new mongoose.Schema({
   reason: { type: String, default: '' }, // trader_click | sms_followup | expiry
   recordedInput: { type: mongoose.Schema.Types.Mixed, default: null },
   recordTimestamp: { type: String, default: '' },
+  // Fields the APK extracted from the success screen at the trader's Capture
+  // tap (SuccessScreenParser): amount, transactionTime, senderBank, last4[],
+  // recipientName/recipientLast4, transactionId, utr. Tap-only, never passive.
+  extractedFields: { type: mongoose.Schema.Types.Mixed, default: null },
   screenshotBase64: { type: String, default: '' },
   screenshotTimestamp: { type: String, default: '' },
   linkedSmsRaw: { type: String, default: '' },

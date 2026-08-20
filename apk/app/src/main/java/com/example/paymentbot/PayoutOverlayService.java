@@ -13,6 +13,7 @@ import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.os.Build;
 import android.os.Handler;
+import android.widget.FrameLayout;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
@@ -92,6 +93,13 @@ public class PayoutOverlayService extends Service {
     private static final int C_TEXT = 0xFF103C34;
     private static final int C_MUTED = 0xFF667B76;
     private static final int C_SUCCESS = 0xFF169B62;
+    // Unified 3-state status (merges the old signature light with payout state):
+    //   RED    — not a payment app, wrong app for a payout, or a signature MISMATCH
+    //   ORANGE — a verified payout app, but no payout armed ("nothing to do now")
+    //   GREEN  — a verified payout app AND a payout is armed ("real work to do")
+    private static final int C_RED = 0xFFDC2626;
+    private static final int C_ORANGE = 0xFFF59E0B;
+    private static final int C_GREEN = 0xFF16A34A;
     private static final int C_SUCCESS_SOFT = 0xFFEAF8F1;
     private static final int C_HANDLE = 0xFFCBDCD7;
     private static final int C_CAPTURE_BORDER = 0xFFDBE8E4;
@@ -120,6 +128,11 @@ public class PayoutOverlayService extends Service {
     private static final String MSG_NOT_PAYMENT_APP = "Not a payment app";
     private static final String MSG_NOT_SUCCESS = "Payment success screen not detected";
     private static final String MSG_NO_PERMISSION = "Screen capture permission needed";
+    // Phase 1b — foreground is a payment app but not a consumer/personal one
+    // payouts are SENT from (e.g. the trader opened the Business receive app).
+    private static final String MSG_NOT_PAYOUT_APP = "Open your personal UPI app to send this payout";
+    // Phase 1b — a pinned app whose signing cert doesn't match (a sideloaded fake).
+    private static final String MSG_UNTRUSTED_APP = "App failed signature check";
     // Package-visible — read by EventUploadWorker, which owns the actual
     // HTTP delivery of PayoutState.uploadBundle()'s queued POST (see
     // EventQueue's offline-durable pipeline) and is the only place a 409
@@ -165,6 +178,10 @@ public class PayoutOverlayService extends Service {
         super.onCreate();
         instance = this;
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        // Phase 1b — keep the signature light live while the service runs. Cheap:
+        // a no-op when no view is up, and it only re-verifies on a package change.
+        statusHandler.removeCallbacks(statusTick);
+        statusHandler.postDelayed(statusTick, STATUS_TICK_MS);
     }
 
     @Override
@@ -180,6 +197,7 @@ public class PayoutOverlayService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        statusHandler.removeCallbacks(statusTick);
         hide();
         instance = null;
     }
@@ -210,6 +228,98 @@ public class PayoutOverlayService extends Service {
             renderCurrentState();
         }
     }
+
+    // ---------------------------------------------------------------------
+    // Phase 1b — signature-verification light. A small dot on the overlay
+    // (bubble corner + card header) that shows, at a glance, whether the CURRENT
+    // foreground app is a genuinely verified payout app:
+    //   GREEN — a payout (consumer) app AND its signing cert is PINNED_OK.
+    //   AMBER — a payout app whose cert is being OBSERVED (no pin set yet); the
+    //           real hash is logged (PAYOUT_CERT_PIN) for capture.
+    //   RED   — everything else: not a payout app, OR right package name but a
+    //           WRONG/unverified signature (a potential fake).
+    // Purely additive — does NOT gate Record/Screenshot (that check is on tap,
+    // with its existing messages, unchanged). Updated by a light poll that only
+    // re-verifies (and re-logs) when the foreground package actually changes.
+    // ---------------------------------------------------------------------
+    private static final long STATUS_TICK_MS = 800L;
+    private final Handler statusHandler = new Handler(android.os.Looper.getMainLooper());
+
+    // Transient tap feedback, shown IN the card (never a separate toast).
+    private String feedbackMsg = null;
+    private int feedbackColor = C_GREEN;
+    private long feedbackUntil = 0L;
+
+    private String lastStatusKey = " ";
+    private Status lastStatus;
+    private String lastRenderedKey = " ";
+
+    /** A resolved status: colour + message + a leading glyph. */
+    private static final class Status {
+        final int color;
+        final String message;
+        final String icon;
+        Status(int c, String m, String i) { color = c; message = m; icon = i; }
+    }
+
+    private Status computeStatus() {
+        PaymentBotService reader = PaymentBotService.getInstance();
+        String pkg = (reader == null) ? "" : reader.currentForegroundPackage();
+        if (pkg == null) pkg = "";
+        boolean active = PayoutState.isActive(this);
+        int count = active ? PayoutState.activeCount(this) : 0;
+        String key = pkg + "|" + active + "|" + count;
+        if (key.equals(lastStatusKey) && lastStatus != null) return lastStatus;
+        lastStatusKey = key;
+
+        Status s;
+        if (!PaymentApps.isPayoutApp(pkg)) {
+            String msg = PaymentApps.isPaymentApp(pkg)
+                    ? "Open your personal UPI app" : "Not a payment app";
+            s = new Status(C_RED, msg, "✕");
+        } else if (AppSignatureVerifier.verify(this, pkg) == AppSignatureVerifier.Result.MISMATCH) {
+            s = new Status(C_RED, "App failed signature check", "✕");
+        } else if (active) {
+            String msg = count > 1 ? (count + " payouts active — tap Capture")
+                    : "Payout active — tap Capture";
+            s = new Status(C_GREEN, msg, "✓");
+        } else {
+            s = new Status(C_ORANGE, "No payout in process", "●");
+        }
+        lastStatus = s;
+        return s;
+    }
+
+    /** What to SHOW now - a live tap-feedback message briefly overrides the
+     *  computed status message (its colour follows the feedback). */
+    private Status effectiveStatus() {
+        Status s = computeStatus();
+        if (feedbackMsg != null && android.os.SystemClock.uptimeMillis() < feedbackUntil) {
+            return new Status(feedbackColor, feedbackMsg, feedbackColor == C_RED ? "✕" : "✓");
+        }
+        return s;
+    }
+
+    private void renderIfStatusChanged() {
+        Status s = effectiveStatus();
+        String key = s.color + "|" + s.message;
+        if (key.equals(lastRenderedKey) || currentView == null || windowManager == null) return;
+        lastRenderedKey = key;
+        try {
+            windowManager.removeView(currentView);
+        } catch (Exception ignored) {
+        }
+        currentView = null;
+        renderCurrentState();
+    }
+
+    private final Runnable statusTick = new Runnable() {
+        @Override
+        public void run() {
+            renderIfStatusChanged();
+            statusHandler.postDelayed(this, STATUS_TICK_MS);
+        }
+    };
 
     // ---------------------------------------------------------------------
     // Show / hide / minimize / expand
@@ -276,17 +386,37 @@ public class PayoutOverlayService extends Service {
         int size = dp(BUBBLE_DP);
         params.width = size;
         params.height = size;
+        Status st = effectiveStatus();
 
-        TextView icon = new TextView(this);
-        icon.setText("💰");
-        icon.setTextSize(20);
-        icon.setGravity(Gravity.CENTER);
-        icon.setTextColor(0xFFFFFFFF);
-        icon.setBackground(bubbleDrawable());
-        icon.setAlpha(activePayout ? BUBBLE_ACTIVE_ALPHA : BUBBLE_IDLE_ALPHA);
+        FrameLayout wrap = new FrameLayout(this);
 
-        icon.setOnTouchListener(new DraggableTouchListener(params, windowManager, icon, this::toggleExpand));
-        return icon;
+        android.widget.ImageView logo = new android.widget.ImageView(this);
+        try {
+            logo.setImageDrawable(getPackageManager().getApplicationIcon(getPackageName()));
+        } catch (Exception ignored) {
+        }
+        logo.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+        int pad = dp(7);
+        logo.setPadding(pad, pad, pad, pad);
+        GradientDrawable circle = new GradientDrawable();
+        circle.setShape(GradientDrawable.OVAL);
+        circle.setColor(0xFFFFFFFF);
+        circle.setStroke(dp(3), st.color);
+        logo.setBackground(circle);
+        wrap.addView(logo, new FrameLayout.LayoutParams(size, size));
+
+        View dot = new View(this);
+        GradientDrawable dotBg = new GradientDrawable();
+        dotBg.setShape(GradientDrawable.OVAL);
+        dotBg.setColor(st.color);
+        dotBg.setStroke(dp(1), 0xFFFFFFFF);
+        dot.setBackground(dotBg);
+        FrameLayout.LayoutParams dotLp = new FrameLayout.LayoutParams(dp(13), dp(13));
+        dotLp.gravity = Gravity.TOP | Gravity.END;
+        wrap.addView(dot, dotLp);
+
+        wrap.setOnTouchListener(new DraggableTouchListener(params, windowManager, wrap, this::toggleExpand));
+        return wrap;
     }
 
     /**
@@ -298,21 +428,7 @@ public class PayoutOverlayService extends Service {
     private android.graphics.drawable.Drawable bubbleDrawable() {
         GradientDrawable fill = new GradientDrawable(GradientDrawable.Orientation.TL_BR, BUBBLE_GRADIENT);
         fill.setShape(GradientDrawable.OVAL);
-        if (!activePayout) {
-            return fill;
-        }
-        GradientDrawable whiteRing = new GradientDrawable();
-        whiteRing.setShape(GradientDrawable.OVAL);
-        whiteRing.setColor(0x00000000);
-        whiteRing.setStroke(dp(2), 0xEBFFFFFF);
-        GradientDrawable emeraldRing = new GradientDrawable();
-        emeraldRing.setShape(GradientDrawable.OVAL);
-        emeraldRing.setColor(0x00000000);
-        emeraldRing.setStroke(dp(2), C_SUCCESS);
-        LayerDrawable layered = new LayerDrawable(new android.graphics.drawable.Drawable[]{fill, whiteRing, emeraldRing});
-        layered.setLayerInset(1, dp(1), dp(1), dp(1), dp(1));
-        layered.setLayerInset(2, 0, 0, 0, 0);
-        return layered;
+        return fill;
     }
 
     /** Expanded state — design: 208×100dp card, 97% opaque white, 18dp
@@ -320,75 +436,54 @@ public class PayoutOverlayService extends Service {
      *  header, Record (filled) + Capture (outline) side by side. */
     private View buildCard() {
         params.width = dp(CARD_W_DP);
-        params.height = dp(CARD_H_DP);
+        params.height = WindowManager.LayoutParams.WRAP_CONTENT;
+        Status st = effectiveStatus();
 
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackground(cardBackground());
-        card.setPadding(dp(8), dp(8), dp(8), dp(8));
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setColor(0xFFFFFFFF);
+        cardBg.setCornerRadius(dp(18));
+        cardBg.setStroke(dp(2), st.color);
+        card.setBackground(cardBg);
+        card.setPadding(dp(12), dp(9), dp(12), dp(11));
         card.setAlpha(CARD_ALPHA);
 
-        // Header: active-dot (conditional) + centred drag handle + minimize.
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(26)));
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
 
-        if (activePayout) {
-            View dot = new View(this);
-            GradientDrawable dotBg = new GradientDrawable();
-            dotBg.setShape(GradientDrawable.OVAL);
-            dotBg.setColor(C_SUCCESS);
-            dot.setBackground(dotBg);
-            LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(6), dp(6));
-            dotLp.setMarginStart(dp(2));
-            header.addView(dot, dotLp);
-        }
+        TextView glyph = new TextView(this);
+        glyph.setText(st.icon);
+        glyph.setTextColor(st.color);
+        glyph.setTextSize(14);
+        LinearLayout.LayoutParams glyphLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        glyphLp.setMarginEnd(dp(7));
+        top.addView(glyph, glyphLp);
 
-        // Decorative-only handle, optically centred via a weighted spacer
-        // either side (matches the design's absolute-centre positioning).
-        View spacerL = new View(this);
-        header.addView(spacerL, new LinearLayout.LayoutParams(0, 0, 1f));
-
-        View handle = new View(this);
-        GradientDrawable handleBg = new GradientDrawable();
-        handleBg.setColor(C_HANDLE);
-        handleBg.setCornerRadius(dp(2));
-        handle.setBackground(handleBg);
-        header.addView(handle, new LinearLayout.LayoutParams(dp(34), dp(4)));
-
-        View spacerR = new View(this);
-        header.addView(spacerR, new LinearLayout.LayoutParams(0, 0, 1f));
+        TextView msg = new TextView(this);
+        msg.setText(st.message);
+        msg.setTextColor(st.color);
+        msg.setTextSize(12.5f);
+        msg.setMaxLines(2);
+        top.addView(msg, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         TextView minimize = new TextView(this);
         minimize.setText("▾");
         minimize.setTextColor(C_MUTED);
         minimize.setTextSize(16);
         minimize.setGravity(Gravity.CENTER);
-        header.addView(minimize, new LinearLayout.LayoutParams(dp(30), dp(26)));
+        top.addView(minimize, new LinearLayout.LayoutParams(dp(26), dp(24)));
+        card.addView(top, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        card.addView(header);
-
-        // Actions — side by side (design: 2-column grid), not stacked.
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
-        actionsLp.topMargin = dp(8);
-        actions.setLayoutParams(actionsLp);
-
-        TextView record = actionButton("Record", true);
-        TextView capture = actionButton("Capture", false);
-        LinearLayout.LayoutParams recordLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
-        LinearLayout.LayoutParams captureLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
-        captureLp.setMarginStart(dp(8));
-        actions.addView(record, recordLp);
-        actions.addView(capture, captureLp);
-        card.addView(actions);
+        TextView capture = actionButton("Capture", true);
+        LinearLayout.LayoutParams captureLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(40));
+        captureLp.topMargin = dp(10);
+        card.addView(capture, captureLp);
 
         minimize.setOnTouchListener(new DraggableTouchListener(params, windowManager, card, this::toggleExpand));
-        record.setOnTouchListener(new DraggableTouchListener(params, windowManager, card, this::onRecordTap));
         capture.setOnTouchListener(new DraggableTouchListener(params, windowManager, card, this::onScreenshotTap));
 
         return card;
@@ -439,33 +534,7 @@ public class PayoutOverlayService extends Service {
     // feedback instead of gating the tap itself; snapshot-only, no
     // screen-reading, no network call here (upload happens on trigger).
     // ---------------------------------------------------------------------
-    private void onRecordTap() {
-        PaymentBotService reader = PaymentBotService.getInstance();
-        // currentForegroundPackage() is only ever non-empty while a
-        // whitelisted UPI app is foregrounded — PaymentBotService's own
-        // isPaymentApp(pkg) gate sets/clears it, so reusing it here means
-        // no second whitelist copy.
-        // TEMPORARY DEBUG LOGGING — real-device root-cause investigation,
-        // see PaymentBotService.onAccessibilityEvent's matching note.
-        Log.d(TAG, "DIAG onRecordTap: currentForegroundPackage=\""
-                + (reader == null ? "null-reader" : reader.currentForegroundPackage()) + "\"");
-        // App-whitelist checked FIRST, payout-active checked second: "you're
-        // not even in a payment app" is the more specific, more actionable
-        // fact when both conditions are false. Checking isActive() first
-        // meant standing on the home screen with no payout running showed
-        // "No payout in process" — technically true, but it hid the more
-        // basic problem (wrong app) behind a less useful message.
-        if (reader == null || reader.currentForegroundPackage().isEmpty()) {
-            showFeedback(MSG_NOT_PAYMENT_APP, false);
-            return;
-        }
-        if (!PayoutState.isActive(this)) {
-            showFeedback(MSG_NO_PAYOUT, false);
-            return;
-        }
-        PayoutState.recordConfirmation(this);
-        showFeedback(MSG_RECORDED, true);
-    }
+
 
     // ---------------------------------------------------------------------
     // SCREENSHOT — always tappable. Same two checks as Record, then the
@@ -481,16 +550,35 @@ public class PayoutOverlayService extends Service {
             showFeedback(MSG_NOT_PAYMENT_APP, false);
             return;
         }
+        String pkg = reader.currentForegroundPackage();
+        // Phase 1b anti-fraud anchor — see onRecordTap. Consumer/personal payout
+        // app only, then signature-verified.
+        if (!PaymentApps.isPayoutApp(pkg)) {
+            showFeedback(MSG_NOT_PAYOUT_APP, false);
+            return;
+        }
+        if (!AppSignatureVerifier.isTrusted(this, pkg)) {
+            showFeedback(MSG_UNTRUSTED_APP, false);
+            return;
+        }
         if (!PayoutState.isActive(this)) {
             showFeedback(MSG_NO_PAYOUT, false);
             return;
         }
-        String pkg = reader.currentForegroundPackage();
         String text = reader.currentScreenText();
         if (!matchesSuccessKeyword(pkg, text)) {
             logSuccessKeywordMiss(pkg, text);
             showFeedback(MSG_NOT_SUCCESS, false);
             return; // discard entirely: no file, no partial save
+        }
+        // TAP-ONLY field extraction (anti-fraud). Read the CURRENT screen text
+        // once, right now, at the deliberate Capture tap — NEVER passively. The
+        // fields (time, sender bank, last-4s, recipient, txn id, UTR, amount) are
+        // saved alongside the screenshot and uploaded with the evidence bundle.
+        try {
+            org.json.JSONObject fields = SuccessScreenParser.parse(pkg, text);
+            PayoutState.saveExtractedFields(this, fields.toString());
+        } catch (Exception ignored) {
         }
         if (mediaProjection == null) {
             showFeedback(MSG_NO_PERMISSION, false);
@@ -562,6 +650,16 @@ public class PayoutOverlayService extends Service {
                 bitmap.recycle();
 
                 boolean saved = PayoutState.saveScreenshot(this, baos.toByteArray());
+                if (saved) {
+                    // Upload the evidence NOW, at the deliberate Capture tap —
+                    // screenshot + the tap-extracted fields — so the trader
+                    // panel can gate "I have transferred" on the amount/last-4
+                    // match, and the gateway can enforce it, BEFORE the click.
+                    // A re-capture re-uploads with the corrected fields (each is
+                    // its own row; the read side uses the latest). Still tap-only:
+                    // nothing here fires without this explicit Capture tap.
+                    PayoutState.uploadBundle(this, "capture");
+                }
                 postFeedback(saved ? MSG_CAPTURED : "Save failed — retry", saved);
             } catch (Exception e) {
                 Log.e(TAG, "Screenshot error: " + e.getMessage());
@@ -592,60 +690,10 @@ public class PayoutOverlayService extends Service {
     }
 
     private void showFeedback(String message, boolean success) {
-        if (windowManager == null) return;
-        if (feedbackView != null) {
-            try { windowManager.removeView(feedbackView); } catch (Exception ignored) {}
-            feedbackView = null;
-        }
-
-        LinearLayout snack = new LinearLayout(this);
-        snack.setOrientation(LinearLayout.HORIZONTAL);
-        snack.setGravity(Gravity.CENTER_VERTICAL);
-        snack.setPadding(dp(10), dp(7), dp(12), dp(7));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(11));
-        if (success) {
-            bg.setColor(C_SNACK_SUCCESS_BG);
-            bg.setStroke(dp(1), C_SNACK_SUCCESS_BORDER);
-        } else {
-            bg.setColor(C_SNACK_INFO_BG);
-            bg.setStroke(dp(1), C_SNACK_INFO_BORDER);
-        }
-        snack.setBackground(bg);
-        snack.setMinimumHeight(dp(34));
-
-        TextView icon = new TextView(this);
-        icon.setText(success ? "✅" : "ℹ️");
-        icon.setTextSize(13);
-        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        iconLp.setMarginEnd(dp(7));
-        snack.addView(icon, iconLp);
-
-        TextView text = new TextView(this);
-        text.setText(message);
-        text.setTextColor(success ? C_SNACK_SUCCESS_TEXT : C_TEXT);
-        text.setTextSize(12);
-        snack.addView(text);
-
-        feedbackView = snack;
-
-        WindowManager.LayoutParams fbParams = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-                overlayType(), WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-                PixelFormat.TRANSLUCENT);
-        placeSnackbar(fbParams);
-        try {
-            windowManager.addView(feedbackView, fbParams);
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                if (feedbackView != null) {
-                    try { windowManager.removeView(feedbackView); } catch (Exception ignored) {}
-                    feedbackView = null;
-                }
-            }, 3000);
-        } catch (Exception ignored) {
-        }
+        feedbackMsg = message;
+        feedbackColor = success ? C_GREEN : C_RED;
+        feedbackUntil = android.os.SystemClock.uptimeMillis() + 2500L;
+        renderIfStatusChanged();
     }
 
     /**

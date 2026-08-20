@@ -69,6 +69,9 @@ function apiToRow(txn) {
     time: txn.scrapedAt || txn.createdAt || null,
     amount: txn.amount,
     currency: 'INR',
+    // Money direction. 'debit' rows are captured bank-debit SMS (money the
+    // trader sent out) — shown here for visibility; they never match an order.
+    direction: txn.direction === 'debit' ? 'debit' : 'credit',
     // The badge keys off the real app; the filter follows it so filtering by
     // "GPay Business" catches APK captures and scraped rows alike.
     method: appKey || txn.platform,
@@ -495,11 +498,29 @@ export default function Notifications() {
                     <div style={{ fontSize: 11, color: 'var(--muted)' }}>{dateStr}</div>
                   </div>
 
-                  {/* 3. Amount */}
+                  {/* 3. Amount — debits render as red money-out with a − sign. */}
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontWeight: 600, color: 'var(--text)' }}>
-                      ₹{formatAmount(n.amount)}
+                    <div style={{ fontWeight: 600, color: n.direction === 'debit' ? '#ef4444' : 'var(--text)' }}>
+                      {n.direction === 'debit' ? '−' : ''}₹{formatAmount(n.amount)}
                     </div>
+                    {n.direction === 'debit' && (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          display: 'inline-block',
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: '.03em',
+                          textTransform: 'uppercase',
+                          padding: '2px 8px',
+                          borderRadius: 999,
+                          background: 'rgba(239,68,68,0.12)',
+                          color: '#ef4444',
+                        }}
+                      >
+                        Debit
+                      </div>
+                    )}
                   </div>
 
                   {/* 4. Method (badge + full, unmasked UPI ID — no bank/SMS-source label) */}
@@ -599,29 +620,50 @@ export default function Notifications() {
                       there is no action to take here; the row is simply a
                       captured payment that matched no open order. */}
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                    <div
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 600,
-                        padding: '4px 12px',
-                        borderRadius: 4,
-                        textAlign: 'center',
-                        backgroundColor: n.isLinked ? '#10b981' : 'transparent',
-                        color: n.isLinked ? '#fff' : 'var(--muted)',
-                        border: n.isLinked ? '1px solid #10b981' : '1px solid var(--cardborder)',
-                      }}
-                    >
-                      {n.isLinked ? 'Linked' : 'Unlinked'}
-                    </div>
-                    {/* Real Transaction ID — only exists once matched=true (Linked).
-                        An unlinked row genuinely has none, so it says why it has
-                        none instead of leaving the cell to look truncated. */}
-                    {n.isLinked ? (
-                      <IdReveal value={n.realId} label="Transaction ID" size={12} />
+                    {n.direction === 'debit' ? (
+                      // A captured debit is money OUT — it never matches an
+                      // incoming order, so the Linked/Unlinked axis doesn't apply.
+                      <>
+                        <div
+                          style={{
+                            fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 4,
+                            textAlign: 'center', backgroundColor: 'transparent', color: '#ef4444',
+                            border: '1px solid rgba(239,68,68,.4)',
+                          }}
+                        >
+                          Debit
+                        </div>
+                        <span style={{ fontSize: 10, color: 'var(--subtle)', textAlign: 'center' }}>
+                          Money out
+                        </span>
+                      </>
                     ) : (
-                      <span style={{ fontSize: 10, color: 'var(--subtle)', textAlign: 'center' }}>
-                        No matching order
-                      </span>
+                      <>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 600,
+                            padding: '4px 12px',
+                            borderRadius: 4,
+                            textAlign: 'center',
+                            backgroundColor: n.isLinked ? '#10b981' : 'transparent',
+                            color: n.isLinked ? '#fff' : 'var(--muted)',
+                            border: n.isLinked ? '1px solid #10b981' : '1px solid var(--cardborder)',
+                          }}
+                        >
+                          {n.isLinked ? 'Linked' : 'Unlinked'}
+                        </div>
+                        {/* Real Transaction ID — only exists once matched=true (Linked).
+                            An unlinked row genuinely has none, so it says why it has
+                            none instead of leaving the cell to look truncated. */}
+                        {n.isLinked ? (
+                          <IdReveal value={n.realId} label="Transaction ID" size={12} />
+                        ) : (
+                          <span style={{ fontSize: 10, color: 'var(--subtle)', textAlign: 'center' }}>
+                            No matching order
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

@@ -26,8 +26,59 @@ android {
         // on ngo-api.adminmaxedge.com, checked before this build), carrying
         // 970d1ba — this build ships BUG-53 (appVersion now reads
         // BuildConfig.VERSION_NAME) plus the IST on-device timestamp fix.
-        versionCode = 9
-        versionName = "1.6-970d1ba"
+        //
+        // 10 / "1.7-wip" — local dev-only bump, NOT yet committed and NOT
+        // pushed to the server's latest-version config (this is a device
+        // test build, not a release). Carries, on top of 970d1ba: the
+        // OverlayService removal, the PhonePe self-generated-event
+        // foreground-tracking fix, the Record/Screenshot feedback-check
+        // reorder, and the overlay drag-direction fix. Re-bump with a real
+        // commit hash once this lands.
+        //
+        // 11 / "1.8-diag-paytm-notif" — adds, on top of 1.7-wip: BUG-54's
+        // Unicode-digit + comma amount-parsing fixes, and a TEMPORARY
+        // diagnostic-only payload (see NotificationService/CaptureTiming) for
+        // the Paytm Business investigation — full notification-extras dump +
+        // group-summary flag, routed through the existing CaptureTiming
+        // server upload so a remote tester with no adb access can still
+        // produce usable evidence. Strip the diagnostic block back out once
+        // the real field is confirmed; do not let this versionName ship as a
+        // permanent release.
+        //
+        // 12 / "1.9-bug57-remoteviews" — a local test build, superseded by
+        // 13 below; left in this history for the record, not reused.
+        //
+        // 13 / "2.0-5fab730" — the real combined release: built from the
+        // actual committed tip of trader-ui-integration (5fab730), not a
+        // hand-picked subset. Confirmed ancestors, all on this branch:
+        // OverlayService removal + drag fix + feedback reorder + the
+        // MaxPayDesign overlay visual migration (5b345cb), the PhonePe
+        // self-generated-event fix (8e86a1d), BUG-54's amount-parsing fixes
+        // (3141f21), PayoutLock 409-handling (8dfdb75), BUG-57's Paytm
+        // Business custom-layout fix (acf060d) and its still-live
+        // confirmation-signal fields on CaptureTiming, BUG-56's BharatPe
+        // "<number> Rupees" fix (86fcf3f) — plus BUG-58 and the
+        // Notifications pagination/filter rewrite, both landed on this
+        // branch by a parallel session since. Major version bumped to 2.0
+        // deliberately — this supersedes every "1.x-*" test/diagnostic
+        // build from tonight, not an increment of them. versionName carries
+        // the exact commit, same convention as every prior bump here.
+        // 19 / 2.6-tap-only — CRITICAL anti-fraud: removed the passive/automatic
+        // success-screen reading (it auto-captured any success screen, incl. an
+        // OLD transaction scrolled to). Outgoing/payout fields are now extracted
+        // ONLY at the trader's Capture tap (SuccessScreenParser), with the full
+        // field list (time, sender bank, last-4s, recipient, txn id, UTR, amount)
+        // saved alongside the screenshot and uploaded with the evidence bundle.
+        //
+        // 20 / 2.7-match-gate — two changes: (1) the Capture tap now UPLOADS the
+        // evidence immediately (reason="capture"), so the trader panel can gate
+        // "I have transferred" on the amount/last-4 match and the gateway can
+        // enforce it, BEFORE the click (bank payouts only). (2) A debit SMS that
+        // arrives during an active payout is still forwarded as a normal debit
+        // (no longer swallowed), so every captured SMS — credit AND debit — stays
+        // visible on the trader's Notifications page.
+        versionCode = 20
+        versionName = "2.7-match-gate"
 
         // Room schema export — not used for migrations yet (the app is
         // pre-install-base, so destructive fallback is acceptable), but

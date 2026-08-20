@@ -57,51 +57,11 @@ public class NotificationService extends NotificationListenerService {
         ListenerHealthStore.setConnected(this, false);
     }
 
-    // Only capture notifications from these banking / UPI apps.
-    //
-    // Verification status of the "for Business" entries added alongside the
-    // original set: only com.bharatpe.app has been independently checked
-    // against its Play Store listing as of this change. com.paytm.business,
-    // com.phonepe.app.business, and com.google.android.apps.nbu.paisa.merchant
-    // came from user-provided input and have NOT been independently verified —
-    // re-confirm each via `adb shell dumpsys notification` or
-    // `adb shell pm list packages` on a device with the real app installed
-    // before relying on them in production.
-    private static final String[] ALLOWED_PACKAGES = {
-            // --- Apps a trader actually collects customer payments in ---
-            "com.phonepe.app",
-            "com.google.android.apps.nbu.paisa.user",
-            // Google Pay for Business — merchant/business variant, separate
-            // app+package from consumer GPay above.
-            "com.google.android.apps.nbu.paisa.merchant",
-            "net.one97.paytm",
-            "com.bharatpe.merchant",
-            // BharatPe for Business — verified against the Play Store listing.
-            "com.bharatpe.app",
-            // Paytm for Business — unverified, see note above.
-            "com.paytm.business",
-            // PhonePe Business — unverified, see note above.
-            "com.phonepe.app.business",
-            "com.airtelpeymentsbank",
-
-            // --- Bank apps, kept for their credit alerts ---
-            // A payment can be reported by the receiving bank's own app rather
-            // than the UPI app, so these stay. They are not places a customer
-            // pays INTO, which is why they are listed separately.
-            "com.snapwork.hdfc",
-            "com.csam.icici.bank.imobile",
-            "com.sbi.SBIFreedomPlus",
-            "com.axis.mobile",
-
-            // Removed deliberately (BUG-38): in.amazon.mShop.android.shopping,
-            // com.mobikwik_new, com.dreamplug.androidapp (CRED) and
-            // com.freecharge.android. None of them is somewhere a customer
-            // pays a trader; all of them post order, cashback and bill-reminder
-            // notifications carrying a ₹ amount, which is exactly the noise the
-            // text classifier then has to argue with. Filtering them here means
-            // that argument never happens. Re-add a line if a trader genuinely
-            // collects in one of them.
-    };
+    // The banking / UPI app allowlist now lives in ONE place — PaymentApps
+    // (Phase 1b). This service captures notifications from PaymentApps
+    // .isNotificationSource(pkg) (payment apps + bank apps). BUG-38's
+    // deliberately-removed noise apps (Amazon, MobiKwik, CRED, FreeCharge) and
+    // the per-app verification notes are documented there.
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
@@ -119,14 +79,10 @@ public class NotificationService extends NotificationListenerService {
         if (pkg == null) {
             return;
         }
-        boolean allowed = false;
-        for (String p : ALLOWED_PACKAGES) {
-            if (pkg.equals(p)) {
-                allowed = true;
-                break;
-            }
-        }
-        if (!allowed) {
+        // Single source of truth for the allowlist — payment apps + bank apps
+        // (see PaymentApps). Replaces this file's old private ALLOWED_PACKAGES
+        // copy, which had drifted from PaymentBotService's list.
+        if (!PaymentApps.isNotificationSource(pkg)) {
             return;
         }
 

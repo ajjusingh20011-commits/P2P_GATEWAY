@@ -53,12 +53,14 @@ beforeEach(() => {
 });
 
 test('device never armed for this orderId is rejected', async () => {
-  const device = { deviceId: 'dev-x', traderId: 7, activePayout: null };
+  const device = { deviceId: 'dev-x', traderId: 7, activePayouts: [] };
   expect(await isDeviceArmedForOrder(device, 'order-1')).toBe(false);
 });
 
-test('first evidence submission from a correctly-armed device is accepted, and clears every other device', async () => {
-  const device = { deviceId: 'dev-A', traderId: 7, activePayout: { orderId: 'order-1' } };
+test('first evidence submission from a correctly-armed device is accepted, and clears this order on every other device', async () => {
+  // Phase 1a — device armed for order-1 AND another concurrent payout; the
+  // clear must prune only order-1 elsewhere, never the whole list.
+  const device = { deviceId: 'dev-A', traderId: 7, activePayouts: [{ orderId: 'order-1' }, { orderId: 'order-2' }] };
   expect(await isDeviceArmedForOrder(device, 'order-1')).toBe(true);
 
   const lock = await attemptSubmissionLock('order-1', 'dev-A', 7);
@@ -70,9 +72,10 @@ test('first evidence submission from a correctly-armed device is accepted, and c
   expect(mockDeviceUpdateManyCalls[0].filter).toMatchObject({
     traderId: 7,
     deviceId: { $ne: 'dev-A' },
-    'activePayout.orderId': 'order-1',
+    'activePayouts.orderId': 'order-1',
   });
-  expect(mockDeviceUpdateManyCalls[0].update).toEqual({ activePayout: null });
+  // $pull only this order — other in-processing payouts on those devices stay.
+  expect(mockDeviceUpdateManyCalls[0].update).toEqual({ $pull: { activePayouts: { orderId: 'order-1' } } });
 });
 
 test('second submission from a DIFFERENT device after the first succeeded is rejected', async () => {
@@ -82,7 +85,7 @@ test('second submission from a DIFFERENT device after the first succeeded is rej
   // win — that's the point — but a PayoutLock now exists under trader 7,
   // so ownership still resolves true, distinguishing "already submitted
   // elsewhere" (409) from "never armed at all" (403).
-  const deviceB = { deviceId: 'dev-B', traderId: 7, activePayout: null };
+  const deviceB = { deviceId: 'dev-B', traderId: 7, activePayouts: [] };
   expect(await isDeviceArmedForOrder(deviceB, 'order-1')).toBe(true);
 
   const lock = await attemptSubmissionLock('order-1', 'dev-B', 7);

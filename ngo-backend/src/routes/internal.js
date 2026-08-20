@@ -14,6 +14,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Account = require('../models/Account');
 const Device = require('../models/Device');
+const PayoutEvidence = require('../models/PayoutEvidence');
+const { MAX_ACTIVE_PAYOUTS } = require('../services/payoutList');
 const SessionStore = require('../services/SessionStore');
 const { CONNECTION_TYPE } = require('../config/constants');
 const { verifyInternalService } = require('../middleware/internalAuth');
@@ -126,37 +128,55 @@ router.get('/connection-liveness', async (req, res, next) => {
 
 /**
  * POST /api/internal/set-active-payout
- * Body: { device_id, orderId, payeeName, accountNumber, ifsc, amount } to
- * activate, or { device_id, orderId: null } (or omitted) to clear.
+ * Body: { device_id, orderId, payeeName, accountNumber, ifsc, amount } to arm
+ * (add/replace this orderId in the device's list, capped at 3), or
+ * { device_id, orderId, clear: true } to prune just that orderId.
  *
- * FEATURE 2 — Payout evidence capture, signal-delivery leg. The P2P backend
- * calls this once a trader picks up a payout order for a device; mirrored
- * down to the device on its next heartbeat (routes/apk.js). Nothing calls
- * this yet from the P2P backend's own payout-pickup flow — that wiring is a
- * separate follow-up; this endpoint is real and independently testable
- * (call it directly, then watch a real device's next heartbeat response).
+ * FEATURE 2 — Payout evidence capture, signal-delivery leg (Phase 1a: a LIST of
+ * up to 3 active payouts, not a single slot). The P2P backend calls this once a
+ * trader picks up a payout order; mirrored down to the device on its next
+ * heartbeat (routes/apk.js). Nothing calls this yet from the P2P backend's own
+ * pickup flow — that wiring is a separate follow-up; this endpoint is real and
+ * independently testable. Semantics: services/payoutList.js.
  */
 router.post('/set-active-payout', async (req, res, next) => {
   try {
-    const { device_id, orderId, payeeName, accountNumber, ifsc, amount } = req.body || {};
+    const { device_id, orderId, payeeName, accountNumber, ifsc, amount, clear } = req.body || {};
     if (!device_id || !mongoose.Types.ObjectId.isValid(device_id)) {
       return res.status(400).json({ success: false, message: 'device_id is required' });
     }
-    const activePayout = orderId
-      ? {
-          orderId: String(orderId),
-          payeeName: payeeName || '',
-          accountNumber: accountNumber || '',
-          ifsc: ifsc || '',
-          amount: amount != null ? String(amount) : '',
-          activatedAt: new Date(),
-        }
-      : null;
-    const device = await Device.findByIdAndUpdate(device_id, { activePayout }, { new: true });
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: 'orderId is required' });
+    }
+    const oid = String(orderId);
+
+    // Prune-by-orderId (replace before add) — atomic, so a re-arm can never
+    // duplicate an orderId and a clear only ever removes that one payout.
+    await Device.updateOne({ _id: device_id }, { $pull: { activePayouts: { orderId: oid } } });
+
+    let device;
+    if (clear) {
+      device = await Device.findById(device_id);
+    } else {
+      const entry = {
+        orderId: oid,
+        payeeName: payeeName || '',
+        accountNumber: accountNumber || '',
+        ifsc: ifsc || '',
+        amount: amount != null ? String(amount) : '',
+        activatedAt: new Date(),
+      };
+      // $slice:-3 keeps the 3 most-recently-armed — the payoutList cap.
+      device = await Device.findByIdAndUpdate(
+        device_id,
+        { $push: { activePayouts: { $each: [entry], $slice: -MAX_ACTIVE_PAYOUTS } } },
+        { new: true }
+      );
+    }
     if (!device) {
       return res.status(404).json({ success: false, message: 'Device not found' });
     }
-    return res.json({ success: true, activePayout: device.activePayout });
+    return res.json({ success: true, activePayouts: device.activePayouts || [] });
   } catch (err) {
     return next(err);
   }
@@ -186,31 +206,73 @@ router.post('/set-active-payout-for-trader', async (req, res, next) => {
     }
     const tid = Number(traderId);
 
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: 'orderId is required' });
+    }
+    const oid = String(orderId);
+
     if (clear) {
-      if (!orderId) {
-        return res.status(400).json({ success: false, message: 'orderId is required to clear' });
-      }
-      // Only clear devices still armed for THIS order.
+      // Prune just THIS order from every device the trader owns — leaves any
+      // other in-processing payouts on those devices intact (the whole point
+      // of Phase 1a's list vs the old single slot).
       const r = await Device.updateMany(
-        { traderId: tid, 'activePayout.orderId': String(orderId) },
-        { activePayout: null }
+        { traderId: tid, 'activePayouts.orderId': oid },
+        { $pull: { activePayouts: { orderId: oid } } }
       );
       return res.json({ success: true, cleared: r.modifiedCount != null ? r.modifiedCount : (r.nModified || 0) });
     }
 
-    if (!orderId) {
-      return res.status(400).json({ success: false, message: 'orderId is required to arm' });
-    }
-    const activePayout = {
-      orderId: String(orderId),
+    // Arm: replace-then-add across all the trader's devices, capped at 3. Two
+    // atomic steps because Mongo can't $pull and $push the same path at once;
+    // $pull first guarantees no duplicate orderId, $push+$slice enforces the cap.
+    const entry = {
+      orderId: oid,
       payeeName: payeeName || '',
       accountNumber: accountNumber || '',
       ifsc: ifsc || '',
       amount: amount != null ? String(amount) : '',
       activatedAt: new Date(),
     };
-    const r = await Device.updateMany({ traderId: tid }, { activePayout });
+    await Device.updateMany({ traderId: tid }, { $pull: { activePayouts: { orderId: oid } } });
+    const r = await Device.updateMany(
+      { traderId: tid },
+      { $push: { activePayouts: { $each: [entry], $slice: -MAX_ACTIVE_PAYOUTS } } }
+    );
     return res.json({ success: true, armed: r.modifiedCount != null ? r.modifiedCount : (r.nModified || 0) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * GET /api/internal/payout-evidence?orderId=X[,Y]
+ *
+ * FEATURE 2 — the gateway's payoutService.transferred() reads the captured
+ * success-screen fields here to ENFORCE the amount/last-4 hard match before it
+ * lets a bank payout be marked transferred (utils/payoutMatch.js). Aggregates
+ * the per-upload PayoutEvidence rows to the latest non-null extractedFields —
+ * same read shape as the trader route in routes/ngo.js, but service-authed and
+ * NOT trader-scoped: the gateway already owns the order and passes its ids
+ * (both the uuid and the numeric id, since a capture may key off either).
+ */
+router.get('/payout-evidence', async (req, res, next) => {
+  try {
+    const raw = String(req.query.orderId || '').trim();
+    if (!raw) {
+      return res.status(400).json({ success: false, message: 'orderId is required' });
+    }
+    const orderIds = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    const rows = await PayoutEvidence.find({ orderId: { $in: orderIds } })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    let extractedFields = null;
+    let hasScreenshot = false;
+    for (const r of rows) {
+      if (r.extractedFields != null) extractedFields = r.extractedFields;
+      if (r.screenshotBase64) hasScreenshot = true;
+    }
+    return res.json({ success: true, extractedFields, hasScreenshot, uploadCount: rows.length });
   } catch (err) {
     return next(err);
   }

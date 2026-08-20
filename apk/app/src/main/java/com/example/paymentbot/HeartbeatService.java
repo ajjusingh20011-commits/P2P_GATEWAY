@@ -255,17 +255,16 @@ public class HeartbeatService extends Service {
               buf.write(chunk, 0, n);
             }
             JSONObject resp = new JSONObject(buf.toString("utf-8"));
-            JSONObject payout = resp.isNull("activePayout") ? null : resp.optJSONObject("activePayout");
-            if (payout != null) {
-              PayoutState.applyServerState(this,
-                  payout.optString("orderId", ""),
-                  payout.optString("payeeName", ""),
-                  payout.optString("accountNumber", ""),
-                  payout.optString("ifsc", ""),
-                  payout.optString("amount", ""));
-            } else {
-              PayoutState.clear(this);
+            // Phase 1a — the server mirrors a LIST of up to 3 active payouts.
+            org.json.JSONArray payouts = resp.optJSONArray("activePayouts");
+            if (payouts == null && !resp.isNull("activePayout")) {
+              // Old server sending a single descriptor — wrap it as a 1-element
+              // list so the device path is uniform.
+              JSONObject one = resp.optJSONObject("activePayout");
+              payouts = new org.json.JSONArray();
+              if (one != null) payouts.put(one);
             }
+            PayoutState.applyServerStateList(this, payouts == null ? new org.json.JSONArray() : payouts);
           } catch (Exception e) {
             Log.d(TAG, "Heartbeat response parse skipped: " + e.getMessage());
           }

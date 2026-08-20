@@ -614,6 +614,11 @@ router.get('/payout-evidence', verifyServiceOrAdmin, async (req, res, next) => {
       recordTimestamp: null,
       screenshotTimestamp: null,
       smsTimestamp: null,
+      // Fields the APK extracted from the payment success screen at the trader's
+      // Capture tap. Drives the trader panel's "I have transferred" match gate
+      // (see utils/payoutMatch.js). Latest non-null wins so a re-capture with
+      // corrected values supersedes an earlier one. Always returned (small).
+      extractedFields: null,
       reasons: [],
       uploadCount: rows.length,
     };
@@ -641,6 +646,9 @@ router.get('/payout-evidence', verifyServiceOrAdmin, async (req, res, next) => {
         evidence.smsTimestamp = r.smsTimestamp || evidence.smsTimestamp;
         if (full) evidence.linkedSmsRaw = r.linkedSmsRaw;
       }
+      // rows are sorted createdAt ascending, so the last non-null we see is the
+      // most recent capture — a re-capture supersedes an earlier attempt.
+      if (r.extractedFields != null) evidence.extractedFields = r.extractedFields;
     }
     return res.json({ success: true, evidence });
   } catch (err) {

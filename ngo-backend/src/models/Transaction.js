@@ -28,6 +28,12 @@ const transactionSchema = new mongoose.Schema(
       default: null,
     },
     platform: { type: String, default: '' },
+    // Money direction. Real captured payments (incoming customer deposits) are
+    // 'credit'; a 'debit' row is a bank-debit SMS the phone captured (money the
+    // trader sent out), surfaced on the Notifications page for visibility only —
+    // it never matches an order and never settles. Defaults to 'credit' so every
+    // existing row and the whole pay-in/matching path is unchanged.
+    direction: { type: String, enum: ['credit', 'debit'], default: 'credit' },
     amount: { type: String, required: true },
     payerName: { type: String, default: '' },
     payerUpiId: { type: String, default: '' },

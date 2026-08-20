@@ -23,7 +23,10 @@ const PayoutLock = require('../models/PayoutLock');
  */
 async function isDeviceArmedForOrder(device, orderId) {
   if (!device) return false;
-  const currentlyArmed = !!(device.activePayout && String(device.activePayout.orderId) === orderId);
+  // Phase 1a — activePayouts is a LIST; armed means an entry for THIS order is
+  // present (any of the up-to-3), not that a single slot happens to match.
+  const currentlyArmed = Array.isArray(device.activePayouts)
+    && device.activePayouts.some((p) => p && String(p.orderId) === String(orderId));
   if (currentlyArmed) return true;
   if (device.traderId == null) return false;
   const existingLock = await PayoutLock.findOne({ orderId, traderId: device.traderId });
@@ -53,13 +56,16 @@ async function attemptSubmissionLock(orderId, deviceId, traderId) {
   }
 }
 
-/** Clears activePayout for this orderId on every OTHER device the trader owns —
- *  the overlay/active-payout state stops showing as active anywhere else. */
+/** Prunes THIS order from activePayouts on every OTHER device the trader owns,
+ *  once one device has won the submission — the overlay stops showing this
+ *  payout as active elsewhere. Phase 1a: $pull only this order, leaving any
+ *  other in-processing payouts on those devices untouched (the old code wiped
+ *  the entire single slot, which with a list would drop unrelated payouts). */
 async function clearOtherDevices(traderId, submittingDeviceId, orderId) {
   if (traderId == null) return;
   await Device.updateMany(
-    { traderId, deviceId: { $ne: submittingDeviceId }, 'activePayout.orderId': orderId },
-    { activePayout: null }
+    { traderId, deviceId: { $ne: submittingDeviceId }, 'activePayouts.orderId': String(orderId) },
+    { $pull: { activePayouts: { orderId: String(orderId) } } }
   );
 }
 

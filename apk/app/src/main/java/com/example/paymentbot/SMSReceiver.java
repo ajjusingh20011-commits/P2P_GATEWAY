@@ -275,11 +275,13 @@ public class SMSReceiver extends BroadcastReceiver {
         MainActivity.addSMS(card);
 
         // FEATURE 2 (Payout evidence) — a debit arriving while a payout is
-        // active is evidence FOR that payout, not an independent event: hold
-        // it against the active payout instead of pushing it separately.
+        // active is ALSO evidence FOR that payout: link it. But it must STILL be
+        // forwarded as a normal debit (below), so every captured SMS — credit
+        // AND debit — stays visible on the trader's Notifications page. Payout
+        // evidence is additional, never a replacement. (This previously returned
+        // early here, which hid the debit from Notifications during a payout.)
         if (PayoutState.isActive(context)) {
             PayoutState.linkDebitSms(context, sender, body, timestamp);
-            return;
         }
 
         // FEATURE 5 — forward every debit that reached here (Item 3:

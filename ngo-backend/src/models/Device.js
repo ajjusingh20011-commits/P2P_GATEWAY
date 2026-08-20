@@ -42,11 +42,28 @@ const deviceSchema = new mongoose.Schema(
     // stay distinct from `false` so the trader panel doesn't show "degraded"
     // for a device that simply hasn't said anything either way.
     listenerConnected: { type: Boolean, default: null },
-    // FEATURE 2 — Payout evidence capture. Set via POST
-    // /api/internal/set-active-payout (the P2P backend, once a trader picks
-    // up a payout order) and cleared the same way. Mirrored down to the
-    // device on every heartbeat response — see routes/apk.js.
-    activePayout: { type: mongoose.Schema.Types.Mixed, default: null },
+    // FEATURE 2 — Payout evidence capture. Phase 1a (Scenario 10): a trader can
+    // have up to 3 payouts in processing at once and complete ANY of them on
+    // ANY of their linked devices, so this is a LIST (capped at 3), not a single
+    // overwritable slot. Each entry carries the payout's full identity so the
+    // device can match a success screen / debit SMS to the RIGHT one. Set via
+    // POST /api/internal/set-active-payout[-for-trader] (replace/prune by
+    // orderId) and mirrored down to the device on every heartbeat — see
+    // routes/apk.js. Semantics live in services/payoutList.js.
+    activePayouts: {
+      type: [
+        {
+          _id: false,
+          orderId: { type: String, required: true },
+          payeeName: { type: String, default: '' },
+          accountNumber: { type: String, default: '' },
+          ifsc: { type: String, default: '' },
+          amount: { type: String, default: '' },
+          activatedAt: { type: Date, default: Date.now },
+        },
+      ],
+      default: [],
+    },
     deviceModel: { type: String, default: '' },
     // Trader-assigned display name (set via SetDeviceNameActivity), distinct
     // from deviceModel (the hardware model string).
