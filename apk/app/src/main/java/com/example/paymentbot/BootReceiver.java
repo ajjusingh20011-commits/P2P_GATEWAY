@@ -32,20 +32,6 @@ public class BootReceiver extends BroadcastReceiver {
             } catch (Exception e) {
                 Log.e(TAG, "Boot: failed to start service", e);
             }
-            // Overlay investigation, item 1: PaymentOverlayService/OverlayService
-            // used to only ever start from MainActivity.onCreate() — after a
-            // reboot (before the app is reopened) the first payment-app-open
-            // would find both not yet created and silently skip the overlay.
-            // Re-arm both here too, same as KeepAliveService. Plain
-            // startService() (not startForegroundService()): neither service
-            // calls startForeground() in onCreate(), and BOOT_COMPLETED
-            // receivers get the same background-start exemption this already
-            // relies on for KeepAliveService.
-            try {
-                context.startService(new Intent(context, PaymentOverlayService.class));
-            } catch (Exception e) {
-                Log.e(TAG, "Boot: failed to start overlay services", e);
-            }
             AlarmHelper.scheduleWatchdog(context);
         }
     }

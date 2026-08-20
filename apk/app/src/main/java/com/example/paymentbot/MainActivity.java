@@ -154,7 +154,6 @@ public class MainActivity extends AppCompatActivity {
         instanceRef = new WeakReference<>(this);
         startKeepAlive();
         ensureOverlayPermission();
-        startOverlayService();
         startPayoutOverlayIfEnabled();
         startService(new Intent(this, HeartbeatService.class));
         loadPersistedLogsIfNeeded();
@@ -243,14 +242,6 @@ public class MainActivity extends AppCompatActivity {
                         "Grant 'Display over other apps' for overlay capture",
                         Toast.LENGTH_LONG).show();
             }
-        }
-    }
-
-    /** Starts the floating payment-capture overlay service. */
-    private void startOverlayService() {
-        try {
-            startService(new Intent(this, PaymentOverlayService.class));
-        } catch (Exception ignored) {
         }
     }
 

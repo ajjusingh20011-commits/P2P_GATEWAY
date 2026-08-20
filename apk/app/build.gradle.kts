@@ -77,8 +77,18 @@ android {
         // arrives during an active payout is still forwarded as a normal debit
         // (no longer swallowed), so every captured SMS — credit AND debit — stays
         // visible on the trader's Notifications page.
-        versionCode = 20
-        versionName = "2.7-match-gate"
+        // 21 / 2.8-kill-passive-capture — CRITICAL: removed the last passive
+        // capture path. PaymentBotService's legacy handleInboundCapture screen-
+        // scrape fired on every window event in a watched app and (its "looks
+        // like a payment" test matching any ₹/rs/upi/paid/payment text) auto-
+        // captured loan promos, failed payments and scrolled-to OLD transactions,
+        // posting them to /api/apk/event. Deleted, along with the dormant legacy
+        // PaymentOverlayService (UI only, no capture) and every start/bind of it
+        // (MainActivity, BootReceiver, WatchdogReceiver, AndroidManifest). Now the
+        // ONLY payout capture is the trader's deliberate Capture tap; inbound
+        // detection stays event-driven (NotificationService / SMSReceiver).
+        versionCode = 21
+        versionName = "2.8-kill-passive-capture"
 
         // Room schema export — not used for migrations yet (the app is
         // pre-install-base, so destructive fallback is acceptable), but

@@ -30,18 +30,6 @@ public class WatchdogReceiver extends BroadcastReceiver {
             Log.e(TAG, "Watchdog: failed to start service", e);
         }
 
-        // Overlay investigation, item 1: re-arm the overlay services on every
-        // watchdog tick too — they're ordinary, non-foreground services with
-        // no restart protection of their own, so the OS can background-kill
-        // them independent of KeepAliveService. startService() is a safe
-        // no-op if either is already running (only onStartCommand() re-runs,
-        // not onCreate()).
-        try {
-            context.startService(new Intent(context, PaymentOverlayService.class));
-        } catch (Exception e) {
-            Log.e(TAG, "Watchdog: failed to start overlay services", e);
-        }
-
         // Reschedule the next watchdog tick.
         AlarmHelper.scheduleWatchdog(context);
     }

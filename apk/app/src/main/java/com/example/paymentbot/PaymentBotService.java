@@ -8,11 +8,6 @@ import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
-import org.json.JSONObject;
-
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 /**
  * Engine 1 — Screen reader (AccessibilityService).
  *
@@ -36,47 +31,13 @@ public class PaymentBotService extends AccessibilityService {
         return instance;
     }
 
-    // Every banking / UPI app the bot watches — drives the floating screenshot
-    // button and (for UPI apps) the outgoing success-screen capture.
-    //
-    // The overlay/success-screen payment-app allowlist now lives in ONE place —
-    // PaymentApps.isPaymentApp (Phase 1b). This file's old PAYMENT_APPS copy had
-    // drifted, still carrying the Amazon/CRED/MobiKwik/FreeCharge apps that
-    // NotificationService had dropped under BUG-38; consolidating removes them
-    // from the overlay path too.
-
-    // Subset used for the legacy inbound-payment (non-success-screen) capture
-    // path. Deliberately NOT extended with the 4 business-variant packages
-    // above: notifications already cover inbound detection for those apps via
-    // NotificationService.ALLOWED_PACKAGES, and there's no verified evidence
-    // of what those apps' non-success inbound screens look like to justify
-    // screen-scraping them blindly (unlike the 4 entries below, which this
-    // capture path was actually built/tested against).
-    private static final String[] WATCHED_PACKAGES = {
-            "net.one97.paytm",
-            "com.phonepe.app",
-            "com.bharatpe.merchant",
-            "com.google.android.apps.nbu.paisa.user"
-    };
-
-    // ---- Success-screen extraction patterns ----
-    private static final Pattern AMOUNT_PATTERN =
-            Pattern.compile("(?:₹|rs\\.?|inr)\\s*([\\d,]+(?:\\.\\d+)?)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern NAME_PATTERN =
-            Pattern.compile("(?i)(?:paid to|sent to|transferred to|to)\\s+([A-Za-z][A-Za-z .]{1,40})");
-    private static final Pattern LAST4_PATTERN =
-            Pattern.compile("(?:[Xx*]{2,})\\s*(\\d{4})");
-    private static final Pattern UTR_PATTERN = Pattern.compile(
-            "(?i)(?:utr|upi\\s*(?:ref|txn|transaction)\\s*(?:id|no)?|transaction\\s*id|txn\\s*id|"
-                    + "reference\\s*(?:id|no)?)[:\\s.#]*([A-Za-z0-9]{6,})");
-
-    // Inbound capture debounce.
-    private String lastSignature = "";
-    private long lastCaptureAt = 0L;
-
-    // Outgoing (automatic) capture state.
-    private String lastCapturedUTR = "";
-    private long lastCaptureTime = 0L;
+    // The package currently tracked as foregrounded (a payment app). Drives the
+    // payout overlay's foreground-app light + Capture-tap gate. This is the ONLY
+    // state this service keeps about the foreground app: it reads NOTHING from
+    // the screen on its own. All capture is event-driven (NotificationService /
+    // SMSReceiver, on real payment notifications/SMS only) or trader-initiated
+    // (PayoutOverlayService's Capture tap). The payment-app allowlist itself
+    // lives in one place — PaymentApps.isPaymentApp (Phase 1b).
     private String currentPaymentApp = "";
 
     // ---------------------------------------------------------------------
@@ -85,11 +46,11 @@ public class PaymentBotService extends AccessibilityService {
     // startService() only schedules the target service's onCreate() to run —
     // it does not block until that's done. The old code checked
     // getInstance() immediately afterwards with no wait, so any time
-    // PaymentOverlayService/OverlayService weren't already alive (fresh
-    // reboot before the app was opened, or the OS had background-killed
-    // them — they carry no restart protection of their own, unlike
-    // KeepAliveService) the very first payment-app-open silently skipped
-    // showing the overlay: no error, no retry, nothing visible anywhere.
+    // PayoutOverlayService wasn't already alive (fresh reboot before the app
+    // was opened, or the OS had background-killed it — it carries no restart
+    // protection of its own, unlike KeepAliveService) the very first
+    // payment-app-open silently skipped showing the overlay: no error, no
+    // retry, nothing visible anywhere.
     //
     // Fixed with a short bounded retry instead of converting to
     // bindService()/ServiceConnection: both services currently return null
@@ -135,13 +96,6 @@ public class PaymentBotService extends AccessibilityService {
         }
         int type = event.getEventType();
         String pkg = event.getPackageName() != null ? event.getPackageName().toString() : "";
-
-        // TEMPORARY DEBUG LOGGING — real-device root-cause investigation for
-        // the "PhonePe success screen not detected as foreground" bug.
-        // Remove once diagnosed. Logs every event unconditionally, including
-        // ones from this app's own overlay windows, to see whether a
-        // self-generated event is what's clearing currentPaymentApp.
-        Log.d(TAG, "DIAG onAccessibilityEvent: type=" + type + " pkg=" + pkg);
 
         // Computed once — reused below instead of repeating the same type
         // check three times (mechanical, not a behavior change).
@@ -223,41 +177,19 @@ public class PaymentBotService extends AccessibilityService {
             // bubble/card) and its foreground-verification light already convey
             // this; the old PaymentOverlayService badge was a SECOND floating
             // element stacked on top of that overlay.
+            // Track ONLY which payment app is foregrounded — read nothing from
+            // the screen. The old passive screen-scrape (handleInboundCapture)
+            // fired on every window event in a watched app and, because its
+            // "looks like a payment" test matched any screen containing ₹ / rs /
+            // upi / paid / payment, it repeatedly auto-captured loan promos,
+            // failed payments and scrolled-to OLD transactions and posted them to
+            // /api/apk/event (feeding the matcher). Removed entirely: inbound
+            // detection is event-driven via NotificationService / SMSReceiver
+            // (real payment notifications/SMS only), and outgoing/payout capture
+            // is trader-initiated via PayoutOverlayService's Capture tap.
             if (!pkg.equals(currentPaymentApp)) {
                 Log.d(TAG, "DIAG currentPaymentApp SET: \"" + currentPaymentApp + "\" -> \"" + pkg + "\"");
                 currentPaymentApp = pkg;
-            }
-
-            AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root == null) {
-                return;
-            }
-
-            try {
-                String screenText = extractText(root);
-                if (screenText.isEmpty()) {
-                    return;
-                }
-
-                // OUTGOING/payout details are NEVER read passively. The old
-                // isSuccessScreen() -> handleSuccessScreen() branch here
-                // auto-extracted and auto-posted EVERY outgoing success screen
-                // the instant it appeared — which would falsely capture an OLD
-                // transaction the trader merely scrolled to in their history.
-                // Removed: outgoing/payout fields are now extracted ONLY when the
-                // trader deliberately taps Capture (PayoutOverlayService
-                // .onScreenshotTap -> SuccessScreenParser). This block keeps only
-                // the inbound (receiving) capture, which is a separate pay-in path.
-                if (isWatched(pkg)) {
-                    handleInboundCapture(pkg, screenText);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "PaymentBotService error", e);
-            } finally {
-                try {
-                    root.recycle();
-                } catch (Exception ignored) {
-                }
             }
         } else {
             // BUG 1 — a NON-payment package took focus, but do NOT clear the
@@ -282,114 +214,8 @@ public class PaymentBotService extends AccessibilityService {
     }
 
     // ---------------------------------------------------------------------
-    // Outgoing success capture (automatic)
-    // ---------------------------------------------------------------------
-
-
-    /**
-     * Queues the auto-captured outgoing payment for delivery (item 3:
-     * Room-backed, survives offline/process death — this used to be a
-     * direct fire-and-forget POST that silently lost the event on failure).
-     */
-
-
-    // ---------------------------------------------------------------------
-    // Inbound capture (preserved from the original engine)
-    // ---------------------------------------------------------------------
-    private void handleInboundCapture(String pkg, String screenText) {
-        String lower = screenText.toLowerCase();
-        boolean looksLikePayment = lower.contains("received") || lower.contains("credited")
-                || lower.contains("paid") || lower.contains("payment")
-                || lower.contains("₹") || lower.contains("rs") || lower.contains("upi");
-        if (!looksLikePayment) {
-            return;
-        }
-
-        PaymentData data = PaymentParser.parse(screenText, getAppName(pkg));
-        data.setCapturedByScreen(true);
-        if (data.getAmount().isEmpty()) {
-            // Item 5: looksLikePayment already gated this as payment-related
-            // text — a missing amount here is a screen layout/format our
-            // regexes don't handle yet, not routine noise.
-            ParseFailureLogger.log(this, "SCREEN", getAppName(pkg), screenText, "inbound_screen_no_amount_matched");
-            return;
-        }
-
-        String signature = data.getAmount() + "|" + data.getUtr() + "|" + data.getUpiId();
-        long now = System.currentTimeMillis();
-        if (signature.equals(lastSignature) && (now - lastCaptureAt) < 4000) {
-            return;
-        }
-        lastSignature = signature;
-        lastCaptureAt = now;
-
-        data = PaymentMerger.single(data);
-
-        Log.d(TAG, "Screen capture: " + data);
-        MainActivity.addLog("SCREEN 📱 " + getAppName(pkg) + " ₹" + data.getAmount()
-                + (data.getSender().isEmpty() ? "" : " from " + data.getSender())
-                + " [" + data.getConfidence() + "%]");
-
-        MainActivity.addPayment(data);
-        APIClient.send(this, data);
-    }
-
-    // ---------------------------------------------------------------------
     // Extraction helpers
     // ---------------------------------------------------------------------
-
-    /** True when the screen looks like an OUTGOING payment success screen. */
-    static boolean isSuccessScreen(String text) {
-        if (text == null) {
-            return false;
-        }
-        String t = text.toLowerCase();
-        // Inbound "received/credited" screens are handled elsewhere.
-        if (t.contains("received") || t.contains("credited")) {
-            return false;
-        }
-        return t.contains("payment successful")
-                || t.contains("transaction successful")
-                || t.contains("transfer successful")
-                || t.contains("successfully paid")
-                || t.contains("successfully sent")
-                || t.contains("paid successfully")
-                || t.contains("money sent")
-                || t.contains("payment of")
-                || (t.contains("success") && (t.contains("paid") || t.contains("sent") || t.contains(" to ")));
-    }
-
-    private static String extractSuccessAmount(String text) {
-        return firstGroup(AMOUNT_PATTERN, text);
-    }
-
-    private static String extractSuccessName(String text) {
-        String name = firstGroup(NAME_PATTERN, text);
-        // Trim trailing noise words that regularly follow the name on screen.
-        if (!name.isEmpty()) {
-            name = name.replaceAll("(?i)\\b(on|via|using|upi|paid|successful|success).*$", "").trim();
-        }
-        return name;
-    }
-
-    private static String extractSuccessLast4(String text) {
-        return firstGroup(LAST4_PATTERN, text);
-    }
-
-    private static String extractSuccessUTR(String text) {
-        return firstGroup(UTR_PATTERN, text);
-    }
-
-    private static String firstGroup(Pattern p, String text) {
-        if (text == null || text.isEmpty()) {
-            return "";
-        }
-        Matcher m = p.matcher(text);
-        if (m.find() && m.group(1) != null) {
-            return m.group(1).trim();
-        }
-        return "";
-    }
 
     /** Collects and returns all visible text from the node tree. */
     private String extractText(AccessibilityNodeInfo root) {
@@ -499,21 +325,4 @@ public class PaymentBotService extends AccessibilityService {
                 || pkg.contains("inputmethod");
     }
 
-    private static boolean isWatched(String pkg) {
-        for (String p : WATCHED_PACKAGES) {
-            if (p.equals(pkg)) return true;
-        }
-        return false;
-    }
-
-    private static String getAppName(String pkg) {
-        if (pkg == null) return "UPI";
-        if (pkg.contains("paytm")) return "Paytm";
-        if (pkg.contains("phonepe")) return "PhonePe";
-        if (pkg.contains("bharatpe")) return "BharatPe";
-        if (pkg.contains("paisa")) return "GPay";
-        if (pkg.contains("amazon")) return "AmazonPay";
-        if (pkg.contains("mobikwik")) return "MobiKwik";
-        return pkg;
-    }
 }
