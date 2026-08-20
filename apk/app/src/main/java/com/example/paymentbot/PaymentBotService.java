@@ -2,11 +2,14 @@ package com.example.paymentbot;
 
 import android.accessibilityservice.AccessibilityService;
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+
+import androidx.annotation.RequiresApi;
 
 /**
  * Engine 1 — Screen reader (AccessibilityService).
@@ -323,6 +326,73 @@ public class PaymentBotService extends AccessibilityService {
                 || pkg.equals("com.android.permissioncontroller")
                 || pkg.equals("com.google.android.permissioncontroller")
                 || pkg.contains("inputmethod");
+    }
+
+    // ---------------------------------------------------------------------
+    // Accessibility-native screenshot (API 30+). Replaces MediaProjection
+    // entirely — uses the already-granted accessibility permission, so there is
+    // no consent dialog, no foreground-service-type, and no crash-prone flow.
+    // Tap-triggered ONLY (PayoutOverlayService.onScreenshotTap). Optional and
+    // graceful: on any failure the callback gets null and the payout still
+    // completes on the accessibility TEXT read, which is what powers the match
+    // gate. Note: like MediaProjection, this cannot capture a FLAG_SECURE window
+    // (the callback fails) — but text extraction is unaffected on secure screens.
+    // ---------------------------------------------------------------------
+
+    /** Result sink — jpegBytes is null when the screenshot is unavailable. */
+    public interface ScreenshotBytesCallback {
+        void onResult(byte[] jpegBytes);
+    }
+
+    @RequiresApi(api = android.os.Build.VERSION_CODES.R)
+    public void takePayoutScreenshot(final ScreenshotBytesCallback cb) {
+        try {
+            takeScreenshot(android.view.Display.DEFAULT_DISPLAY, getMainExecutor(),
+                    new TakeScreenshotCallback() {
+                        @Override
+                        public void onSuccess(ScreenshotResult result) {
+                            cb.onResult(encodeJpeg(result));
+                        }
+
+                        @Override
+                        public void onFailure(int errorCode) {
+                            Log.w(TAG, "takeScreenshot failed: code " + errorCode
+                                    + " (likely FLAG_SECURE window, rate-limit, or capability not granted)");
+                            cb.onResult(null);
+                        }
+                    });
+        } catch (Exception e) {
+            Log.w(TAG, "takeScreenshot threw: " + e.getMessage());
+            cb.onResult(null);
+        }
+    }
+
+    @RequiresApi(api = android.os.Build.VERSION_CODES.R)
+    private static byte[] encodeJpeg(AccessibilityService.ScreenshotResult result) {
+        android.hardware.HardwareBuffer hb = null;
+        Bitmap hw = null;
+        Bitmap sw = null;
+        try {
+            hb = result.getHardwareBuffer();
+            hw = Bitmap.wrapHardwareBuffer(hb, result.getColorSpace());
+            if (hw == null) return null;
+            // Hardware bitmaps are GPU-backed / read-only; copy to a software
+            // config so JPEG compression can read the pixels.
+            sw = hw.copy(Bitmap.Config.ARGB_8888, false);
+            if (sw == null) return null;
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            sw.compress(Bitmap.CompressFormat.JPEG, 70, baos);
+            return baos.toByteArray();
+        } catch (Exception e) {
+            Log.w(TAG, "takeScreenshot decode failed: " + e.getMessage());
+            return null;
+        } finally {
+            if (sw != null) sw.recycle();
+            if (hw != null) hw.recycle();
+            if (hb != null) {
+                try { hb.close(); } catch (Exception ignored) { }
+            }
+        }
     }
 
 }

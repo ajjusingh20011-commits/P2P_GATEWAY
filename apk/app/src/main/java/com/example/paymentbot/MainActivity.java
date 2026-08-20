@@ -271,29 +271,9 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // MediaProjection (screenshot) permission
-    // ---------------------------------------------------------------------
-    private static final int SCREENSHOT_REQUEST_CODE = 1001;
-    // Tracks the one-time MediaProjection grant locally now that
-    // OverlayService.hasProjection() no longer exists — PayoutOverlayService
-    // holds the actual token in its own static field (untouched here per
-    // scope), this just remembers whether the grant happened, for the
-    // Permissions page row below.
-    private static boolean screenCaptureGranted = false;
-
-    private void requestScreenshotPermission() {
-        try {
-            android.media.projection.MediaProjectionManager projectionManager =
-                    (android.media.projection.MediaProjectionManager)
-                            getSystemService(MEDIA_PROJECTION_SERVICE);
-            startActivityForResult(
-                    projectionManager.createScreenCaptureIntent(),
-                    SCREENSHOT_REQUEST_CODE);
-        } catch (Exception e) {
-            Toast.makeText(this, "Screen capture not available", Toast.LENGTH_SHORT).show();
-        }
-    }
+    // Screenshots are now captured by the AccessibilityService's own
+    // takeScreenshot() (PaymentBotService), so there is NO MediaProjection
+    // consent flow, permission, or foreground service here anymore.
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -303,27 +283,6 @@ public class MainActivity extends AppCompatActivity {
                 writeExportedTxt(data.getData(), pendingExportText);
             }
             pendingExportText = null;
-            return;
-        }
-        if (requestCode == SCREENSHOT_REQUEST_CODE && resultCode == RESULT_OK && data != null) {
-            android.media.projection.MediaProjectionManager pm =
-                    (android.media.projection.MediaProjectionManager)
-                            getSystemService(MEDIA_PROJECTION_SERVICE);
-            android.media.projection.MediaProjection mp = pm.getMediaProjection(resultCode, data);
-
-            android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
-            getWindowManager().getDefaultDisplay().getMetrics(metrics);
-
-            // Screen-capture consent grant, handed to the payout-evidence
-            // overlay's own static holder (PayoutOverlayService).
-            screenCaptureGranted = true;
-            PayoutOverlayService.setMediaProjection(
-                    mp, metrics.widthPixels, metrics.heightPixels, metrics.densityDpi);
-
-            Toast.makeText(this, "Screenshot ready!", Toast.LENGTH_SHORT).show();
-            if (permissionsPage != null && permissionsPage.getVisibility() == View.VISIBLE) {
-                refreshPermissionsPage();
-            }
         }
     }
 
@@ -787,7 +746,6 @@ public class MainActivity extends AppCompatActivity {
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         boolean batteryExempt = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
         boolean accessibilityGranted = isAccessibilityEnabled(this);
-        boolean screenCaptureGrantedNow = screenCaptureGranted;
 
         permissionsListContainer.addView(permissionStatusRow("Notification access", notifGranted,
                 () -> startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))));
@@ -818,11 +776,10 @@ public class MainActivity extends AppCompatActivity {
                     } catch (Exception ignored) {
                     }
                 }));
-        // Not one of the approved list's 5 named permissions, but a real,
-        // separate runtime consent this build depends on for the
-        // screen-capture engine — kept visible rather than hidden.
-        permissionsListContainer.addView(permissionStatusRow("Screen capture", screenCaptureGrantedNow,
-                this::requestScreenshotPermission));
+        // No "Screen capture" row anymore — the screenshot is captured by the
+        // Accessibility service's own takeScreenshot() (already covered by the
+        // Accessibility permission above), so there is no separate permission to
+        // request or display here.
     }
 
     private View permissionStatusRow(String label, boolean granted, Runnable onFix) {

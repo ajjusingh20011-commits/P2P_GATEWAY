@@ -2,15 +2,9 @@ package com.example.paymentbot;
 
 import android.app.Service;
 import android.content.Intent;
-import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
-import android.hardware.display.DisplayManager;
-import android.hardware.display.VirtualDisplay;
-import android.media.Image;
-import android.media.ImageReader;
-import android.media.projection.MediaProjection;
 import android.os.Build;
 import android.os.Handler;
 import android.widget.FrameLayout;
@@ -23,8 +17,6 @@ import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import java.io.ByteArrayOutputStream;
-import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -79,10 +71,6 @@ public class PayoutOverlayService extends Service {
     private View feedbackView;
     private boolean isVisible = false;
 
-    private static MediaProjection mediaProjection;
-    private static int screenWidth;
-    private static int screenHeight;
-    private static int screenDensity;
 
     // ---- Design tokens — MaxPayDesign src/Overlay/overlay.css .ov-lab ----
     private static final int C_BRAND = 0xFF0F6A5A;
@@ -127,7 +115,6 @@ public class PayoutOverlayService extends Service {
     private static final String MSG_NO_PAYOUT = "No payout in process";
     private static final String MSG_NOT_PAYMENT_APP = "Not a payment app";
     private static final String MSG_NOT_SUCCESS = "Payment success screen not detected";
-    private static final String MSG_NO_PERMISSION = "Screen capture permission needed";
     // Phase 1b — foreground is a payment app but not a consumer/personal one
     // payouts are SENT from (e.g. the trader opened the Business receive app).
     private static final String MSG_NOT_PAYOUT_APP = "Open your personal UPI app to send this payout";
@@ -178,14 +165,6 @@ public class PayoutOverlayService extends Service {
         return instance;
     }
 
-    /** Set from MainActivity's existing MediaProjection consent flow — the
-     *  same one-time grant OverlayService.setMediaProjection() receives. */
-    public static void setMediaProjection(MediaProjection mp, int w, int h, int d) {
-        mediaProjection = mp;
-        screenWidth = w;
-        screenHeight = h;
-        screenDensity = d;
-    }
 
     @Override
     public void onCreate() {
@@ -594,12 +573,26 @@ public class PayoutOverlayService extends Service {
             PayoutState.saveExtractedFields(this, fields.toString());
         } catch (Exception ignored) {
         }
-        if (mediaProjection == null) {
-            showFeedback(MSG_NO_PERMISSION, false);
-            return;
+        // The screenshot is OPTIONAL and captured via the ACCESSIBILITY service's
+        // own takeScreenshot() (API 30+) — no MediaProjection, no consent dialog,
+        // no foreground service. The accessibility-extracted fields above are what
+        // power the match gate; the screenshot is only a supplementary visual. So
+        // upload the fields regardless, and add a screenshot as best-effort
+        // enrichment when takeScreenshot is available and succeeds. A missing /
+        // failed screenshot must NEVER block the trader from completing a payout.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            showFeedback("Capturing...", false);
+            reader.takePayoutScreenshot(jpeg -> new Thread(() -> {
+                if (jpeg != null) PayoutState.saveScreenshot(this, jpeg);
+                PayoutState.uploadBundle(this, "capture");
+                postFeedback(MSG_CAPTURED, true);
+            }).start());
+        } else {
+            // Below Android 11 the accessibility screenshot API doesn't exist —
+            // upload the text-only evidence (still fully verifiable by the gate).
+            PayoutState.uploadBundle(this, "capture");
+            postFeedback(MSG_CAPTURED, true);
         }
-        showFeedback("Capturing...", false);
-        captureAndSaveLocally();
     }
 
     /** Pure — package-visible + static for PayoutStateTest. */
@@ -630,75 +623,6 @@ public class PayoutOverlayService extends Service {
     private void logSuccessKeywordMiss(String pkg, String screenText) {
         ParseFailureLogger.log(this, "PAYOUT_SUCCESS_SCREEN", pkg == null ? "" : pkg,
                 screenText == null ? "" : screenText, "payout_success_keyword_miss");
-    }
-
-    private void captureAndSaveLocally() {
-        new Thread(() -> {
-            ImageReader imageReader = null;
-            VirtualDisplay virtualDisplay = null;
-            try {
-                imageReader = ImageReader.newInstance(
-                        screenWidth, screenHeight, PixelFormat.RGBA_8888, 2);
-                try {
-                    mediaProjection.registerCallback(new MediaProjection.Callback() {
-                    }, new Handler(Looper.getMainLooper()));
-                } catch (Exception ignored) {
-                }
-                virtualDisplay = mediaProjection.createVirtualDisplay(
-                        "payout_evidence", screenWidth, screenHeight, screenDensity,
-                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                        imageReader.getSurface(), null, null);
-
-                Thread.sleep(300);
-                Image image = imageReader.acquireLatestImage();
-                if (image == null) {
-                    postFeedback("Try again", false);
-                    return;
-                }
-                Image.Plane[] planes = image.getPlanes();
-                ByteBuffer buffer = planes[0].getBuffer();
-                int pixelStride = planes[0].getPixelStride();
-                int rowStride = planes[0].getRowStride();
-                int rowPadding = rowStride - pixelStride * screenWidth;
-
-                Bitmap bitmap = Bitmap.createBitmap(
-                        screenWidth + rowPadding / pixelStride, screenHeight, Bitmap.Config.ARGB_8888);
-                bitmap.copyPixelsFromBuffer(buffer);
-                image.close();
-                if (rowPadding != 0) {
-                    Bitmap cropped = Bitmap.createBitmap(bitmap, 0, 0, screenWidth, screenHeight);
-                    bitmap.recycle();
-                    bitmap = cropped;
-                }
-
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 70, baos);
-                bitmap.recycle();
-
-                boolean saved = PayoutState.saveScreenshot(this, baos.toByteArray());
-                if (saved) {
-                    // Upload the evidence NOW, at the deliberate Capture tap —
-                    // screenshot + the tap-extracted fields — so the trader
-                    // panel can gate "I have transferred" on the amount/last-4
-                    // match, and the gateway can enforce it, BEFORE the click.
-                    // A re-capture re-uploads with the corrected fields (each is
-                    // its own row; the read side uses the latest). Still tap-only:
-                    // nothing here fires without this explicit Capture tap.
-                    PayoutState.uploadBundle(this, "capture");
-                }
-                postFeedback(saved ? MSG_CAPTURED : "Save failed — retry", saved);
-            } catch (Exception e) {
-                Log.e(TAG, "Screenshot error: " + e.getMessage());
-                postFeedback("Error: " + e.getMessage(), false);
-            } finally {
-                if (virtualDisplay != null) {
-                    try { virtualDisplay.release(); } catch (Exception ignored) {}
-                }
-                if (imageReader != null) {
-                    try { imageReader.close(); } catch (Exception ignored) {}
-                }
-            }
-        }).start();
     }
 
     // ---------------------------------------------------------------------

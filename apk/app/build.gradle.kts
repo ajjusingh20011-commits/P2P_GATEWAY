@@ -95,8 +95,24 @@ android {
         // packages still fail closed), so a real success screen is never rejected
         // on exact wording again. Safe because capture is tap-triggered and the
         // amount/last-4 field match is the real guard.
-        versionCode = 22
-        versionName = "2.9-phonepe-success-fix"
+        // 23 / 3.0-optional-screenshot — MediaProjection (screenshot) is now
+        // OPTIONAL and crash-safe. The grant callback (MainActivity.onActivityResult)
+        // is wrapped so an Android 14 / OEM failure can never take the app down,
+        // and the Capture tap always uploads the accessibility-extracted fields
+        // (which power the match gate) whether or not a screenshot is available —
+        // a missing/failed/crashed screen-capture permission never blocks a payout.
+        // 24 / 3.1-accessibility-screenshot — screenshots now come from the
+        // AccessibilityService's own takeScreenshot() (API 30+), using the
+        // already-granted accessibility permission. MediaProjection is GONE
+        // entirely: no consent dialog, no FOREGROUND_SERVICE_MEDIA_PROJECTION,
+        // no foregroundServiceType="mediaProjection", no crash-prone onActivityResult
+        // flow, no "Screen capture" permission row. accessibility_config gains
+        // canTakeScreenshot="true". Still optional/graceful: below API 30, on a
+        // FLAG_SECURE screen, or on any failure, the payout completes on the
+        // accessibility text alone. (Traders may need to re-toggle Accessibility
+        // once after this update so the new screenshot capability activates.)
+        versionCode = 24
+        versionName = "3.1-accessibility-screenshot"
 
         // Room schema export — not used for migrations yet (the app is
         // pre-install-base, so destructive fallback is acceptable), but
