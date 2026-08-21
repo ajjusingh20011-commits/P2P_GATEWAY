@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { QrCode, Landmark, Check, ArrowRight, AlertTriangle } from 'lucide-react';
+import { QrCode, Landmark, Check, ArrowRight, AlertTriangle, Copy } from 'lucide-react';
 import { Card, Badge, Button, PageHeader, Modal, EmptyState, LoadingState } from '../components/ui';
 import { traderApi } from '../services/api';
 import { getPayoutEvidence } from '../lib/ngoApi';
@@ -318,6 +318,7 @@ export default function BuyUsdt() {
           busy={busyId === selected.id}
           onClose={() => setSelected(null)}
           onTransferred={(receiptUrl) => submitTransferred(selected.id, receiptUrl ? { receipt_url: receiptUrl } : {})}
+          onSendForReview={(body) => submitTransferred(selected.id, body)}
           onCancel={(body) => act(() => traderApi.cancelPayout(selected.id, body), selected.id, 'awaiting_processing')}
           onProblem={() => act(() => traderApi.problemPayout(selected.id, { reason: 'Trader reported a problem' }), selected.id, 'dispute')}
         />
@@ -347,12 +348,40 @@ function EvidenceMini({ e }) {
   );
 }
 
-function Row({ label, value }) {
+// BUG 5 — one-tap copy for financial details, so the trader never retypes an
+// account number / IFSC / amount into their UPI app and risks a typo.
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(String(text));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch { /* clipboard unavailable — no-op */ }
+  };
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      title="Copy"
+      aria-label="Copy"
+      style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: copied ? '#22c55e' : 'var(--muted)', display: 'inline-flex', flexShrink: 0 }}
+    >
+      {copied ? <Check size={14} /> : <Copy size={14} />}
+    </button>
+  );
+}
+
+function Row({ label, value, copy }) {
   if (value == null || value === '') return null;
   return (
     <div className="flex items-center justify-between" style={{ padding: '9px 0', borderBottom: '1px solid var(--cardborder)' }}>
       <span style={{ color: 'var(--muted)', fontSize: 13 }}>{label}</span>
-      <span style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, textAlign: 'right' }}>{value}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text)', fontSize: 13, fontWeight: 600, textAlign: 'right', wordBreak: 'break-all' }}>
+        {value}
+        {copy && <CopyButton text={value} />}
+      </span>
     </div>
   );
 }
@@ -377,7 +406,7 @@ function EvidenceItem({ ok, label }) {
   );
 }
 
-function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProblem }) {
+function ProcessModal({ req, now, busy, onClose, onTransferred, onSendForReview, onCancel, onProblem }) {
   const [receipt, setReceipt] = useState('');
   const [done, setDone] = useState(false);
   const [evidence, setEvidence] = useState(null);
@@ -387,6 +416,11 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProb
   const [cancelNote, setCancelNote] = useState('');
   const [cancelProof, setCancelProof] = useState('');
   const cancelValid = !!cancelReason && (cancelReason !== 'other' || cancelNote.trim().length > 0);
+  // BUG 2 — "capture didn't work, send for review" fallback (attested).
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewAttest, setReviewAttest] = useState(false);
+  const [reviewNote, setReviewNote] = useState('');
+  const [reviewProof, setReviewProof] = useState('');
 
   // Live capture status for THIS payout: the trader is recording/screenshotting
   // on their phone in real time, so fetch on open and poll while the modal is
@@ -434,6 +468,11 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProb
     if (ok) setDone(true);
   };
 
+  const handleSendForReview = async () => {
+    const ok = await onSendForReview({ unverified: true, evidence_note: reviewNote, receipt_url: reviewProof });
+    if (ok) setDone(true);
+  };
+
   if (done) {
     return (
       <Modal open onClose={onClose} title="Transfer submitted">
@@ -458,16 +497,19 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProb
 
       <div style={{ textAlign: 'center', background: 'var(--hover)', border: '1px solid var(--cardborder)', borderRadius: 12, padding: 19, marginBottom: 14 }}>
         <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>{actionable ? 'Transfer exactly' : 'Amount'}</p>
-        <p style={{ fontSize: 26, fontWeight: 800, margin: '6px 0', color: 'var(--text)' }}>{inr(req.amount_inr)}</p>
-        {actionable && <span style={{ color: 'var(--muted)', fontSize: 12 }}>Recipient details are locked for this request</span>}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, margin: '6px 0' }}>
+          <p style={{ fontSize: 26, fontWeight: 800, margin: 0, color: 'var(--text)' }}>{inr(req.amount_inr)}</p>
+          <CopyButton text={req.amount_inr} />
+        </div>
+        {actionable && <span style={{ display: 'block', color: 'var(--muted)', fontSize: 12 }}>Recipient details are locked for this request</span>}
       </div>
 
       <Row label="Status" value={<Badge color={STATUS_BADGE[req.status]}>{req.status?.replace(/_/g, ' ')}</Badge>} />
       <Row label="Payment method" value={<span style={{ textTransform: 'capitalize' }}>{req.payment_method}</span>} />
-      <Row label="Recipient" value={req.recipient_name} />
-      <Row label="Account number" value={req.account_number} />
-      <Row label="UPI ID" value={req.upi_id} />
-      <Row label="IFSC" value={req.ifsc_code} />
+      <Row label="Recipient" value={req.recipient_name} copy />
+      <Row label="Account number" value={req.account_number} copy />
+      <Row label="UPI ID" value={req.upi_id} copy />
+      <Row label="IFSC" value={req.ifsc_code} copy />
       <Row label="Bank" value={req.bank_name} />
       <Row label="Exchange rate" value={req.base_exchange_rate ? `₹${req.base_exchange_rate}` : null} />
       <Row label="My payout rate" value={req.effective_payout_rate ? `₹${req.effective_payout_rate}` : null} />
@@ -517,8 +559,16 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProb
                 <div key={r.code} style={{ color: '#92400e', fontSize: 12, lineHeight: 1.5 }}>{r.message}</div>
               ))}
               <div style={{ color: 'var(--muted)', fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
-                Re-capture the correct success screen on your phone, or use “I have a problem” if you can’t.
+                Tap Capture again on the payment success screen. If you already did and nothing shows here, the capture may not have linked — retry, or send it for manual review.
               </div>
+              {!reviewing && (
+                <button
+                  onClick={() => setReviewing(true)}
+                  style={{ marginTop: 8, background: 'none', border: 'none', padding: 0, color: 'var(--accent)', fontSize: 12, fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}
+                >
+                  I paid, but Capture didn’t work → send for review
+                </button>
+              )}
             </div>
           )}
           {gatePassed && (
@@ -527,7 +577,38 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProb
             </div>
           )}
 
-          {!cancelling ? (
+          {!cancelling && reviewing ? (
+            /* BUG 2 — attested manual-review fallback when auto-capture fails. */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Send for manual review</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                Use this only if you genuinely made this exact payment but the app couldn’t capture it. An admin verifies before you’re credited.
+              </div>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, color: 'var(--text)' }}>
+                <input type="checkbox" checked={reviewAttest} onChange={(e) => setReviewAttest(e.target.checked)} style={{ marginTop: 3 }} />
+                <span>I confirm I paid {inr(req.amount_inr)} to {req.recipient_name || 'this recipient'}{req.account_number ? ` (a/c ending ${String(req.account_number).slice(-4)})` : ''}.</span>
+              </label>
+              <textarea
+                value={reviewNote}
+                onChange={(e) => setReviewNote(e.target.value)}
+                placeholder="What happened? (optional)"
+                rows={2}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)', fontSize: 13, outline: 'none', resize: 'vertical' }}
+              />
+              <input
+                value={reviewProof}
+                onChange={(e) => setReviewProof(e.target.value)}
+                placeholder="Proof URL (optional)"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)', fontSize: 13, outline: 'none' }}
+              />
+              <div className="flex gap-2">
+                <Button variant="ghost" disabled={busy} onClick={() => setReviewing(false)} className="flex-1">Back</Button>
+                <Button variant="primary" disabled={busy || !reviewAttest} onClick={handleSendForReview} className="flex-1">
+                  {busy ? 'Submitting…' : 'Submit for review'}
+                </Button>
+              </div>
+            </div>
+          ) : !cancelling ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
               <Button variant="primary" disabled={busy || gateBlocks} onClick={() => handleTransferred(receipt)}>
                 {busy ? 'Working…' : <>I have transferred <ArrowRight size={16} /></>}

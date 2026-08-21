@@ -38,7 +38,7 @@ const fmtDateTime = (v) => (v ? new Date(v).toLocaleString('en-IN', { day: '2-di
 // cancels; from awaiting_settlement it routes to Dispute for review, since
 // a payout that already reached settlement can't just be silently voided.
 const ACTION_COPY = {
-  approve: { title: 'Approve this payout?', tone: 'primary', label: 'Approve & settle', desc: (r) => `${short(r.uuid, r.id)} will be settled and ${inr(r.amount_inr)} debited from the assigned trader's balance. This cannot be undone.` },
+  approve: { title: 'Approve this payout?', tone: 'primary', label: 'Approve & settle', desc: (r) => `${r.evidence_unverified ? '⚠ UNVERIFIED — the trader submitted this without auto-verified payment evidence. Confirm you have checked the payment before settling. ' : ''}${short(r.uuid, r.id)} will be settled and ${inr(r.amount_inr)} debited from the assigned trader's balance. This cannot be undone.` },
   rejectProcessing: { title: 'Reject this payout?', tone: 'danger', label: 'Reject', desc: (r) => `${short(r.uuid, r.id)} will be marked Canceled and the merchant notified.` },
   rejectSettlement: { title: 'Reject this payout?', tone: 'danger', label: 'Reject', desc: (r) => `${short(r.uuid, r.id)} will move to Dispute for review — an already-processing payout can't be silently canceled.` },
   settle: { title: 'Settle this disputed payout?', tone: 'primary', label: 'Settle', desc: (r) => `${short(r.uuid, r.id)} will be settled and ${inr(r.amount_inr)} debited from the assigned trader's balance. This cannot be undone.` },
@@ -390,7 +390,12 @@ export default function Payouts() {
                   <td className="px-4 py-3">{r.merchant?.business_name || `#${r.merchant_id}`}</td>
                   <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{r.recipient_name || '—'}</td>
                   <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{r.assigned_trader_id ? `#${r.assigned_trader_id}` : '—'}</td>
-                  <td className="px-4 py-3 font-medium">{inr(r.amount_inr)}</td>
+                  <td className="px-4 py-3 font-medium">
+                    {inr(r.amount_inr)}
+                    {r.evidence_unverified && (
+                      <span title="Submitted without auto-verified evidence — verify before settling" style={{ marginLeft: 6, display: 'inline-block', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: 'rgba(245,158,11,.15)', color: '#b45309' }}>UNVERIFIED</span>
+                    )}
+                  </td>
                   {showRate && (
                     <td className="px-4 py-3 text-xs">
                       {r.effective_payout_rate
@@ -442,6 +447,8 @@ export default function Payouts() {
               <Field label="Status"><Badge color={TABS.find((t) => t.key === viewing.status)?.color || 'gray'}>{TABS.find((t) => t.key === viewing.status)?.label || viewing.status}</Badge></Field>
               {viewing.trader_credit_usdt && <Field label="Trader credit">{viewing.trader_credit_usdt} USDT</Field>}
               {viewing.dispute_reason && <Field label="Dispute reason">{viewing.dispute_reason}</Field>}
+              {viewing.evidence_unverified && <Field label="Evidence"><span style={{ color: '#b45309', fontWeight: 700 }}>Unverified — manual review</span></Field>}
+              {viewing.evidence_note && <Field label="Trader note">{viewing.evidence_note}</Field>}
             </div>
 
             <div>

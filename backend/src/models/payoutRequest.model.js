@@ -81,6 +81,12 @@ module.exports = (sequelize) => {
       platform_profit_usdt: { type: DataTypes.DECIMAL(20, 8), allowNull: true },
 
       receipt_url: { type: DataTypes.STRING(512), allowNull: true },
+
+      // BUG 2 — manual fallback: the trader marked this BANK payout transferred
+      // without a passing evidence match ("capture didn't work — send for
+      // review"). Must be verified by an admin before settlement.
+      evidence_unverified: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+      evidence_note: { type: DataTypes.TEXT, allowNull: true },
     },
     {
       sequelize,

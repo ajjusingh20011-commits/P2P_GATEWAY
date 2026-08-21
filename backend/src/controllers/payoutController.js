@@ -100,14 +100,23 @@ const traderProcess = asyncHandler(async (req, res) => {
   }
 });
 
-const transferredSchema = Joi.object({ receipt_url: Joi.string().uri().max(512).allow('', null) });
+const transferredSchema = Joi.object({
+  receipt_url: Joi.string().max(512).allow('', null),
+  // BUG 2 — "capture didn't work, send for review" fallback (bank payouts).
+  unverified: Joi.boolean().truthy('true').falsy('false').default(false),
+  evidence_note: Joi.string().max(1000).allow('', null),
+});
 
 const traderTransferred = asyncHandler(async (req, res) => {
   const trader = await currentTrader(req, res);
   if (!trader) return undefined;
   const { value } = transferredSchema.validate(req.body || {});
   try {
-    const row = await payoutService.transferred(trader.id, req.params.id, { receipt_url: value.receipt_url });
+    const row = await payoutService.transferred(trader.id, req.params.id, {
+      receipt_url: value.receipt_url,
+      unverified: value.unverified,
+      evidence_note: value.evidence_note,
+    });
     return ok(res, { payout_request: row });
   } catch (err) {
     return handleErr(res, err);

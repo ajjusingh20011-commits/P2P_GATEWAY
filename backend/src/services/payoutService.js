@@ -377,7 +377,7 @@ async function fetchCapturedFields(row) {
 }
 
 /** in_processing → awaiting_settlement (trader confirms they sent the money). */
-async function transferred(traderId, id, { receipt_url } = {}) {
+async function transferred(traderId, id, { receipt_url, unverified, evidence_note } = {}) {
   const row = await getForTrader(traderId, id);
   if (row.status !== 'in_processing') throw Object.assign(new Error(`Cannot mark transferred from ${row.status}`), { status: 409 });
 
@@ -389,7 +389,13 @@ async function transferred(traderId, id, { receipt_url } = {}) {
   // trader must re-capture or use "I have a problem" (dispute → admin review) —
   // we never let a mismatched (or unverifiable) bank transfer through. UPI-id
   // payouts have no account last-4 to match and are not gated here.
-  if (String(row.payment_method || '').toLowerCase() === 'bank' && row.account_number) {
+  //
+  // BUG 2 escape hatch: `unverified` is the explicit "capture didn't work — send
+  // for review" fallback. It bypasses the gate but flags the payout
+  // evidence_unverified, so an admin MUST verify it before settlement (see the
+  // admin settlement queue). Safe because it can never reach settlement without
+  // that manual review.
+  if (!unverified && String(row.payment_method || '').toLowerCase() === 'bank' && row.account_number) {
     let captured = null;
     try {
       captured = await fetchCapturedFields(row);
@@ -414,14 +420,24 @@ async function transferred(traderId, id, { receipt_url } = {}) {
     }
   }
 
-  await row.update({ status: 'awaiting_settlement', transferred_at: new Date(), receipt_url: receipt_url || row.receipt_url });
+  await row.update({
+    status: 'awaiting_settlement',
+    transferred_at: new Date(),
+    receipt_url: receipt_url || row.receipt_url,
+    evidence_unverified: !!unverified,
+    evidence_note: unverified ? (evidence_note || null) : row.evidence_note,
+  });
   // The capture window for this order is over — stop the trader's devices
   // capturing for it (the evidence bundle upload is triggered by this click).
   await clearTraderDevicesPayout(traderId, row.uuid);
-  const summary = { id: row.id, uuid: row.uuid, trader_id: traderId, status: row.status };
+  const summary = { id: row.id, uuid: row.uuid, trader_id: traderId, status: row.status, evidence_unverified: !!unverified };
   emitToAdmin('payout:transferred', summary);
   emitToMerchant(row.merchant_id, 'payout:transferred', summary);
-  logger.info(`payout: trader ${traderId} marked ${row.uuid} transferred`);
+  if (unverified) {
+    logger.warn(`payout: trader ${traderId} submitted ${row.uuid} UNVERIFIED (capture fallback) — flagged for admin review`);
+  } else {
+    logger.info(`payout: trader ${traderId} marked ${row.uuid} transferred`);
+  }
   return row;
 }
 
