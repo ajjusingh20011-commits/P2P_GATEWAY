@@ -245,6 +245,63 @@ router.post('/set-active-payout-for-trader', async (req, res, next) => {
 });
 
 /**
+ * POST /api/internal/sync-active-payouts-for-trader
+ *
+ * Self-healing RECONCILE (interim fix for the "device shows No payout in process
+ * despite a genuinely active payout" sync bug). The single fire-and-forget arm
+ * at accept() can silently miss (device offline then, transient failure, or a
+ * Device.traderId link gap). The gateway calls this on the trader's panel poll
+ * with their REAL current in_processing set, so a missed arm converges within
+ * one poll instead of staying dead.
+ *
+ * Body: { traderId, payouts: [{ orderId, payeeName, accountNumber, ifsc, amount }] }.
+ * Idempotent: prunes any armed order no longer in-process, and adds only the
+ * missing ones — an already-armed order is left untouched so its activatedAt
+ * (the local window) is not reset every poll.
+ */
+router.post('/sync-active-payouts-for-trader', async (req, res, next) => {
+  try {
+    const { traderId, payouts } = req.body || {};
+    if (traderId == null || !Number.isFinite(Number(traderId))) {
+      return res.status(400).json({ success: false, message: 'traderId is required' });
+    }
+    const tid = Number(traderId);
+    const list = Array.isArray(payouts) ? payouts : [];
+    const oids = list.map((p) => String(p && p.orderId)).filter(Boolean);
+
+    // 1. Drop any armed order that is no longer in-process (settled/canceled/etc).
+    await Device.updateMany(
+      { traderId: tid },
+      { $pull: { activePayouts: { orderId: { $nin: oids } } } }
+    );
+    // 2. Add each in-process order that is MISSING — only to devices that don't
+    //    already carry it, so an already-armed order keeps its activatedAt.
+    let added = 0;
+    for (const p of list) {
+      const oid = String(p && p.orderId);
+      if (!oid || oid === 'undefined') continue;
+      const entry = {
+        orderId: oid,
+        payeeName: (p && p.payeeName) || '',
+        accountNumber: (p && p.accountNumber) || '',
+        ifsc: (p && p.ifsc) || '',
+        amount: p && p.amount != null ? String(p.amount) : '',
+        activatedAt: new Date(),
+      };
+      // eslint-disable-next-line no-await-in-loop
+      const r = await Device.updateMany(
+        { traderId: tid, 'activePayouts.orderId': { $ne: oid } },
+        { $push: { activePayouts: { $each: [entry], $slice: -MAX_ACTIVE_PAYOUTS } } }
+      );
+      added += (r.modifiedCount != null ? r.modifiedCount : (r.nModified || 0));
+    }
+    return res.json({ success: true, synced: oids.length, added });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
  * GET /api/internal/payout-evidence?orderId=X[,Y]
  *
  * FEATURE 2 — the gateway's payoutService.transferred() reads the captured

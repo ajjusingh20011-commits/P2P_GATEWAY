@@ -82,7 +82,7 @@ async function expiryMinutes() {
  */
 async function armTraderDevicesForPayout(traderId, row) {
   try {
-    await axios.post(
+    const resp = await axios.post(
       `${NGO_BASE}/api/internal/set-active-payout-for-trader`,
       {
         traderId,
@@ -94,8 +94,45 @@ async function armTraderDevicesForPayout(traderId, row) {
       },
       { timeout: 5000, headers: internalAuthHeaders() }
     );
+    // Surface a SILENT miss: HTTP 200 with armed:0 means the arm matched no
+    // devices (all offline right now, or Device.traderId not linked). Capture
+    // will show "No payout in process" until the trader's next panel poll runs
+    // reconcileTraderDeviceArming and heals it — so log loudly, don't swallow.
+    const armed = resp && resp.data ? resp.data.armed : undefined;
+    if (armed === 0) {
+      logger.warn(`payout: arm for order ${row.uuid} (trader ${traderId}) matched 0 devices — device(s) offline or Device.traderId unlinked; will self-heal on the trader's next poll.`);
+    }
   } catch (err) {
     logger.warn(`payout: could not arm devices for trader ${traderId} order ${row.uuid} — evidence capture will not auto-start: ${err.message}`);
+  }
+}
+
+/**
+ * Self-healing reconcile (interim fix): push the trader's REAL current
+ * in_processing set to their devices, so a missed/stale arm converges. Called
+ * fire-and-forget from the trader's payout-list poll; best-effort, never blocks
+ * or throws into the request path.
+ */
+async function reconcileTraderDeviceArming(traderId) {
+  try {
+    const rows = await db.PayoutRequest.findAll({
+      where: { assigned_trader_id: traderId, status: 'in_processing' },
+      order: [['accepted_at', 'ASC']],
+    });
+    const payouts = rows.map((row) => ({
+      orderId: row.uuid,
+      payeeName: row.recipient_name || '',
+      accountNumber: row.account_number || row.upi_id || '',
+      ifsc: row.ifsc_code || '',
+      amount: row.amount_inr != null ? String(row.amount_inr) : '',
+    }));
+    await axios.post(
+      `${NGO_BASE}/api/internal/sync-active-payouts-for-trader`,
+      { traderId, payouts },
+      { timeout: 5000, headers: internalAuthHeaders() }
+    );
+  } catch (err) {
+    logger.warn(`payout: device arming reconcile failed for trader ${traderId}: ${err.message}`);
   }
 }
 
@@ -874,6 +911,7 @@ module.exports = {
   listForMerchant,
   listForTrader,
   traderCounts,
+  reconcileTraderDeviceArming,
   getForTrader,
   accept,
   transferred,

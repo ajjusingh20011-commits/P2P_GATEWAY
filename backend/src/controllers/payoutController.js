@@ -74,6 +74,12 @@ const traderList = asyncHandler(async (req, res) => {
     payoutService.listForTrader(trader.id, { status: req.query.status }),
     payoutService.traderCounts(trader.id),
   ]);
+  // Self-healing arm reconcile (interim fix): if this trader is working payouts,
+  // re-push their real in_processing set to their devices so a missed/stale arm
+  // converges. Fire-and-forget — never blocks or fails the list response.
+  if (counts && counts.in_processing > 0) {
+    payoutService.reconcileTraderDeviceArming(trader.id);
+  }
   return ok(res, { payout_requests: rows, counts });
 });
 
