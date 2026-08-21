@@ -66,6 +66,21 @@ public class SuccessScreenParserTest {
         assertTrue(SuccessScreenParser.last4List(real).contains("8906"));
         assertTrue(SuccessScreenParser.last4List(real).contains("1551"));
         assertEquals("919634090229", SuccessScreenParser.utr(real));
+        // RECIPIENT's bank comes from the "Paid to" side, NOT the trader's paying
+        // source. "Debited from XXXXXX1551" shows no bank name (a wallet icon), so
+        // senderBank is honestly empty — never the recipient's Jio bank.
+        assertEquals("Jio Payments Bank", SuccessScreenParser.recipientBank(real));
+        assertEquals("", SuccessScreenParser.senderBank(real));
+    }
+
+    @Test
+    public void recipientBank_notConfusedWithTradersDebitBank() {
+        // "Paid to Blinkit" (no bank shown) + "Debited from HDFC Bank" — HDFC is
+        // the TRADER's paying bank, and must never be reported as the recipient's.
+        String text = "Payment Successful\n₹920\nPaid to Blinkit\n"
+                + "Debited from HDFC Bank A/c XXXX4521\n";
+        assertEquals("HDFC Bank", SuccessScreenParser.senderBank(text));
+        assertEquals("", SuccessScreenParser.recipientBank(text));
     }
 
     @Test

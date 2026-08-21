@@ -395,46 +395,70 @@ async function transferred(traderId, id, { receipt_url, unverified, evidence_not
   // evidence_unverified, so an admin MUST verify it before settlement (see the
   // admin settlement queue). Safe because it can never reach settlement without
   // that manual review.
-  if (!unverified && String(row.payment_method || '').toLowerCase() === 'bank' && row.account_number) {
-    let captured = null;
+  const isBankGated = !unverified && String(row.payment_method || '').toLowerCase() === 'bank' && row.account_number;
+  let captured = null;
+  if (!unverified) {
     try {
       captured = await fetchCapturedFields(row);
     } catch (err) {
-      logger.warn(`payout: could not fetch evidence to gate transfer for ${row.uuid}: ${err.message}`);
-      throw Object.assign(
-        new Error('Could not verify your payment evidence right now — please try again in a moment. If it keeps failing, use "I have a problem".'),
-        { status: 503 }
-      );
+      if (isBankGated) {
+        logger.warn(`payout: could not fetch evidence to gate transfer for ${row.uuid}: ${err.message}`);
+        throw Object.assign(
+          new Error('Could not verify your payment evidence right now — please try again in a moment. If it keeps failing, use "I have a problem".'),
+          { status: 503 }
+        );
+      }
+      // Non-gated (UPI): the evidence fetch is only for the ambiguity check, so a
+      // momentary ngo outage must not block a UPI transfer.
+      logger.warn(`payout: could not fetch evidence for ambiguity check on ${row.uuid}: ${err.message}`);
     }
-    const verdict = evaluatePayoutMatch(
-      { payment_method: row.payment_method, amount_inr: row.amount_inr, account_number: row.account_number },
-      captured
-    );
-    if (verdict.applicable && !verdict.hardMatch) {
-      const why = verdict.reasons.map((r) => r.message).join(' ');
-      logger.warn(`payout: transfer BLOCKED by match gate for ${row.uuid} (trader ${traderId}): ${verdict.reasons.map((r) => r.code).join(',')}`);
-      throw Object.assign(
-        new Error(`Captured payment details don't match this payout. ${why}`),
-        { status: 422, code: 'payout_match_failed', reasons: verdict.reasons }
+    if (isBankGated) {
+      const verdict = evaluatePayoutMatch(
+        { payment_method: row.payment_method, amount_inr: row.amount_inr, account_number: row.account_number },
+        captured
       );
+      if (verdict.applicable && !verdict.hardMatch) {
+        const why = verdict.reasons.map((r) => r.message).join(' ');
+        logger.warn(`payout: transfer BLOCKED by match gate for ${row.uuid} (trader ${traderId}): ${verdict.reasons.map((r) => r.code).join(',')}`);
+        throw Object.assign(
+          new Error(`Captured payment details don't match this payout. ${why}`),
+          { status: 422, code: 'payout_match_failed', reasons: verdict.reasons }
+        );
+      }
     }
+  }
+
+  // A capture the device flagged AMBIGUOUS matched more than one active payout
+  // (a tie shares amount + account last-4, so the gate above can't tell them
+  // apart and could otherwise silently settle the wrong one). Force it into the
+  // same admin-review path as the manual "send for review" fallback.
+  const ambiguous = !!(captured && captured.ambiguousMatch === true);
+  const forceReview = !!unverified || ambiguous;
+  const reviewNote = unverified
+    ? (evidence_note || null)
+    : (ambiguous
+      ? 'Auto-flagged: this capture matched more than one active payout (same amount + account). Confirm the recipient bank/name before settling.'
+      : row.evidence_note);
+  if (ambiguous) {
+    logger.warn(`payout: ${row.uuid} (trader ${traderId}) capture was AMBIGUOUS (matched >1 active payout) — forced to admin review`);
   }
 
   await row.update({
     status: 'awaiting_settlement',
     transferred_at: new Date(),
     receipt_url: receipt_url || row.receipt_url,
-    evidence_unverified: !!unverified,
-    evidence_note: unverified ? (evidence_note || null) : row.evidence_note,
+    evidence_unverified: forceReview,
+    evidence_note: reviewNote,
   });
   // The capture window for this order is over — stop the trader's devices
   // capturing for it (the evidence bundle upload is triggered by this click).
   await clearTraderDevicesPayout(traderId, row.uuid);
-  const summary = { id: row.id, uuid: row.uuid, trader_id: traderId, status: row.status, evidence_unverified: !!unverified };
+  const summary = { id: row.id, uuid: row.uuid, trader_id: traderId, status: row.status, evidence_unverified: forceReview };
   emitToAdmin('payout:transferred', summary);
   emitToMerchant(row.merchant_id, 'payout:transferred', summary);
-  if (unverified) {
-    logger.warn(`payout: trader ${traderId} submitted ${row.uuid} UNVERIFIED (capture fallback) — flagged for admin review`);
+  if (forceReview) {
+    const why = unverified ? 'capture fallback' : 'ambiguous — matched >1 payout';
+    logger.warn(`payout: trader ${traderId} submitted ${row.uuid} UNVERIFIED (${why}) — flagged for admin review`);
   } else {
     logger.info(`payout: trader ${traderId} marked ${row.uuid} transferred`);
   }

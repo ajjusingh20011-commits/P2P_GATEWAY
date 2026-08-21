@@ -135,6 +135,26 @@ public class PayoutStateTest {
     }
 
     @Test
+    public void tieIsDetectableAsMultipleMatches() {
+        // Same amount + same last-4 across two payouts -> resolve returns "" (never
+        // guess) AND both are reported as matches so the capture is flagged for review.
+        java.util.List<String[]> list = armed(
+                "A", "500", "111122223333",
+                "B", "500", "444422223333");
+        assertEquals("", PayoutState.resolveOrderId(list, "500", last4("3333")));
+        assertEquals(2, PayoutState.matchingOrderIds(list, "500", last4("3333")).size());
+    }
+
+    @Test
+    public void upiSameAmountIsATie() {
+        // Two UPI payouts of the same amount (no account last-4) collide on amount
+        // alone — a realistic tie that must go to review, not settle to a guess.
+        java.util.List<String[]> list = armed("A", "500", "", "B", "500", "");
+        assertEquals("", PayoutState.resolveOrderId(list, "500", last4()));
+        assertEquals(2, PayoutState.matchingOrderIds(list, "500", last4()).size());
+    }
+
+    @Test
     public void amountsEqualIgnoresFormatting() {
         assertTrue(PayoutState.amountsEqual("920", "920.00"));
         assertTrue(PayoutState.amountsEqual("₹1,920.0", "1920"));

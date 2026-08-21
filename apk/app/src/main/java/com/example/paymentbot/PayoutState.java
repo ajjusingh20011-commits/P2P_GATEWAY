@@ -197,9 +197,20 @@ public final class PayoutState {
      */
     static String resolveOrderId(java.util.List<String[]> candidates,
                                  String capAmount, java.util.List<String> capLast4) {
-        if (candidates == null) return "";
-        String matched = "";
-        int count = 0;
+        java.util.List<String> matches = matchingOrderIds(candidates, capAmount, capLast4);
+        return matches.size() == 1 ? matches.get(0) : "";
+    }
+
+    /**
+     * EVERY armed candidate this capture matches (amount [+ last-4 for bank]).
+     * size()==1 is an unambiguous link; size()>1 is a genuine TIE (two payouts
+     * indistinguishable by amount+account) that must go to a human, never settle
+     * silently. Pure.
+     */
+    static java.util.List<String> matchingOrderIds(java.util.List<String[]> candidates,
+                                                   String capAmount, java.util.List<String> capLast4) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (candidates == null) return out;
         for (String[] c : candidates) {
             if (c == null || c.length < 3) continue;
             String orderId = c[0] == null ? "" : c[0];
@@ -209,9 +220,9 @@ public final class PayoutState {
             boolean ok = acctLast4.isEmpty()
                     ? amountMatch                                   // UPI — amount only
                     : amountMatch && capLast4 != null && capLast4.contains(acctLast4); // bank
-            if (ok) { count++; matched = orderId; }
+            if (ok) out.add(orderId);
         }
-        return count == 1 ? matched : "";
+        return out;
     }
 
     /** Device-side adapter: unpacks the mirrored activePayouts JSON and delegates
@@ -219,6 +230,17 @@ public final class PayoutState {
      *  off-device), same boundary as every other Context method here. */
     static String resolveOrderIdForCapture(org.json.JSONArray activePayouts,
                                            String capAmount, java.util.List<String> capLast4) {
+        return resolveOrderId(candidatesFromJson(activePayouts), capAmount, capLast4);
+    }
+
+    /** True when this capture matches more than one armed payout — a genuine tie
+     *  that must be flagged for admin review, never settled to a guess. */
+    static boolean isAmbiguousForCapture(org.json.JSONArray activePayouts,
+                                         String capAmount, java.util.List<String> capLast4) {
+        return matchingOrderIds(candidatesFromJson(activePayouts), capAmount, capLast4).size() > 1;
+    }
+
+    private static java.util.List<String[]> candidatesFromJson(org.json.JSONArray activePayouts) {
         java.util.List<String[]> candidates = new java.util.ArrayList<>();
         if (activePayouts != null) {
             for (int i = 0; i < activePayouts.length(); i++) {
@@ -231,7 +253,7 @@ public final class PayoutState {
                 });
             }
         }
-        return resolveOrderId(candidates, capAmount, capLast4);
+        return candidates;
     }
 
     /** Last 4 digits of a (possibly masked) account string; "" if fewer than 4. */

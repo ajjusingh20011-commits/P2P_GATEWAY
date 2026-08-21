@@ -129,6 +129,9 @@ public class PayoutOverlayService extends Service {
     // which of several armed payouts this screen belongs to.
     private static final String MSG_ALREADY_CAPTURED = "Already captured — this payout is done";
     private static final String MSG_CANT_RESOLVE = "Can't tell which payout — open it in the app first";
+    // A tie (this screen matches >1 armed payout) is captured but sent for admin
+    // review rather than settled to a guess.
+    private static final String MSG_CAPTURED_REVIEW = "Captured — sent for review";
 
     // Per-app success wording seeds (a fast path). The REAL guard is
     // matchesSuccessKeyword's GENERAL_SUCCESS fallback below (any recognized
@@ -598,8 +601,10 @@ public class PayoutOverlayService extends Service {
         String recipLast4 = fields.optString("recipientLast4", "");
         if (!recipLast4.isEmpty() && !capLast4.contains(recipLast4)) capLast4.add(recipLast4);
 
-        String resolved = PayoutState.resolveOrderIdForCapture(
-                PayoutState.activePayouts(this), fields.optString("amount", ""), capLast4);
+        org.json.JSONArray active = PayoutState.activePayouts(this);
+        String capAmount = fields.optString("amount", "");
+        String resolved = PayoutState.resolveOrderIdForCapture(active, capAmount, capLast4);
+        boolean ambiguous = PayoutState.isAmbiguousForCapture(active, capAmount, capLast4);
         final String targetOrderId;
         if (!resolved.isEmpty()) {
             PayoutState.selectWorking(this, resolved); // re-point to the matched payout
@@ -622,6 +627,13 @@ public class PayoutOverlayService extends Service {
             return;
         }
 
+        // A genuine TIE (this screen matches >1 armed payout): capture it, but
+        // flag the evidence so the server forces admin review instead of letting
+        // it settle silently against the guessed working slot.
+        final boolean sendForReview = ambiguous;
+        if (sendForReview) {
+            try { fields.put("ambiguousMatch", true); } catch (Exception ignored) {}
+        }
         PayoutState.saveExtractedFields(this, fields.toString());
         // The screenshot is OPTIONAL and captured via the ACCESSIBILITY service's
         // own takeScreenshot() (API 30+) — no MediaProjection, no consent dialog,
@@ -636,14 +648,14 @@ public class PayoutOverlayService extends Service {
                 if (jpeg != null) PayoutState.saveScreenshot(this, jpeg);
                 PayoutState.uploadBundle(this, "capture");
                 PayoutState.markCaptured(this, targetOrderId);
-                postFeedback(MSG_CAPTURED, true);
+                postFeedback(sendForReview ? MSG_CAPTURED_REVIEW : MSG_CAPTURED, true);
             }).start());
         } else {
             // Below Android 11 the accessibility screenshot API doesn't exist —
             // upload the text-only evidence (still fully verifiable by the gate).
             PayoutState.uploadBundle(this, "capture");
             PayoutState.markCaptured(this, targetOrderId);
-            postFeedback(MSG_CAPTURED, true);
+            postFeedback(sendForReview ? MSG_CAPTURED_REVIEW : MSG_CAPTURED, true);
         }
     }
 

@@ -142,6 +142,14 @@ function PayoutEvidenceSection({ payout, evidence, loading }) {
   const mismatched = checks.filter((c) => c.status === 'mismatch').length;
   const comparable = matched + mismatched;
 
+  // Tap-extracted fields from the success screen (distinct from recordedInput).
+  const ef = evidence.extractedFields || {};
+  const capturedPayeeBank = firstOf(ef, ['recipientBank']);
+  // The device flags a capture that matched >1 active payout (a tie shares
+  // amount + account last-4). Such a payout is forced to this manual review —
+  // the recipient bank/name is how the admin tells which payout it really is.
+  const ambiguous = ef.ambiguousMatch === true;
+
   // Timing: was the capture within the payout window (accept -> transfer/now)?
   const capMs = Date.parse(evidence.screenshotTimestamp || evidence.recordTimestamp || evidence.smsTimestamp || '');
   const acceptMs = Date.parse(payout.accepted_at || '');
@@ -162,6 +170,12 @@ function PayoutEvidenceSection({ payout, evidence, loading }) {
     <div>
       <H>Evidence &amp; match</H>
 
+      {ambiguous && (
+        <div style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(245,158,11,.15)', color: '#b45309', fontSize: 13, fontWeight: 700, marginBottom: 12, border: '1px solid rgba(245,158,11,.4)' }}>
+          ⚠ Ambiguous capture — this payment matched more than one of the trader's active payouts (same amount &amp; account last-4). Use the recipient bank / name below to confirm it belongs to THIS payout before settling.
+        </div>
+      )}
+
       {/* Suggestion only — the system never auto-approves; a mismatch is flagged, not rejected. */}
       <div style={{ padding: '10px 14px', borderRadius: 10, background: verdict.bg, color: verdict.color, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>
         {verdict.text}
@@ -169,6 +183,15 @@ function PayoutEvidenceSection({ payout, evidence, loading }) {
 
       <div style={{ marginBottom: 14 }}>
         {checks.map((c) => <MatchRow key={c.label} label={c.label} recorded={c.recorded} expected={c.expected} status={c.status} />)}
+        {(capturedPayeeBank || payout.bank_name) && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', gap: 10 }}>
+            <span style={{ color: 'var(--muted)', fontSize: 12, minWidth: 78 }}>Payee bank</span>
+            <span style={{ fontSize: 11.5, textAlign: 'right', color: 'var(--text)' }}>
+              {capturedPayeeBank || <span style={{ color: 'var(--muted)' }}>not on screen</span>}
+              {payout.bank_name ? <span style={{ color: 'var(--muted)' }}> · order: {payout.bank_name}</span> : null}
+            </span>
+          </div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}>
           <span style={{ color: 'var(--muted)', fontSize: 12, minWidth: 78 }}>Timing</span>
           <span style={{ color: timingOk == null ? 'var(--muted)' : timingOk ? '#22c55e' : '#ef4444', fontSize: 11.5, fontWeight: 600 }}>

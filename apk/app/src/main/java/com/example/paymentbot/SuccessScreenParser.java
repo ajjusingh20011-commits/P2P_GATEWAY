@@ -41,15 +41,22 @@ public final class SuccessScreenParser {
     // Time-of-day, optionally with a preceding date the app shows ("20 Aug 2026, 3:45 PM").
     private static final Pattern TIME = Pattern.compile(
             "(?i)((?:\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{2,4}[, ]+)?\\d{1,2}:\\d{2}(?::\\d{2})?\\s*(?:[ap]\\.?m\\.?)?)");
-    // Sender/paying bank — either "from/via/using <X> Bank", or a known bank name.
+    // TRADER's own paying bank — the "Debited from / from / via <X> Bank" side.
+    // Anchored to a debit/source trigger ONLY: a bare bank name elsewhere on the
+    // screen (e.g. the RECIPIENT's bank under "Paid to") must NOT be read as the
+    // trader's paying bank. The debit side is a supplementary signal (the debit
+    // SMS is the real trader-side evidence), so an unanchored guess is worse than
+    // an empty field.
     private static final Pattern FROM_BANK = Pattern.compile(
-            "(?i)(?:from|via|using|debited from|paid using)\\s+([A-Za-z][A-Za-z .&]{2,30}?\\bbank\\b)");
-    private static final String[] KNOWN_BANKS = {
-            "HDFC", "State Bank of India", "SBI", "ICICI", "Axis", "Kotak", "Punjab National",
-            "PNB", "Bank of Baroda", "Canara", "Union Bank", "IndusInd", "IDFC", "Yes Bank",
-            "RBL", "Federal", "IDBI", "Bandhan", "AU Small Finance", "Paytm Payments",
-            "Airtel Payments", "Central Bank", "UCO", "Indian Overseas",
-    };
+            "(?i)(?:debited from|paid using|from|via|using)\\s+([A-Za-z][A-Za-z .&]{2,30}?\\bbank\\b)");
+    // RECIPIENT's bank — a "<X> Bank" phrase in the "Paid to / Sent to" clause
+    // (e.g. "Paid to Apu Bala XXXX8906 Jio Payments Bank"). Kept SEPARATE from
+    // the trader's paying bank above. The [A-Za-z .&] class can't cross the
+    // account digits, so it locks onto the bank words, not the masked number;
+    // `.` doesn't cross newlines, so a bank on a later "Debited from" line is not
+    // captured here. Best-effort / display-only — never a match-gate input.
+    private static final Pattern TO_BANK = Pattern.compile(
+            "(?i)(?:paid to|sent to|transferred to)\\b.*?\\b([A-Za-z][A-Za-z .&]{1,28}?\\bbank\\b)");
 
     private static String first(Pattern p, String text) {
         Matcher m = p.matcher(text == null ? "" : text);
@@ -80,12 +87,14 @@ public final class SuccessScreenParser {
 
     static String senderBank(String text) {
         String m = first(FROM_BANK, text);
-        if (!m.isEmpty()) return m.replaceAll("\\s+", " ").trim();
-        String lower = (text == null ? "" : text).toLowerCase();
-        for (String b : KNOWN_BANKS) {
-            if (lower.contains(b.toLowerCase())) return b;
-        }
-        return "";
+        return m.isEmpty() ? "" : m.replaceAll("\\s+", " ").trim();
+    }
+
+    /** The RECIPIENT's bank, from the "Paid to" clause — distinct from the
+     *  trader's paying bank ({@link #senderBank}). "" when none is shown. */
+    static String recipientBank(String text) {
+        String m = first(TO_BANK, text);
+        return m.isEmpty() ? "" : m.replaceAll("\\s+", " ").trim();
     }
 
     static java.util.List<String> last4List(String text) {
@@ -109,6 +118,7 @@ public final class SuccessScreenParser {
             o.put("amount", amount(t));
             o.put("transactionTime", transactionTime(t));    // as shown on the screen, if any
             o.put("senderBank", senderBank(t));              // the trader's own paying bank
+            o.put("recipientBank", recipientBank(t));        // the payee's bank (assist admin review)
             java.util.List<String> last4 = last4List(t);
             o.put("last4", new JSONArray(last4));            // whichever side(s) are shown
             String recipient = recipientName(t);
