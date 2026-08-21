@@ -410,6 +410,9 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onSendForReview,
   const [receipt, setReceipt] = useState('');
   const [done, setDone] = useState(false);
   const [evidence, setEvidence] = useState(null);
+  // The actual captured screenshot (heavy) — fetched once when one exists, so the
+  // trader can SEE what was captured, not just trust a button state.
+  const [shot, setShot] = useState(null);
   // BUG 4 — cancel sub-flow: reason (required) + note + optional proof.
   const [cancelling, setCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
@@ -440,6 +443,24 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onSendForReview,
     const t = setInterval(load, 5000);
     return () => { active = false; clearInterval(t); };
   }, [req?.uuid, req?.id]);
+
+  // Once a screenshot exists, pull it in full ONCE (it's heavy — don't re-fetch
+  // it on every 5s poll) so the trader sees the real captured image. Scoped to
+  // their own payout server-side, so it only ever returns their own capture.
+  useEffect(() => {
+    if (!req || !evidence?.hasScreenshot || shot) return undefined;
+    let active = true;
+    getPayoutEvidence([req.uuid, req.id], { full: true })
+      .then((e) => {
+        if (!active || !e?.screenshotBase64) return;
+        const src = String(e.screenshotBase64).startsWith('data:')
+          ? e.screenshotBase64
+          : `data:image/jpeg;base64,${e.screenshotBase64}`;
+        setShot(src);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [req?.uuid, req?.id, evidence?.hasScreenshot, shot]);
 
   // Feature 2 — the active match gate. For BANK-account payouts, the fields the
   // APK captured from the success screen (evidence.extractedFields) must
@@ -525,6 +546,30 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onSendForReview,
           <EvidenceItem ok={!!evidence?.hasRecord} label="Recorded input" />
           <EvidenceItem ok={!!evidence?.hasScreenshot} label="Payment screenshot" />
           <EvidenceItem ok={!!evidence?.hasSms} label="Bank debit SMS" />
+
+          {/* The actual captured screen — visual proof of what will be submitted,
+              so the trader can confirm the right screen was captured. */}
+          {shot && (
+            <div style={{ marginTop: 10 }}>
+              <a href={shot} target="_blank" rel="noreferrer">
+                <img
+                  src={shot}
+                  alt="Captured payment screen"
+                  style={{ maxWidth: '100%', maxHeight: 260, borderRadius: 10, border: '1px solid var(--cardborder)', display: 'block' }}
+                />
+              </a>
+              {(evidence?.extractedFields?.amount || evidence?.extractedFields?.recipientBank) && (
+                <p style={{ color: 'var(--muted)', fontSize: 11, margin: '6px 0 0', lineHeight: 1.5 }}>
+                  Captured: {evidence.extractedFields.amount ? `₹${evidence.extractedFields.amount}` : ''}
+                  {evidence.extractedFields.recipientBank ? ` · ${evidence.extractedFields.recipientBank}` : ''}
+                </p>
+              )}
+            </div>
+          )}
+          {!shot && evidence?.hasScreenshot && (
+            <p style={{ color: 'var(--muted)', fontSize: 11, margin: '8px 0 0' }}>Loading captured screenshot…</p>
+          )}
+
           {evidence && evidence.uploadCount === 0 && (
             <p style={{ color: 'var(--muted)', fontSize: 11, margin: '8px 0 0', lineHeight: 1.5 }}>
               Nothing captured yet — use Record and Screenshot in the overlay on your phone while you pay.

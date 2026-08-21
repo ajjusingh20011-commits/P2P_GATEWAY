@@ -102,10 +102,14 @@ export async function getTransactions(page = 1, limit = 50) {
 // Payout evidence capture status for a payout — the record/screenshot/SMS flags
 // the Buy USDT ProcessModal checklist shows. Pass both the payout uuid and id
 // (the device may have captured under either — robust match, see the ngo route).
-// Flags only here; the heavy screenshot/SMS payloads are admin-only (full=1).
-export async function getPayoutEvidence(orderIds) {
+// `full` pulls the heavy screenshot payload too, so the trader can SEE what was
+// captured on their own payout. It stays safe: the ngo route scopes evidence to
+// the requesting trader (resolveTraderFilter), so this only ever returns their
+// own capture — never another trader's.
+export async function getPayoutEvidence(orderIds, { full = false } = {}) {
   const orderId = (Array.isArray(orderIds) ? orderIds : [orderIds]).filter(Boolean).join(',');
-  const res = await unwrap(api.get(`${PROXY}/ngo/payout-evidence?orderId=${encodeURIComponent(orderId)}`));
+  const q = `orderId=${encodeURIComponent(orderId)}${full ? '&full=1' : ''}`;
+  const res = await unwrap(api.get(`${PROXY}/ngo/payout-evidence?${q}`));
   return res.evidence;
 }
 

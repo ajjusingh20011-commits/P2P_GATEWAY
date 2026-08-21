@@ -429,22 +429,32 @@ async function matchCapturedEvidence(traderId, extractedFields) {
     return { matched: false, reason: 'no_capture', message: 'No payment details could be read from the screen — re-capture.' };
   }
 
-  // GLOBAL single-use lock — only on a well-formed UTR / txn id (a mis-parsed
-  // short token must never burn a real receipt). Pre-check for a clean message;
-  // the unique index is the real guard against a race, handled on create below.
   const key = receiptKey(extracted);
-  if (key) {
-    const existing = await db.PayoutReceipt.findOne({ where: { receipt_id: key } });
-    if (existing) {
-      return { matched: false, reason: 'receipt_reused', message: 'Invalid Receipt — this payment was already used for a payout.' };
-    }
-  }
-
   const orders = await db.PayoutRequest.findAll({
     where: { assigned_trader_id: traderId, status: 'in_processing' },
     order: [['accepted_at', 'ASC']],
   });
   const matches = resolvePayoutMatches(orders, extracted);
+
+  // GLOBAL single-use lock — only on a well-formed UTR / txn id (a mis-parsed
+  // short token must never burn a real receipt). CRITICAL: a good-faith RETRY of
+  // the same receipt for the SAME still-active payout must succeed cleanly (the
+  // trader wasn't sure the first tap worked); only reuse for a DIFFERENT payout
+  // is the fraud case this lock blocks.
+  if (key) {
+    const existing = await db.PayoutReceipt.findOne({ where: { receipt_id: key } });
+    if (existing) {
+      const sameStillActive = matches.find((m) => m.uuid === existing.order_uuid);
+      if (sameStillActive) {
+        return {
+          matched: true, ambiguous: false, orderId: sameStillActive.uuid, orderUuids: [sameStillActive.uuid],
+          message: 'Already captured for this payout — you can submit it.',
+        };
+      }
+      return { matched: false, reason: 'receipt_reused', message: 'Invalid Receipt — this payment was already used for a payout.' };
+    }
+  }
+
   if (matches.length === 0) {
     return { matched: false, reason: 'no_match', message: 'Invalid Receipt — no active payout matches this payment.' };
   }
@@ -453,7 +463,9 @@ async function matchCapturedEvidence(traderId, extractedFields) {
   const primary = matches[0];
 
   // "Used" = matched. Consume the receipt now so it can never be reused for any
-  // payout. The unique index also closes a concurrent double-submit race.
+  // OTHER payout. The unique index closes a concurrent double-submit race — and
+  // if that race was two retries for the SAME payout, the loser resolves it as a
+  // clean retry success, never a false rejection.
   if (key) {
     try {
       await db.PayoutReceipt.create({
@@ -461,10 +473,15 @@ async function matchCapturedEvidence(traderId, extractedFields) {
       });
     } catch (e) {
       const dup = e && (e.name === 'SequelizeUniqueConstraintError' || (e.original && e.original.code === 'ER_DUP_ENTRY'));
-      if (dup) {
-        return { matched: false, reason: 'receipt_reused', message: 'Invalid Receipt — this payment was already used for a payout.' };
+      if (!dup) throw e;
+      const existing = await db.PayoutReceipt.findOne({ where: { receipt_id: key } });
+      if (existing && matches.find((m) => m.uuid === existing.order_uuid)) {
+        return {
+          matched: true, ambiguous, orderId: existing.order_uuid, orderUuids: matches.map((m) => m.uuid),
+          message: 'Already captured for this payout — you can submit it.',
+        };
       }
-      throw e;
+      return { matched: false, reason: 'receipt_reused', message: 'Invalid Receipt — this payment was already used for a payout.' };
     }
   }
 
