@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const axios = require('axios');
 const express = require('express');
 const Device = require('../models/Device');
 const DebitSMS = require('../models/DebitSMS');
@@ -12,6 +13,7 @@ const { attemptSubmissionLock, clearOtherDevices } = require('../services/payout
 const scraperEngine = require('../services/scraperEngine');
 const matchingEngine = require('../services/matchingEngine');
 const { detectRealPayment } = require('../services/paymentDetector');
+const { internalAuthHeaders } = require('../middleware/internalAuth');
 const { DEVICE_STATUS, RAW_EVENT_TYPE, CATEGORY, TRANSACTION_STATUS, ROLES } = require('../config/constants');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { verifyServiceOrAdmin, resolveTraderFilter, requireTraderId } = require('../middleware/serviceAuth');
