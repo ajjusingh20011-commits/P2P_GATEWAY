@@ -29,6 +29,23 @@ public class PayoutStateTest {
     }
 
     @Test
+    public void gpayRealCompletedScreenMatches() {
+        // Real, complete GPay success screen (team device evidence 2026-08-21).
+        // GPay's success INDICATOR is the literal word "Completed" — NOT
+        // "transfer/transaction successful" — so it is not in GENERAL_SUCCESS_KEYWORDS
+        // and must be covered by the GPay per-app seed. Guards that seed against
+        // regression (same discipline as the PhonePe "Transaction Successful" fix).
+        String real = "₹10 Completed 21 Aug 2026, 8:52 pm "
+                + "To Apu Bala UPI transaction ID 919634090229 "
+                + "From XXXXXX1551 Google Pay";
+        assertTrue(PayoutOverlayService.matchesSuccessKeyword(
+                "com.google.android.apps.nbu.paisa.user", real));
+        // Merchant package too (both seeds carry "completed").
+        assertTrue(PayoutOverlayService.matchesSuccessKeyword(
+                "com.google.android.apps.nbu.paisa.merchant", real));
+    }
+
+    @Test
     public void phonePeSuccessKeywordMatches() {
         assertTrue(PayoutOverlayService.matchesSuccessKeyword("com.phonepe.app", "Transfer Successful"));
     }
