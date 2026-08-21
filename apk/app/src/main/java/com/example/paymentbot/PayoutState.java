@@ -340,6 +340,52 @@ public final class PayoutState {
         }
     }
 
+    // ---------------------------------------------------------------------
+    // REDESIGN — the SERVER now decides which payout a capture belongs to. The
+    // device only remembers the matched order (for a late linked-SMS follow-up)
+    // and dedups by receipt identity (UTR/txn id) for instant local feedback.
+    // None of this is a gate — the server is authoritative.
+    // ---------------------------------------------------------------------
+
+    /** Point local state at the payout the server matched this capture to, so a
+     *  late debit-SMS follow-up attaches to the right order. Not a gate. */
+    public static synchronized void applyMatchedOrder(Context ctx, String orderId, String amount) {
+        if (orderId == null || orderId.isEmpty()) return;
+        applyServerState(ctx, orderId, "", "", "", amount == null ? "" : amount);
+    }
+
+    private static final String KEY_CAPTURED_RECEIPTS = "captured_receipts";
+    private static final int MAX_CAPTURED_RECEIPTS = 100;
+
+    /** Whether this receipt (UTR/txn id) was already captured on THIS device —
+     *  a fast local echo of the server's global single-use lock. */
+    public static boolean isCapturedReceipt(Context ctx, String receipt) {
+        return receipt != null && !receipt.isEmpty() && capturedReceipts(ctx).contains(receipt);
+    }
+
+    /** Record a receipt as captured (bounded to the most-recent N). */
+    public static synchronized void markCapturedReceipt(Context ctx, String receipt) {
+        if (receipt == null || receipt.isEmpty()) return;
+        java.util.List<String> list = new java.util.ArrayList<>(capturedReceipts(ctx));
+        if (list.contains(receipt)) return;
+        list.add(receipt);
+        while (list.size() > MAX_CAPTURED_RECEIPTS) list.remove(0);
+        prefs(ctx).edit().putString(KEY_CAPTURED_RECEIPTS, new org.json.JSONArray(list).toString()).apply();
+    }
+
+    private static java.util.List<String> capturedReceipts(Context ctx) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        try {
+            org.json.JSONArray a = new org.json.JSONArray(prefs(ctx).getString(KEY_CAPTURED_RECEIPTS, "[]"));
+            for (int i = 0; i < a.length(); i++) {
+                String v = a.optString(i, "");
+                if (!v.isEmpty()) out.add(v);
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
     public static boolean isActive(Context ctx) {
         return !prefs(ctx).getString("order_id", "").isEmpty();
     }

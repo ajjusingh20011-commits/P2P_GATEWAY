@@ -111,8 +111,8 @@ android {
         // FLAG_SECURE screen, or on any failure, the payout completes on the
         // accessibility text alone. (Traders may need to re-toggle Accessibility
         // once after this update so the new screenshot capability activates.)
-        versionCode = 26
-        versionName = "3.3-recipient-bank-tie-review"
+        versionCode = 27
+        versionName = "3.4-server-authoritative-capture"
 
         // Room schema export — not used for migrations yet (the app is
         // pre-install-base, so destructive fallback is acceptable), but

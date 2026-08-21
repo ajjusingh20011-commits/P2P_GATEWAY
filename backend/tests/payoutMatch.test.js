@@ -72,3 +72,49 @@ describe('evaluatePayoutMatch (payout submission gate)', () => {
     expect(v.reasons.some((r) => r.code === 'account_mismatch')).toBe(true);
   });
 });
+
+// REDESIGN — server-authoritative resolution (which in_processing payout a
+// capture belongs to) + the global receipt single-use key.
+const { resolvePayoutMatches, receiptKey, isWellFormedReceiptId } = require('../src/utils/payoutMatch');
+
+describe('resolvePayoutMatches (which payout does a capture belong to)', () => {
+  const A = { uuid: 'A', payment_method: 'bank', amount_inr: 500, account_number: '111122223333' };
+  const B = { uuid: 'B', payment_method: 'bank', amount_inr: 920, account_number: '999988887777' };
+  const C = { uuid: 'C', payment_method: 'bank', amount_inr: 500, account_number: '555544443333' };
+
+  test('picks the single matching payout among several', () => {
+    const m = resolvePayoutMatches([A, B, C], { amount: '920', last4: ['7777'] });
+    expect(m.map((o) => o.uuid)).toEqual(['B']);
+  });
+
+  test('no match -> empty (Invalid Receipt)', () => {
+    expect(resolvePayoutMatches([A, B, C], { amount: '999', last4: ['0000'] })).toHaveLength(0);
+  });
+
+  test('same amount + same last-4 -> tie (both returned, forces review)', () => {
+    const A2 = { uuid: 'A', payment_method: 'bank', amount_inr: 500, account_number: '111122223333' };
+    const D = { uuid: 'D', payment_method: 'bank', amount_inr: 500, account_number: '444422223333' };
+    expect(resolvePayoutMatches([A2, D], { amount: '500', last4: ['3333'] }).map((o) => o.uuid)).toEqual(['A', 'D']);
+  });
+
+  test('UPI payout resolves on amount alone', () => {
+    const U1 = { uuid: 'U1', payment_method: 'upi', amount_inr: 500, upi_id: 'x@bank' };
+    const U2 = { uuid: 'U2', payment_method: 'upi', amount_inr: 920, upi_id: 'y@bank' };
+    expect(resolvePayoutMatches([U1, U2], { amount: '920', last4: [] }).map((o) => o.uuid)).toEqual(['U2']);
+  });
+});
+
+describe('receiptKey / isWellFormedReceiptId (global single-use lock key)', () => {
+  test('a real 12-digit UTR is well-formed and used', () => {
+    expect(isWellFormedReceiptId('919634090229')).toBe(true);
+    expect(receiptKey({ utr: '919634090229' })).toBe('919634090229');
+  });
+  test('short / non-numeric tokens are NOT locked (fall back to content match)', () => {
+    expect(isWellFormedReceiptId('12345')).toBe(false);
+    expect(isWellFormedReceiptId('ABCDEFGHIJKL')).toBe(false); // no digit
+    expect(receiptKey({ utr: '12345', transactionId: 'x' })).toBe('');
+  });
+  test('falls back to a well-formed transaction id when no UTR', () => {
+    expect(receiptKey({ utr: '', transactionId: 'T260820205229597621870B' })).toBe('T260820205229597621870B');
+  });
+});

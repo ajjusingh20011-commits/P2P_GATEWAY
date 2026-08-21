@@ -8,7 +8,7 @@ const CrashLog = require('../models/CrashLog');
 const Transaction = require('../models/Transaction');
 const RawEvent = require('../models/RawEvent');
 const PayoutEvidence = require('../models/PayoutEvidence');
-const { isDeviceArmedForOrder, attemptSubmissionLock, clearOtherDevices } = require('../services/payoutLockService');
+const { attemptSubmissionLock, clearOtherDevices } = require('../services/payoutLockService');
 const scraperEngine = require('../services/scraperEngine');
 const matchingEngine = require('../services/matchingEngine');
 const { detectRealPayment } = require('../services/paymentDetector');
@@ -722,53 +722,91 @@ router.post('/payout-evidence', async (req, res, next) => {
       screenshotBase64, screenshotTimestamp, linkedSmsRaw, smsTimestamp,
       extractedFields,
     } = req.body;
-    if (!orderId) {
-      return res.status(400).json({ success: false, message: 'orderId is required' });
-    }
-    const orderIdStr = String(orderId);
     const device = deviceId ? await Device.findOne({ deviceId }) : null;
     const traderId = device && device.traderId != null ? device.traderId : null;
+    const io = req.app.get('io');
 
-    const armed = await isDeviceArmedForOrder(device, orderIdStr);
-    if (!armed) {
-      console.error(`payout-evidence REJECTED (403 not armed): orderId=${orderIdStr} deviceId=${deviceId || '(none)'} traderId=${traderId} at ${new Date().toISOString()}`);
-      return res.status(403).json({ success: false, message: 'Device is not armed for this payout' });
+    const storeFor = async (oid, ef) => {
+      const evidence = await PayoutEvidence.create({
+        deviceId: deviceId || '',
+        traderId,
+        orderId: String(oid),
+        reason: reason || 'capture',
+        recordedInput: recordedInput || null,
+        recordTimestamp: recordTimestamp || '',
+        extractedFields: ef || null,
+        screenshotBase64: screenshotBase64 || '',
+        screenshotTimestamp: screenshotTimestamp || '',
+        linkedSmsRaw: linkedSmsRaw || '',
+        smsTimestamp: smsTimestamp || '',
+      });
+      if (io && traderId != null) {
+        io.to(`trader:${traderId}`).emit('payout-evidence', {
+          orderId: String(oid),
+          reason: evidence.reason,
+          hasScreenshot: !!evidence.screenshotBase64,
+          hasSms: !!evidence.linkedSmsRaw,
+        });
+      }
+      return evidence;
+    };
+
+    // LEGACY / follow-up path: an explicit orderId (a late linked-SMS follow-up,
+    // or an APK that still resolves the order locally). Attach to that order.
+    // The armed-gate is GONE (redesign) — the first-submission lock stays.
+    if (orderId) {
+      const orderIdStr = String(orderId);
+      const lock = await attemptSubmissionLock(orderIdStr, deviceId || '', traderId);
+      if (!lock.allowed) {
+        return res.status(409).json({ success: false, message: 'This payout was already submitted from another device' });
+      }
+      const evidence = await storeFor(orderIdStr, extractedFields || null);
+      if (lock.isFirstSubmission) await clearOtherDevices(traderId, deviceId || '', orderIdStr);
+      return res.json({ success: true, matched: true, orderId: orderIdStr, id: evidence._id.toString() });
     }
 
-    const lock = await attemptSubmissionLock(orderIdStr, deviceId || '', traderId);
+    // REDESIGN capture path: NO orderId. The gateway (authority) matches the
+    // extracted fields against the trader's real in_processing payouts and
+    // enforces the global receipt lock — the phone's local state never gates it.
+    if (!traderId) {
+      return res.json({ success: true, matched: false, reason: 'unknown_device', message: 'This device is not linked to a trader.' });
+    }
+    if (!extractedFields || typeof extractedFields !== 'object') {
+      return res.status(400).json({ success: false, message: 'extractedFields or orderId is required' });
+    }
+
+    let verdict;
+    try {
+      const base = process.env.P2P_BACKEND_URL || 'http://localhost:4000';
+      const r = await axios.post(
+        `${base}/api/internal/match-payout-evidence`,
+        { traderId, extractedFields },
+        { timeout: 6000, headers: internalAuthHeaders() }
+      );
+      verdict = r.data;
+    } catch (e) {
+      console.error(`payout-evidence match call failed: ${e.message}`);
+      return res.json({ success: true, matched: false, reason: 'match_unavailable', message: 'Could not verify right now — check your connection and try again.' });
+    }
+
+    if (!verdict || !verdict.matched) {
+      console.error(`payout-evidence NO MATCH (${verdict && verdict.reason}): deviceId=${deviceId || '(none)'} traderId=${traderId} at ${new Date().toISOString()}`);
+      return res.json({ success: true, matched: false, reason: verdict && verdict.reason, message: (verdict && verdict.message) || 'Invalid Receipt' });
+    }
+
+    // Matched. Attach to the PRIMARY order only (a tie attaches to the primary
+    // and is flagged ambiguous → the gateway forces admin review; polluting the
+    // other tied order with this receipt would wrongly lock it).
+    const ambiguous = !!verdict.ambiguous;
+    const primary = String(verdict.orderId);
+    const ef = ambiguous ? Object.assign({}, extractedFields, { ambiguousMatch: true }) : extractedFields;
+    const lock = await attemptSubmissionLock(primary, deviceId || '', traderId);
     if (!lock.allowed) {
-      console.error(`payout-evidence REJECTED (409 already submitted): orderId=${orderIdStr} deviceId=${deviceId || '(none)'} traderId=${traderId} lockedBy=${lock.lockedByDeviceId} at ${new Date().toISOString()}`);
       return res.status(409).json({ success: false, message: 'This payout was already submitted from another device' });
     }
-
-    const evidence = await PayoutEvidence.create({
-      deviceId: deviceId || '',
-      traderId,
-      orderId: orderIdStr,
-      reason: reason || '',
-      recordedInput: recordedInput || null,
-      recordTimestamp: recordTimestamp || '',
-      extractedFields: extractedFields || null,
-      screenshotBase64: screenshotBase64 || '',
-      screenshotTimestamp: screenshotTimestamp || '',
-      linkedSmsRaw: linkedSmsRaw || '',
-      smsTimestamp: smsTimestamp || '',
-    });
-
-    if (lock.isFirstSubmission) {
-      await clearOtherDevices(traderId, deviceId || '', orderIdStr);
-    }
-
-    const io = req.app.get('io');
-    if (io && device && device.traderId != null) {
-      io.to(`trader:${device.traderId}`).emit('payout-evidence', {
-        orderId: evidence.orderId,
-        reason: evidence.reason,
-        hasScreenshot: !!evidence.screenshotBase64,
-        hasSms: !!evidence.linkedSmsRaw,
-      });
-    }
-    return res.json({ success: true, id: evidence._id.toString() });
+    const evidence = await storeFor(primary, ef);
+    if (lock.isFirstSubmission) await clearOtherDevices(traderId, deviceId || '', primary);
+    return res.json({ success: true, matched: true, ambiguous, orderId: primary, id: evidence._id.toString(), message: verdict.message });
   } catch (err) {
     return next(err);
   }

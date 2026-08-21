@@ -15,6 +15,7 @@ const { Router } = require('express');
 const db = require('../models');
 const { asyncHandler } = require('../utils/http');
 const matchingEngineV2 = require('../services/matchingEngineV2');
+const payoutService = require('../services/payoutService');
 const { verifyInternalService } = require('../middleware/internalAuth');
 
 const router = Router();
@@ -112,6 +113,22 @@ router.post('/order-upis', asyncHandler(async (req, res) => {
     if (o.uuid) uuids[o.id] = o.uuid;
   });
   return res.json({ success: true, upis, uuids });
+}));
+
+// POST /api/internal/match-payout-evidence — REDESIGN: the device captures a
+// success screen and (via ngo) sends the raw extracted fields here. The gateway
+// is the authority: it matches them against this trader's REAL in_processing
+// payouts and enforces the global receipt (UTR) single-use lock, so the phone's
+// local state can never gate or mis-route a capture. See payoutService.
+// Body: { traderId, extractedFields }
+//   ->  { matched:false, reason, message } | { matched:true, ambiguous, orderId, orderUuids, message }
+router.post('/match-payout-evidence', asyncHandler(async (req, res) => {
+  const { traderId, extractedFields } = req.body || {};
+  if (traderId == null || !Number.isFinite(Number(traderId))) {
+    return res.status(400).json({ success: false, message: 'traderId is required' });
+  }
+  const result = await payoutService.matchCapturedEvidence(Number(traderId), extractedFields);
+  return res.json({ success: true, ...result });
 }));
 
 module.exports = router;

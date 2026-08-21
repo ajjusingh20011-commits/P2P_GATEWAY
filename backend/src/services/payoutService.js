@@ -41,7 +41,7 @@ const {
 } = require('../websocket');
 const axios = require('axios');
 const { internalAuthHeaders } = require('./ngoServiceAuth');
-const { evaluatePayoutMatch } = require('../utils/payoutMatch');
+const { evaluatePayoutMatch, resolvePayoutMatches, receiptKey } = require('../utils/payoutMatch');
 
 // ngo-backend holds the devices; the P2P backend arms them for capture on
 // pickup and clears them when a payout leaves processing.
@@ -411,6 +411,73 @@ async function fetchCapturedFields(row) {
     headers: internalAuthHeaders(),
   });
   return (resp.data && resp.data.extractedFields) || null;
+}
+
+/**
+ * REDESIGN — server-authoritative capture matching. The device no longer decides
+ * which payout a capture belongs to (its local mirror could be stale). It sends
+ * the raw extracted fields; the gateway (the authority) matches them against this
+ * trader's REAL in_processing payouts and enforces the global receipt lock.
+ *
+ * Returns:
+ *   { matched:false, reason, message }                    — Invalid Receipt
+ *   { matched:true, ambiguous, orderId, orderUuids, msg } — attach + enable
+ */
+async function matchCapturedEvidence(traderId, extractedFields) {
+  const extracted = extractedFields && typeof extractedFields === 'object' ? extractedFields : null;
+  if (!extracted) {
+    return { matched: false, reason: 'no_capture', message: 'No payment details could be read from the screen — re-capture.' };
+  }
+
+  // GLOBAL single-use lock — only on a well-formed UTR / txn id (a mis-parsed
+  // short token must never burn a real receipt). Pre-check for a clean message;
+  // the unique index is the real guard against a race, handled on create below.
+  const key = receiptKey(extracted);
+  if (key) {
+    const existing = await db.PayoutReceipt.findOne({ where: { receipt_id: key } });
+    if (existing) {
+      return { matched: false, reason: 'receipt_reused', message: 'Invalid Receipt — this payment was already used for a payout.' };
+    }
+  }
+
+  const orders = await db.PayoutRequest.findAll({
+    where: { assigned_trader_id: traderId, status: 'in_processing' },
+    order: [['accepted_at', 'ASC']],
+  });
+  const matches = resolvePayoutMatches(orders, extracted);
+  if (matches.length === 0) {
+    return { matched: false, reason: 'no_match', message: 'Invalid Receipt — no active payout matches this payment.' };
+  }
+
+  const ambiguous = matches.length > 1;
+  const primary = matches[0];
+
+  // "Used" = matched. Consume the receipt now so it can never be reused for any
+  // payout. The unique index also closes a concurrent double-submit race.
+  if (key) {
+    try {
+      await db.PayoutReceipt.create({
+        receipt_id: key, trader_id: traderId, order_uuid: primary.uuid, amount_inr: primary.amount_inr,
+      });
+    } catch (e) {
+      const dup = e && (e.name === 'SequelizeUniqueConstraintError' || (e.original && e.original.code === 'ER_DUP_ENTRY'));
+      if (dup) {
+        return { matched: false, reason: 'receipt_reused', message: 'Invalid Receipt — this payment was already used for a payout.' };
+      }
+      throw e;
+    }
+  }
+
+  logger.info(`payout: capture from trader ${traderId} matched ${matches.length} payout(s)${ambiguous ? ' (AMBIGUOUS → review)' : ''}: ${matches.map((m) => m.uuid).join(',')}`);
+  return {
+    matched: true,
+    ambiguous,
+    orderId: primary.uuid,
+    orderUuids: matches.map((m) => m.uuid),
+    message: ambiguous
+      ? 'Captured — this matched more than one payout, sent for review.'
+      : 'Receipt matched — you can now submit this payout.',
+  };
 }
 
 /** in_processing → awaiting_settlement (trader confirms they sent the money). */
@@ -912,6 +979,7 @@ module.exports = {
   listForTrader,
   traderCounts,
   reconcileTraderDeviceArming,
+  matchCapturedEvidence,
   getForTrader,
   accept,
   transferred,

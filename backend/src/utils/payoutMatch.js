@@ -109,4 +109,64 @@ function evaluatePayoutMatch(order, extracted) {
   return { applicable: true, hardMatch: amountMatch && last4Match, reasons, expected, captured };
 }
 
-module.exports = { evaluatePayoutMatch, _internals: { last4, amountsEqual, digitsOnly } };
+/* -------------------------------------------------------------------------- */
+/* Server-authoritative resolution — which of a trader's in_processing payouts  */
+/* a capture belongs to (the redesign: the device no longer decides).           */
+/* -------------------------------------------------------------------------- */
+
+/** The last-4s a capture exposes (account side + recipient fallback). */
+function capturedLast4List(extracted) {
+  const list = Array.isArray(extracted && extracted.last4) ? extracted.last4.map(last4).filter(Boolean) : [];
+  const rl = last4(extracted && extracted.recipientLast4);
+  if (rl && !list.includes(rl)) list.push(rl);
+  return list;
+}
+
+/**
+ * Does this captured screen match this order? Mirrors the device resolver and
+ * the hard gate: a BANK payout needs amount AND account last-4; a UPI payout
+ * (no account number) resolves on amount alone.
+ */
+function orderMatchesCapture(order, extracted) {
+  if (!order || !extracted) return false;
+  const method = String(order.payment_method || '').toLowerCase();
+  const acctLast4 = last4(order.account_number || '');
+  const amountOk = amountsEqual(extracted.amount, order.amount_inr);
+  if (method === 'bank' && acctLast4) {
+    return amountOk && capturedLast4List(extracted).includes(acctLast4);
+  }
+  return amountOk; // UPI / bank-without-account: amount-only
+}
+
+/** Every in_processing order this capture matches. length 1 = unambiguous,
+ *  >1 = a genuine tie (forced to admin review), 0 = Invalid Receipt. */
+function resolvePayoutMatches(orders, extracted) {
+  return (orders || []).filter((o) => orderMatchesCapture(o, extracted));
+}
+
+// A real UTR / bank reference: alphanumeric, ≥12 chars, with at least one digit.
+// The GLOBAL single-use lock only keys off a value this strict, so a mis-parsed
+// short token can never wrongly burn a real receipt (we fall back to content
+// matching when no well-formed receipt id is present).
+function isWellFormedReceiptId(s) {
+  const v = String(s == null ? '' : s).trim();
+  return /^[A-Za-z0-9]{12,}$/.test(v) && /[0-9]/.test(v);
+}
+
+/** The receipt identity to lock globally: the UTR if well-formed, else a
+ *  well-formed transaction id, else '' (no global lock — content match only). */
+function receiptKey(extracted) {
+  if (!extracted) return '';
+  if (isWellFormedReceiptId(extracted.utr)) return String(extracted.utr).trim();
+  if (isWellFormedReceiptId(extracted.transactionId)) return String(extracted.transactionId).trim();
+  return '';
+}
+
+module.exports = {
+  evaluatePayoutMatch,
+  resolvePayoutMatches,
+  orderMatchesCapture,
+  receiptKey,
+  isWellFormedReceiptId,
+  _internals: { last4, amountsEqual, digitsOnly, capturedLast4List },
+};

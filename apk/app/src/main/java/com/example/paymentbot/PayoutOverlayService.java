@@ -128,10 +128,12 @@ public class PayoutOverlayService extends Service {
     // Issue 1 — one real payment = one capture. Issue 2 — content couldn't say
     // which of several armed payouts this screen belongs to.
     private static final String MSG_ALREADY_CAPTURED = "Already captured — this payout is done";
-    private static final String MSG_CANT_RESOLVE = "Can't tell which payout — open it in the app first";
-    // A tie (this screen matches >1 armed payout) is captured but sent for admin
-    // review rather than settled to a guess.
+    // A tie (this screen matches >1 payout) is captured but sent for admin review.
     private static final String MSG_CAPTURED_REVIEW = "Captured — sent for review";
+    // REDESIGN — the server rejected the capture (no matching in-process payout,
+    // or the receipt was already used), or it couldn't be reached.
+    private static final String MSG_INVALID_RECEIPT = "Invalid Receipt";
+    private static final String MSG_SUBMIT_FAILED = "Couldn't reach server — check connection & retry";
 
     // Per-app success wording seeds (a fast path). The REAL guard is
     // matchesSuccessKeyword's GENERAL_SUCCESS fallback below (any recognized
@@ -561,13 +563,10 @@ public class PayoutOverlayService extends Service {
             showFeedback(MSG_UNTRUSTED_APP, false);
             return;
         }
-        // At least one payout must be armed — the working slot OR a mirrored
-        // list entry (several active with no working slot is a valid state that
-        // Phase 2c resolves by content below).
-        if (!PayoutState.isActive(this) && PayoutState.activeCount(this) == 0) {
-            showFeedback(MSG_NO_PAYOUT, false);
-            return;
-        }
+        // REDESIGN — Capture is ALWAYS allowed on a trusted payout app's success
+        // screen. There is NO local "is a payout active" gate: the phone's mirror
+        // can be stale, so the SERVER (authoritative) decides whether this receipt
+        // matches any of the trader's real in_processing payouts.
         String text = reader.currentScreenText();
         if (!matchesSuccessKeyword(pkg, text)) {
             logSuccessKeywordMiss(pkg, text);
@@ -575,88 +574,61 @@ public class PayoutOverlayService extends Service {
             return; // discard entirely: no file, no partial save
         }
         // TAP-ONLY field extraction (anti-fraud). Read the CURRENT screen text
-        // once, right now, at the deliberate Capture tap — NEVER passively. The
-        // fields (time, sender bank, last-4s, recipient, txn id, UTR, amount) are
-        // saved alongside the screenshot and uploaded with the evidence bundle.
-        org.json.JSONObject fields;
+        // once, right now, at the deliberate Capture tap — NEVER passively.
+        final org.json.JSONObject fields;
+        org.json.JSONObject parsed;
         try {
-            fields = SuccessScreenParser.parse(pkg, text);
+            parsed = SuccessScreenParser.parse(pkg, text);
         } catch (Exception e) {
-            fields = new org.json.JSONObject();
+            parsed = new org.json.JSONObject();
         }
+        fields = parsed;
 
-        // Phase 2c — resolve WHICH armed payout this capture belongs to by its
-        // content (amount + recipient account last-4), so a trader running
-        // several payouts at once links the evidence to the RIGHT payout instead
-        // of whichever was the sticky working slot. This is the fix for genuine
-        // payments landing on the wrong payout ("details don't match").
-        java.util.List<String> capLast4 = new java.util.ArrayList<>();
-        org.json.JSONArray l4 = fields.optJSONArray("last4");
-        if (l4 != null) {
-            for (int i = 0; i < l4.length(); i++) {
-                String v = l4.optString(i, "");
-                if (!v.isEmpty()) capLast4.add(v);
-            }
-        }
-        String recipLast4 = fields.optString("recipientLast4", "");
-        if (!recipLast4.isEmpty() && !capLast4.contains(recipLast4)) capLast4.add(recipLast4);
-
-        org.json.JSONArray active = PayoutState.activePayouts(this);
-        String capAmount = fields.optString("amount", "");
-        String resolved = PayoutState.resolveOrderIdForCapture(active, capAmount, capLast4);
-        boolean ambiguous = PayoutState.isAmbiguousForCapture(active, capAmount, capLast4);
-        final String targetOrderId;
-        if (!resolved.isEmpty()) {
-            PayoutState.selectWorking(this, resolved); // re-point to the matched payout
-            targetOrderId = resolved;
-        } else if (PayoutState.isActive(this)) {
-            // Single/legacy case, or content couldn't disambiguate but there is a
-            // working slot — keep it; the server match gate is the real judge.
-            targetOrderId = PayoutState.orderId(this);
-        } else {
-            // Several armed, none uniquely matched, and no working slot to fall
-            // back to — refuse rather than link a real payment to a guessed payout.
-            showFeedback(MSG_CANT_RESOLVE, false);
-            return;
-        }
-
-        // Issue 1 — one real payment = one capture. Refuse a repeat for the SAME
-        // payout; show a clear "done" state instead of re-uploading.
-        if (PayoutState.isCaptured(this, targetOrderId)) {
+        // Fast local echo of the server's global single-use lock: refuse an
+        // obvious re-capture of the SAME receipt without a round-trip.
+        final String receipt = receiptOf(fields);
+        if (!receipt.isEmpty() && PayoutState.isCapturedReceipt(this, receipt)) {
             showFeedback(MSG_ALREADY_CAPTURED, true);
             return;
         }
 
-        // A genuine TIE (this screen matches >1 armed payout): capture it, but
-        // flag the evidence so the server forces admin review instead of letting
-        // it settle silently against the guessed working slot.
-        final boolean sendForReview = ambiguous;
-        if (sendForReview) {
-            try { fields.put("ambiguousMatch", true); } catch (Exception ignored) {}
-        }
-        PayoutState.saveExtractedFields(this, fields.toString());
-        // The screenshot is OPTIONAL and captured via the ACCESSIBILITY service's
-        // own takeScreenshot() (API 30+) — no MediaProjection, no consent dialog,
-        // no foreground service. The accessibility-extracted fields above are what
-        // power the match gate; the screenshot is only a supplementary visual. So
-        // upload the fields regardless, and add a screenshot as best-effort
-        // enrichment when takeScreenshot is available and succeeds. A missing /
-        // failed screenshot must NEVER block the trader from completing a payout.
+        // Capture the (optional) screenshot, then POST fields + shot to the
+        // server and act on its verdict. The screenshot is best-effort; a missing
+        // one never blocks — the extracted fields are what the server matches.
+        showFeedback("Capturing...", false);
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            showFeedback("Capturing...", false);
-            reader.takePayoutScreenshot(jpeg -> new Thread(() -> {
-                if (jpeg != null) PayoutState.saveScreenshot(this, jpeg);
-                PayoutState.uploadBundle(this, "capture");
-                PayoutState.markCaptured(this, targetOrderId);
-                postFeedback(sendForReview ? MSG_CAPTURED_REVIEW : MSG_CAPTURED, true);
-            }).start());
+            reader.takePayoutScreenshot(jpeg -> new Thread(() -> submitCapture(fields, jpeg, receipt)).start());
         } else {
-            // Below Android 11 the accessibility screenshot API doesn't exist —
-            // upload the text-only evidence (still fully verifiable by the gate).
-            PayoutState.uploadBundle(this, "capture");
-            PayoutState.markCaptured(this, targetOrderId);
-            postFeedback(sendForReview ? MSG_CAPTURED_REVIEW : MSG_CAPTURED, true);
+            new Thread(() -> submitCapture(fields, null, receipt)).start();
         }
+    }
+
+    /** The receipt identity used for local dedup — UTR, else the transaction id. */
+    private static String receiptOf(org.json.JSONObject fields) {
+        String utr = fields.optString("utr", "");
+        if (!utr.isEmpty()) return utr;
+        return fields.optString("transactionId", "");
+    }
+
+    /**
+     * POST the capture to the server and show its verdict. The server decides
+     * which payout it belongs to (or rejects it as an Invalid Receipt); on a
+     * match we remember the order locally only so a late debit-SMS follows up to
+     * the right one — never as a gate.
+     */
+    private void submitCapture(org.json.JSONObject fields, byte[] jpeg, String receipt) {
+        PayoutCaptureClient.Verdict v = PayoutCaptureClient.submit(this, fields, jpeg);
+        if (!v.ok) {
+            postFeedback(MSG_SUBMIT_FAILED, false);
+            return;
+        }
+        if (!v.matched) {
+            postFeedback(v.message.isEmpty() ? MSG_INVALID_RECEIPT : v.message, false);
+            return;
+        }
+        if (!v.orderId.isEmpty()) PayoutState.applyMatchedOrder(this, v.orderId, fields.optString("amount", ""));
+        if (!receipt.isEmpty()) PayoutState.markCapturedReceipt(this, receipt);
+        postFeedback(v.ambiguous ? MSG_CAPTURED_REVIEW : MSG_CAPTURED, true);
     }
 
     /** Pure — package-visible + static for PayoutStateTest. */
