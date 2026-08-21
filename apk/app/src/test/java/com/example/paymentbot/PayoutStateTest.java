@@ -79,6 +79,74 @@ public class PayoutStateTest {
         assertFalse(PayoutOverlayService.matchesSuccessKeyword("com.some.other.app", "Payment Successful"));
     }
 
+    // --- Phase 2c: which-of-3 content resolution ---------------------------
+
+    private static java.util.List<String[]> armed(String... triples) {
+        // triples: orderId, amount, accountNumber (or "" for a UPI payout), repeated
+        java.util.List<String[]> a = new java.util.ArrayList<>();
+        for (int i = 0; i < triples.length; i += 3) {
+            a.add(new String[]{triples[i], triples[i + 1], triples[i + 2]});
+        }
+        return a;
+    }
+
+    private static java.util.List<String> last4(String... v) {
+        return java.util.Arrays.asList(v);
+    }
+
+    @Test
+    public void resolvePicksTheMatchingPayoutAmongThree() {
+        // The real bug: 3 armed, trader pays the SECOND — capture must link to it,
+        // not to whichever was the sticky working slot.
+        java.util.List<String[]> list = armed(
+                "A", "500", "111122223333",
+                "B", "920", "999988887777",
+                "C", "500", "555544443333");
+        assertEquals("B", PayoutState.resolveOrderId(list, "920", last4("7777")));
+    }
+
+    @Test
+    public void resolveNeedsBothAmountAndLast4ForBank() {
+        java.util.List<String[]> list = armed("A", "500", "111122223333");
+        // right amount, wrong account -> no match
+        assertEquals("", PayoutState.resolveOrderId(list, "500", last4("0000")));
+        // right account, wrong amount -> no match
+        assertEquals("", PayoutState.resolveOrderId(list, "999", last4("3333")));
+        // both right -> match
+        assertEquals("A", PayoutState.resolveOrderId(list, "500", last4("3333")));
+    }
+
+    @Test
+    public void resolveAmbiguousReturnsEmpty() {
+        // Two indistinguishable payouts (same amount + same last-4) -> never guess.
+        java.util.List<String[]> list = armed(
+                "A", "500", "111122223333",
+                "B", "500", "444422223333");
+        assertEquals("", PayoutState.resolveOrderId(list, "500", last4("3333")));
+    }
+
+    @Test
+    public void resolveUpiPayoutMatchesOnAmountOnly() {
+        // No account number on a UPI payout -> amount alone disambiguates.
+        java.util.List<String[]> list = armed(
+                "A", "500", "",
+                "B", "920", "");
+        assertEquals("B", PayoutState.resolveOrderId(list, "920", last4()));
+    }
+
+    @Test
+    public void amountsEqualIgnoresFormatting() {
+        assertTrue(PayoutState.amountsEqual("920", "920.00"));
+        assertTrue(PayoutState.amountsEqual("₹1,920.0", "1920"));
+        assertFalse(PayoutState.amountsEqual("920", "92"));
+    }
+
+    @Test
+    public void last4DigitsHandlesMasking() {
+        assertEquals("3333", PayoutState.last4Digits("XXXXXX3333"));
+        assertEquals("", PayoutState.last4Digits("12"));
+    }
+
     // --- 40-minute local expiry countdown ----------------------------------
 
     @Test

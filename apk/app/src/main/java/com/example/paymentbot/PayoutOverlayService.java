@@ -125,6 +125,10 @@ public class PayoutOverlayService extends Service {
     // EventQueue's offline-durable pipeline) and is the only place a 409
     // from /payout-evidence is actually observed.
     static final String MSG_ALREADY_SUBMITTED_ELSEWHERE = "Already submitted from another device";
+    // Issue 1 — one real payment = one capture. Issue 2 — content couldn't say
+    // which of several armed payouts this screen belongs to.
+    private static final String MSG_ALREADY_CAPTURED = "Already captured — this payout is done";
+    private static final String MSG_CANT_RESOLVE = "Can't tell which payout — open it in the app first";
 
     // Per-app success wording seeds (a fast path). The REAL guard is
     // matchesSuccessKeyword's GENERAL_SUCCESS fallback below (any recognized
@@ -554,7 +558,10 @@ public class PayoutOverlayService extends Service {
             showFeedback(MSG_UNTRUSTED_APP, false);
             return;
         }
-        if (!PayoutState.isActive(this)) {
+        // At least one payout must be armed — the working slot OR a mirrored
+        // list entry (several active with no working slot is a valid state that
+        // Phase 2c resolves by content below).
+        if (!PayoutState.isActive(this) && PayoutState.activeCount(this) == 0) {
             showFeedback(MSG_NO_PAYOUT, false);
             return;
         }
@@ -568,11 +575,54 @@ public class PayoutOverlayService extends Service {
         // once, right now, at the deliberate Capture tap — NEVER passively. The
         // fields (time, sender bank, last-4s, recipient, txn id, UTR, amount) are
         // saved alongside the screenshot and uploaded with the evidence bundle.
+        org.json.JSONObject fields;
         try {
-            org.json.JSONObject fields = SuccessScreenParser.parse(pkg, text);
-            PayoutState.saveExtractedFields(this, fields.toString());
-        } catch (Exception ignored) {
+            fields = SuccessScreenParser.parse(pkg, text);
+        } catch (Exception e) {
+            fields = new org.json.JSONObject();
         }
+
+        // Phase 2c — resolve WHICH armed payout this capture belongs to by its
+        // content (amount + recipient account last-4), so a trader running
+        // several payouts at once links the evidence to the RIGHT payout instead
+        // of whichever was the sticky working slot. This is the fix for genuine
+        // payments landing on the wrong payout ("details don't match").
+        java.util.List<String> capLast4 = new java.util.ArrayList<>();
+        org.json.JSONArray l4 = fields.optJSONArray("last4");
+        if (l4 != null) {
+            for (int i = 0; i < l4.length(); i++) {
+                String v = l4.optString(i, "");
+                if (!v.isEmpty()) capLast4.add(v);
+            }
+        }
+        String recipLast4 = fields.optString("recipientLast4", "");
+        if (!recipLast4.isEmpty() && !capLast4.contains(recipLast4)) capLast4.add(recipLast4);
+
+        String resolved = PayoutState.resolveOrderIdForCapture(
+                PayoutState.activePayouts(this), fields.optString("amount", ""), capLast4);
+        final String targetOrderId;
+        if (!resolved.isEmpty()) {
+            PayoutState.selectWorking(this, resolved); // re-point to the matched payout
+            targetOrderId = resolved;
+        } else if (PayoutState.isActive(this)) {
+            // Single/legacy case, or content couldn't disambiguate but there is a
+            // working slot — keep it; the server match gate is the real judge.
+            targetOrderId = PayoutState.orderId(this);
+        } else {
+            // Several armed, none uniquely matched, and no working slot to fall
+            // back to — refuse rather than link a real payment to a guessed payout.
+            showFeedback(MSG_CANT_RESOLVE, false);
+            return;
+        }
+
+        // Issue 1 — one real payment = one capture. Refuse a repeat for the SAME
+        // payout; show a clear "done" state instead of re-uploading.
+        if (PayoutState.isCaptured(this, targetOrderId)) {
+            showFeedback(MSG_ALREADY_CAPTURED, true);
+            return;
+        }
+
+        PayoutState.saveExtractedFields(this, fields.toString());
         // The screenshot is OPTIONAL and captured via the ACCESSIBILITY service's
         // own takeScreenshot() (API 30+) — no MediaProjection, no consent dialog,
         // no foreground service. The accessibility-extracted fields above are what
@@ -585,12 +635,14 @@ public class PayoutOverlayService extends Service {
             reader.takePayoutScreenshot(jpeg -> new Thread(() -> {
                 if (jpeg != null) PayoutState.saveScreenshot(this, jpeg);
                 PayoutState.uploadBundle(this, "capture");
+                PayoutState.markCaptured(this, targetOrderId);
                 postFeedback(MSG_CAPTURED, true);
             }).start());
         } else {
             // Below Android 11 the accessibility screenshot API doesn't exist —
             // upload the text-only evidence (still fully verifiable by the gate).
             PayoutState.uploadBundle(this, "capture");
+            PayoutState.markCaptured(this, targetOrderId);
             postFeedback(MSG_CAPTURED, true);
         }
     }

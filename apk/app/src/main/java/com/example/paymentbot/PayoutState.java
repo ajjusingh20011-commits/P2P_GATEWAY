@@ -118,15 +118,17 @@ public final class PayoutState {
         final int n = (list == null) ? 0 : list.length();
         prefs(ctx).edit().putString("active_payouts_json", n == 0 ? "[]" : list.toString()).apply();
 
-        if (n == 0) {
-            clear(ctx);
-            return;
-        }
-
         final java.util.Set<String> ids = new java.util.HashSet<>();
         for (int i = 0; i < n; i++) {
             org.json.JSONObject p = list.optJSONObject(i);
             if (p != null) ids.add(p.optString("orderId", ""));
+        }
+        // Release capture-locks for payouts that are no longer armed.
+        pruneCaptured(ctx, ids);
+
+        if (n == 0) {
+            clear(ctx);
+            return;
         }
 
         final String working = orderId(ctx);
@@ -174,6 +176,146 @@ public final class PayoutState {
     /** How many payouts are armed right now (0-3). Drives the overlay indicator. */
     public static int activeCount(Context ctx) {
         return activeOrderIds(ctx).size();
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 2c — resolve WHICH armed payout a capture belongs to, by content.
+    // When a trader is running several payouts at once, the capture must link
+    // to the payout whose amount + recipient account the success screen shows —
+    // NOT whichever happened to be the sticky "working" slot. Mirrors the server
+    // gate (backend/src/utils/payoutMatch.js): bank payout = amount AND account
+    // last-4; UPI payout (no account number) = amount only. Pure + static so
+    // PayoutStateTest exercises it without Android.
+    // ---------------------------------------------------------------------
+
+    /**
+     * PURE core (no Android/org.json, so PayoutStateTest exercises it directly):
+     * the orderId of the UNIQUE candidate matching this capture, or "" when none
+     * or more than one matches (ambiguous — never guess; a wrong link captures a
+     * real payment against the wrong payout). Each candidate is {orderId, amount,
+     * accountNumber}; an empty accountNumber marks a UPI payout (amount-only).
+     */
+    static String resolveOrderId(java.util.List<String[]> candidates,
+                                 String capAmount, java.util.List<String> capLast4) {
+        if (candidates == null) return "";
+        String matched = "";
+        int count = 0;
+        for (String[] c : candidates) {
+            if (c == null || c.length < 3) continue;
+            String orderId = c[0] == null ? "" : c[0];
+            if (orderId.isEmpty()) continue;
+            String acctLast4 = last4Digits(c[2]);
+            boolean amountMatch = amountsEqual(capAmount, c[1]);
+            boolean ok = acctLast4.isEmpty()
+                    ? amountMatch                                   // UPI — amount only
+                    : amountMatch && capLast4 != null && capLast4.contains(acctLast4); // bank
+            if (ok) { count++; matched = orderId; }
+        }
+        return count == 1 ? matched : "";
+    }
+
+    /** Device-side adapter: unpacks the mirrored activePayouts JSON and delegates
+     *  to the pure {@link #resolveOrderId}. Not unit-tested (org.json is stubbed
+     *  off-device), same boundary as every other Context method here. */
+    static String resolveOrderIdForCapture(org.json.JSONArray activePayouts,
+                                           String capAmount, java.util.List<String> capLast4) {
+        java.util.List<String[]> candidates = new java.util.ArrayList<>();
+        if (activePayouts != null) {
+            for (int i = 0; i < activePayouts.length(); i++) {
+                org.json.JSONObject p = activePayouts.optJSONObject(i);
+                if (p == null) continue;
+                candidates.add(new String[]{
+                        p.optString("orderId", ""),
+                        p.optString("amount", ""),
+                        p.optString("accountNumber", ""),
+                });
+            }
+        }
+        return resolveOrderId(candidates, capAmount, capLast4);
+    }
+
+    /** Last 4 digits of a (possibly masked) account string; "" if fewer than 4. */
+    static String last4Digits(String s) {
+        String d = (s == null ? "" : s).replaceAll("\\D", "");
+        return d.length() >= 4 ? d.substring(d.length() - 4) : "";
+    }
+
+    /** Amounts equal in integer paise — "920", "920.00", "₹920" all agree. */
+    static boolean amountsEqual(String a, String b) {
+        try {
+            double na = Double.parseDouble((a == null ? "" : a).replaceAll("[,\\s₹]", ""));
+            double nb = Double.parseDouble((b == null ? "" : b).replaceAll("[,\\s₹]", ""));
+            return Math.round(na * 100) == Math.round(nb * 100);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Point the working evidence slot at a specific armed payout (Phase 2c
+     * decided the capture belongs to it). No-op if it is already the working
+     * slot or is not in the mirrored active list.
+     */
+    public static synchronized void selectWorking(Context ctx, String orderId) {
+        if (orderId == null || orderId.isEmpty() || orderId.equals(orderId(ctx))) return;
+        org.json.JSONArray list = activePayouts(ctx);
+        for (int i = 0; i < list.length(); i++) {
+            org.json.JSONObject p = list.optJSONObject(i);
+            if (p != null && orderId.equals(p.optString("orderId", ""))) {
+                applyServerState(ctx, orderId, p.optString("payeeName", ""),
+                        p.optString("accountNumber", ""), p.optString("ifsc", ""), p.optString("amount", ""));
+                return;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Capture lock — one real payment = one capture. A payout stays locked
+    // from the moment its success screen is captured until it leaves the
+    // active list (submitted / settled / pruned by the server heartbeat).
+    // Kept SEPARATE from the per-slot uploaded_initial flag so it survives a
+    // Phase 2c re-point of the working slot.
+    // ---------------------------------------------------------------------
+    private static final String KEY_CAPTURED = "captured_order_ids";
+
+    /** Whether a successful capture was already recorded for this payout. */
+    public static boolean isCaptured(Context ctx, String orderId) {
+        return orderId != null && !orderId.isEmpty() && capturedSet(ctx).contains(orderId);
+    }
+
+    /** Record that this payout's success screen has been captured. */
+    public static synchronized void markCaptured(Context ctx, String orderId) {
+        if (orderId == null || orderId.isEmpty()) return;
+        java.util.Set<String> s = capturedSet(ctx);
+        if (s.add(orderId)) {
+            prefs(ctx).edit().putString(KEY_CAPTURED, new org.json.JSONArray(s).toString()).apply();
+        }
+    }
+
+    private static java.util.Set<String> capturedSet(Context ctx) {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        try {
+            org.json.JSONArray a = new org.json.JSONArray(prefs(ctx).getString(KEY_CAPTURED, "[]"));
+            for (int i = 0; i < a.length(); i++) {
+                String v = a.optString(i, "");
+                if (!v.isEmpty()) out.add(v);
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    /** Drop capture-locks for payouts no longer armed (bounds the set; a payout
+     *  that left the active list can't be re-captured anyway). */
+    private static synchronized void pruneCaptured(Context ctx, java.util.Set<String> activeIds) {
+        java.util.Set<String> cur = capturedSet(ctx);
+        java.util.Set<String> kept = new java.util.HashSet<>();
+        for (String id : cur) {
+            if (activeIds.contains(id)) kept.add(id);
+        }
+        if (kept.size() != cur.size()) {
+            prefs(ctx).edit().putString(KEY_CAPTURED, new org.json.JSONArray(kept).toString()).apply();
+        }
     }
 
     public static boolean isActive(Context ctx) {
