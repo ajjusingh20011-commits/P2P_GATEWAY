@@ -42,6 +42,18 @@ const STATUS_BADGE = {
 
 const short = (uuid, id) => (uuid ? String(uuid).split('-')[0].toUpperCase() : `#${id}`);
 
+// BUG 4 — required cancellation reasons (dropdown). 'other' expects a note.
+const CANCEL_REASONS = [
+  { value: 'payment_failed', label: 'Payment failed / declined' },
+  { value: 'wrong_recipient_details', label: 'Wrong recipient details' },
+  { value: 'insufficient_funds', label: 'Insufficient funds in my account' },
+  { value: 'app_or_upi_error', label: 'App / UPI error' },
+  { value: 'suspected_fraud', label: 'Suspected fraud' },
+  { value: 'other', label: 'Other (add a note below)' },
+];
+const reasonLabel = (code) => CANCEL_REASONS.find((r) => r.value === code)?.label
+  || (code ? String(code).replace(/_/g, ' ') : '—');
+
 function fmtDuration(ms) {
   if (ms == null || Number.isNaN(ms)) return '—';
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -95,6 +107,7 @@ export default function BuyUsdt() {
   const [selected, setSelected] = useState(null); // full detail for the modal
   const [now, setNow] = useState(Date.now());
   const [evidenceMap, setEvidenceMap] = useState({});
+  const [cancellations, setCancellations] = useState([]); // BUG 6 — cancelled history
   const pollRef = useRef(null);
 
   // Compact evidence status per row (record/screenshot/SMS) for the two tabs
@@ -147,6 +160,21 @@ export default function BuyUsdt() {
     pollRef.current = setInterval(() => load(tab), 8000);
     return () => clearInterval(pollRef.current);
   }, [tab, load]);
+
+  // BUG 6 — the "Canceled" tab is the trader's cancellation history (their
+  // cancels re-pool the payout, so there's no 'canceled' payout row to show).
+  useEffect(() => {
+    if (tab !== 'canceled') return undefined;
+    let active = true;
+    const loadC = () => {
+      traderApi.payoutCancellations()
+        .then((res) => { if (active) setCancellations(res.data.data.cancellations || []); })
+        .catch(() => { if (active) setCancellations([]); });
+    };
+    loadC();
+    const t = setInterval(loadC, 8000);
+    return () => { active = false; clearInterval(t); };
+  }, [tab]);
 
   // 1s ticker for the waiting/countdown cells.
   useEffect(() => {
@@ -235,6 +263,10 @@ export default function BuyUsdt() {
         </div>
 
         <div>
+          {tab === 'canceled' ? (
+            <CancelledHistory rows={cancellations} loading={loading} />
+          ) : (
+          <>
           {rows.map((r) => (
             <div className="payout" key={r.id}>
               <span className="method">
@@ -274,6 +306,8 @@ export default function BuyUsdt() {
               <EmptyState icon={Check} title="Nothing here" message={`No payout requests in "${TABS.find((t) => t.key === tab)?.label}".`} />
             )
           )}
+          </>
+          )}
         </div>
       </Card>
 
@@ -284,7 +318,7 @@ export default function BuyUsdt() {
           busy={busyId === selected.id}
           onClose={() => setSelected(null)}
           onTransferred={(receiptUrl) => submitTransferred(selected.id, receiptUrl ? { receipt_url: receiptUrl } : {})}
-          onCancel={() => act(() => traderApi.cancelPayout(selected.id), selected.id, 'awaiting_processing')}
+          onCancel={(body) => act(() => traderApi.cancelPayout(selected.id, body), selected.id, 'awaiting_processing')}
           onProblem={() => act(() => traderApi.problemPayout(selected.id, { reason: 'Trader reported a problem' }), selected.id, 'dispute')}
         />
       )}
@@ -347,6 +381,12 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProb
   const [receipt, setReceipt] = useState('');
   const [done, setDone] = useState(false);
   const [evidence, setEvidence] = useState(null);
+  // BUG 4 — cancel sub-flow: reason (required) + note + optional proof.
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelNote, setCancelNote] = useState('');
+  const [cancelProof, setCancelProof] = useState('');
+  const cancelValid = !!cancelReason && (cancelReason !== 'other' || cancelNote.trim().length > 0);
 
   // Live capture status for THIS payout: the trader is recording/screenshotting
   // on their phone in real time, so fetch on open and poll while the modal is
@@ -487,25 +527,66 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProb
             </div>
           )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
-            <Button variant="primary" disabled={busy || gateBlocks} onClick={() => handleTransferred(receipt)}>
-              {busy ? 'Working…' : <>I have transferred <ArrowRight size={16} /></>}
-            </Button>
-            <Button variant="ghost" disabled={busy || gateBlocks} onClick={() => handleTransferred('')}>
-              I transferred, but can't attach the receipt
-            </Button>
-            <div className="flex gap-2">
-              <Button variant="ghost" disabled={busy} onClick={onCancel} className="flex-1">Cancel</Button>
-              <button
-                disabled={busy}
-                onClick={onProblem}
-                className="flex-1"
-                style={{ borderRadius: 12, border: '1px solid rgba(239,68,68,.4)', background: 'rgba(239,68,68,.1)', color: '#ef4444', fontWeight: 600, fontSize: 14, padding: '9px 14px', cursor: 'pointer' }}
-              >
-                I have a problem
-              </button>
+          {!cancelling ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
+              <Button variant="primary" disabled={busy || gateBlocks} onClick={() => handleTransferred(receipt)}>
+                {busy ? 'Working…' : <>I have transferred <ArrowRight size={16} /></>}
+              </Button>
+              <Button variant="ghost" disabled={busy || gateBlocks} onClick={() => handleTransferred('')}>
+                I transferred, but can't attach the receipt
+              </Button>
+              <div className="flex gap-2">
+                <Button variant="ghost" disabled={busy} onClick={() => setCancelling(true)} className="flex-1">Cancel</Button>
+                <button
+                  disabled={busy}
+                  onClick={onProblem}
+                  className="flex-1"
+                  style={{ borderRadius: 12, border: '1px solid rgba(239,68,68,.4)', background: 'rgba(239,68,68,.1)', color: '#ef4444', fontWeight: 600, fontSize: 14, padding: '9px 14px', cursor: 'pointer' }}
+                >
+                  I have a problem
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* BUG 4 — required reason + optional proof, captured at cancel time.
+               Cancelling releases the payout back to the pool for another trader. */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Cancel this payout</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 2 }}>It goes back to the pool for another trader. Tell us why:</div>
+              <select
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)', fontSize: 13, outline: 'none' }}
+              >
+                <option value="">Select a reason…</option>
+                {CANCEL_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+              <textarea
+                value={cancelNote}
+                onChange={(e) => setCancelNote(e.target.value)}
+                placeholder={cancelReason === 'other' ? 'Note (required for “Other”)' : 'Add a note (optional)'}
+                rows={2}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)', fontSize: 13, outline: 'none', resize: 'vertical' }}
+              />
+              <input
+                value={cancelProof}
+                onChange={(e) => setCancelProof(e.target.value)}
+                placeholder="Proof URL (optional)"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)', fontSize: 13, outline: 'none' }}
+              />
+              <div className="flex gap-2">
+                <Button variant="ghost" disabled={busy} onClick={() => setCancelling(false)} className="flex-1">Back</Button>
+                <button
+                  disabled={busy || !cancelValid}
+                  onClick={() => onCancel({ reason_code: cancelReason, reason_note: cancelNote, proof_url: cancelProof })}
+                  className="flex-1"
+                  style={{ borderRadius: 12, border: '1px solid rgba(239,68,68,.4)', background: busy || !cancelValid ? 'rgba(239,68,68,.06)' : 'rgba(239,68,68,.12)', color: '#ef4444', fontWeight: 600, fontSize: 14, padding: '9px 14px', cursor: busy || !cancelValid ? 'not-allowed' : 'pointer', opacity: busy || !cancelValid ? 0.6 : 1 }}
+                >
+                  {busy ? 'Cancelling…' : 'Confirm cancellation'}
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
       {!actionable && (
@@ -514,5 +595,43 @@ function ProcessModal({ req, now, busy, onClose, onTransferred, onCancel, onProb
         </div>
       )}
     </Modal>
+  );
+}
+
+// BUG 6 — the trader's cancelled history, from the payout_cancellations audit
+// log. A trader cancel re-pools the payout, so these records (not 'canceled'
+// payout rows) are the durable history, each with its reason/proof/outcome.
+function CancelledHistory({ rows, loading }) {
+  if (!rows || rows.length === 0) {
+    return loading
+      ? <LoadingState label="Loading cancelled history…" />
+      : <EmptyState icon={Check} title="No cancellations" message="Payouts you cancel will appear here with their reason." />;
+  }
+  return (
+    <div>
+      {rows.map((c) => (
+        <div className="payout" key={c.id}>
+          <span className="method"><Landmark size={18} /></span>
+          <div className="min-w-0">
+            <strong className="truncate">{reasonLabel(c.reason_code)}</strong>
+            <small className="truncate">
+              {short(c.payout_uuid, c.payout_request_id)} · {fmtDate(c.created_at)}{c.reason_note ? ` · ${c.reason_note}` : ''}
+            </small>
+          </div>
+          <div>
+            <small>Amount</small>
+            <strong>{inr(c.amount_inr)}</strong>
+          </div>
+          <div>
+            <small>Proof</small>
+            <strong>{c.proof_url ? <a href={c.proof_url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>View</a> : '—'}</strong>
+          </div>
+          <Badge color={c.outcome === 'returned_to_pool' ? 'amber' : 'gray'}>
+            {c.outcome === 'returned_to_pool' ? 'Returned to pool' : 'Canceled'}
+          </Badge>
+          <div />
+        </div>
+      ))}
+    </div>
   );
 }

@@ -20,6 +20,7 @@ db.Transaction = require('./transaction.model')(sequelize);
 db.NotificationLog = require('./notificationLog.model')(sequelize);
 db.Payout = require('./payout.model')(sequelize);
 db.PayoutRequest = require('./payoutRequest.model')(sequelize);
+db.PayoutCancellation = require('./payoutCancellation.model')(sequelize);
 db.Offer = require('./offer.model')(sequelize);
 db.Settlement = require('./settlement.model')(sequelize);
 db.Dispute = require('./dispute.model')(sequelize);

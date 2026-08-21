@@ -72,5 +72,6 @@ router.get('/payout-requests/:id/evidence', adminController.getPayoutEvidence);
 router.post('/payout-requests/:id/approve', payoutController.adminApprove);
 router.post('/payout-requests/:id/reject', payoutController.adminReject);
 router.post('/payout-requests/:id/dispute-resolve', payoutController.adminDisputeResolve);
+router.get('/payout-cancellations', payoutController.adminCancellations);
 
 module.exports = router;

@@ -114,12 +114,33 @@ const traderTransferred = asyncHandler(async (req, res) => {
   }
 });
 
+const cancelSchema = Joi.object({
+  reason_code: Joi.string().max(64).required(),
+  reason_note: Joi.string().max(1000).allow('', null),
+  proof_url: Joi.string().max(512).allow('', null),
+});
+
 const traderCancel = asyncHandler(async (req, res) => {
   const trader = await currentTrader(req, res);
   if (!trader) return undefined;
+  const { error, value } = cancelSchema.validate(req.body || {});
+  if (error) return fail(res, 422, error.details[0].message);
   try {
-    const row = await payoutService.cancelByTrader(trader.id, req.params.id);
+    const row = await payoutService.cancelByTrader(trader.id, req.params.id, value);
     return ok(res, { payout_request: row });
+  } catch (err) {
+    return handleErr(res, err);
+  }
+});
+
+// BUG 6 — the trader's "Canceled" tab is now their cancellation history (their
+// cancels re-pool the payout, so there is no 'canceled' payout row to list).
+const traderCancellations = asyncHandler(async (req, res) => {
+  const trader = await currentTrader(req, res);
+  if (!trader) return undefined;
+  try {
+    const rows = await payoutService.listCancellations({ traderId: trader.id });
+    return ok(res, { cancellations: rows });
   } catch (err) {
     return handleErr(res, err);
   }
@@ -168,16 +189,36 @@ const adminReject = asyncHandler(async (req, res) => {
 });
 
 const disputeResolveSchema = Joi.object({
-  action: Joi.string().valid('settle', 'void').required(),
-  reason: Joi.string().max(500).allow('', null),
+  action: Joi.string().valid('settle', 'void', 'return_to_pool').required(),
+  reason_code: Joi.string().max(64).allow('', null),
+  reason_note: Joi.string().max(1000).allow('', null),
+  proof_url: Joi.string().max(512).allow('', null),
+  // Back-compat: older callers send `reason` as free text.
+  reason: Joi.string().max(1000).allow('', null),
 });
 
 const adminDisputeResolve = asyncHandler(async (req, res) => {
   const { error, value } = disputeResolveSchema.validate(req.body || {});
   if (error) return fail(res, 422, error.details[0].message);
   try {
-    const row = await payoutService.disputeResolve(req.params.id, value);
+    const row = await payoutService.disputeResolve(req.params.id, {
+      action: value.action,
+      reason_code: value.reason_code,
+      reason_note: value.reason_note || value.reason,
+      proof_url: value.proof_url,
+      adminUserId: req.user && req.user.id,
+    });
     return ok(res, { payout_request: row });
+  } catch (err) {
+    return handleErr(res, err);
+  }
+});
+
+// BUG 6 — admin cancelled-history: every cancellation/void/return-to-pool.
+const adminCancellations = asyncHandler(async (req, res) => {
+  try {
+    const rows = await payoutService.listCancellations({});
+    return ok(res, { cancellations: rows });
   } catch (err) {
     return handleErr(res, err);
   }
@@ -193,10 +234,12 @@ module.exports = {
   traderProcess,
   traderTransferred,
   traderCancel,
+  traderCancellations,
   traderProblem,
   // admin
   adminList,
   adminApprove,
   adminReject,
   adminDisputeResolve,
+  adminCancellations,
 };

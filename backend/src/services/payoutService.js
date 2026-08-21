@@ -217,7 +217,10 @@ async function traderCounts(traderId) {
     db.PayoutRequest.count({ where: { status: 'in_processing', assigned_trader_id: traderId } }),
     db.PayoutRequest.count({ where: { status: 'awaiting_settlement', assigned_trader_id: traderId } }),
     db.PayoutRequest.count({ where: { status: 'settlement_completed', assigned_trader_id: traderId } }),
-    db.PayoutRequest.count({ where: { status: 'canceled', assigned_trader_id: traderId } }),
+    // "Canceled" for a trader is now their OWN cancellation history — a trader
+    // cancel re-pools the payout, so it's no longer a 'canceled' payout_requests
+    // row. Count the audit log instead (BUG 6). See listCancellations.
+    db.PayoutCancellation.count({ where: { actor_type: 'trader', actor_id: traderId } }),
     db.PayoutRequest.count({ where: { status: 'dispute', assigned_trader_id: traderId } }),
   ]);
   return {
@@ -423,6 +426,40 @@ async function transferred(traderId, id, { receipt_url } = {}) {
 }
 
 /**
+ * Cancellation audit trail (BUG 4/6). Writes one payout_cancellations row for a
+ * trader cancel / admin void / admin return-to-pool. Pass `transaction` to make
+ * the audit atomic with the status change (trader cancel + admin return-to-pool).
+ */
+async function recordCancellation(row, { actorType, actorId, reasonCode, reasonNote, proofUrl, outcome }, transaction) {
+  return db.PayoutCancellation.create(
+    {
+      payout_request_id: row.id,
+      payout_uuid: row.uuid,
+      merchant_id: row.merchant_id,
+      amount_inr: row.amount_inr,
+      actor_type: actorType,
+      actor_id: actorId != null ? actorId : null,
+      reason_code: reasonCode || 'unspecified',
+      reason_note: reasonNote || null,
+      proof_url: proofUrl || null,
+      outcome,
+    },
+    transaction ? { transaction } : {}
+  );
+}
+
+/** Cancellation history. traderId set → only that trader's cancels; omitted →
+ *  every cancellation (admin view). Newest first. */
+async function listCancellations({ traderId } = {}) {
+  const where = {};
+  if (traderId != null) {
+    where.actor_type = 'trader';
+    where.actor_id = traderId;
+  }
+  return db.PayoutCancellation.findAll({ where, order: [['created_at', 'DESC']], limit: 500 });
+}
+
+/**
  * in_processing → back to the GLOBAL pool (a trader releases a payout they'd
  * picked up). Mirrors returnDisputesToPool's reset: clears the assignment and
  * accept-time timers so the request becomes awaiting_processing/unassigned and
@@ -435,7 +472,11 @@ async function transferred(traderId, id, { receipt_url } = {}) {
  * expiry sweep or a concurrent transfer). Best-effort device-disarm + pool
  * broadcast happen after the commit, same as returnDisputesToPool.
  */
-async function cancelByTrader(traderId, id) {
+async function cancelByTrader(traderId, id, { reason_code, reason_note, proof_url } = {}) {
+  // BUG 4 — a reason is required for accountability on this financial action.
+  if (!reason_code || !String(reason_code).trim()) {
+    throw Object.assign(new Error('A cancellation reason is required'), { status: 422 });
+  }
   const row = await getForTrader(traderId, id);
   if (row.status !== 'in_processing') throw Object.assign(new Error(`Cannot cancel from ${row.status}`), { status: 409 });
 
@@ -453,6 +494,12 @@ async function cancelByTrader(traderId, id) {
       },
       { transaction }
     );
+    // Audit trail — atomic with the re-pool (BUG 4/6).
+    await recordCancellation(fresh, {
+      actorType: 'trader', actorId: traderId,
+      reasonCode: reason_code, reasonNote: reason_note, proofUrl: proof_url,
+      outcome: 'returned_to_pool',
+    }, transaction);
   });
 
   // No longer this trader's — stop any of their devices still armed for it, and
@@ -619,9 +666,14 @@ async function reject(id, { reason } = {}) {
 }
 
 /**
- * Resolve a dispute: action 'settle' → credit + complete; action 'void' → cancel.
+ * Resolve a dispute:
+ *   action 'settle'          → credit the trader + complete.
+ *   action 'return_to_pool'  → send it BACK to the global pool for another
+ *                              trader (BUG 3 — "trader says I didn't pay").
+ *   action 'void'            → terminally cancel (no funds moved).
+ * The last two write a payout_cancellations audit row (actor: admin).
  */
-async function disputeResolve(id, { action, reason } = {}) {
+async function disputeResolve(id, { action, reason_code, reason_note, proof_url, adminUserId } = {}) {
   const row = await db.PayoutRequest.findByPk(id);
   if (!row) throw Object.assign(new Error('Payout request not found'), { status: 404 });
   if (row.status !== 'dispute') throw Object.assign(new Error(`Cannot resolve from ${row.status}`), { status: 409 });
@@ -629,8 +681,50 @@ async function disputeResolve(id, { action, reason } = {}) {
   if (action === 'settle') {
     return settleAndCredit(id, { fromStatuses: ['dispute'] });
   }
-  // void
-  await row.update({ status: 'canceled', canceled_at: new Date(), dispute_reason: reason || row.dispute_reason });
+
+  if (action === 'return_to_pool') {
+    // BUG 3 — mirror returnDisputesToPool: reset assignment + timers + dispute
+    // markers so the payout is available again, and log the admin action.
+    const prevTrader = row.assigned_trader_id;
+    await db.sequelize.transaction(async (transaction) => {
+      const fresh = await db.PayoutRequest.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!fresh || fresh.status !== 'dispute') {
+        throw Object.assign(new Error(`Cannot resolve from ${fresh ? fresh.status : 'missing'}`), { status: 409 });
+      }
+      await fresh.update(
+        {
+          status: 'awaiting_processing',
+          assigned_trader_id: null,
+          accepted_at: null,
+          expires_at: null,
+          disputed_at: null,
+          dispute_reason: null,
+        },
+        { transaction }
+      );
+      await recordCancellation(fresh, {
+        actorType: 'admin', actorId: adminUserId,
+        reasonCode: reason_code || 'admin_return_to_pool', reasonNote: reason_note, proofUrl: proof_url,
+        outcome: 'returned_to_pool',
+      }, transaction);
+    });
+    if (prevTrader) await clearTraderDevicesPayout(prevTrader, row.uuid);
+    const summary = { id: row.id, uuid: row.uuid, status: 'awaiting_processing' };
+    broadcast('payout:returned-to-pool', summary);
+    emitToAdmin('payout:returned-to-pool', summary);
+    emitToMerchant(row.merchant_id, 'payout:returned-to-pool', summary);
+    if (prevTrader) emitToTrader(prevTrader, 'payout:returned-to-pool', summary);
+    logger.info(`payout: admin returned disputed ${row.uuid} to the global pool`);
+    return db.PayoutRequest.findByPk(id);
+  }
+
+  // void — terminal cancel
+  await row.update({ status: 'canceled', canceled_at: new Date(), dispute_reason: reason_note || reason_code || row.dispute_reason });
+  await recordCancellation(row, {
+    actorType: 'admin', actorId: adminUserId,
+    reasonCode: reason_code || 'admin_void', reasonNote: reason_note, proofUrl: proof_url,
+    outcome: 'terminal_canceled',
+  });
   const summary = { id: row.id, uuid: row.uuid, status: row.status };
   emitToAdmin('payout:canceled', summary);
   emitToMerchant(row.merchant_id, 'payout:canceled', summary);
@@ -744,6 +838,7 @@ module.exports = {
   accept,
   transferred,
   cancelByTrader,
+  listCancellations,
   problem,
   listForAdmin,
   adminCounts,

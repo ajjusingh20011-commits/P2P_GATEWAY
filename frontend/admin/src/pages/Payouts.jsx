@@ -42,6 +42,7 @@ const ACTION_COPY = {
   rejectProcessing: { title: 'Reject this payout?', tone: 'danger', label: 'Reject', desc: (r) => `${short(r.uuid, r.id)} will be marked Canceled and the merchant notified.` },
   rejectSettlement: { title: 'Reject this payout?', tone: 'danger', label: 'Reject', desc: (r) => `${short(r.uuid, r.id)} will move to Dispute for review — an already-processing payout can't be silently canceled.` },
   settle: { title: 'Settle this disputed payout?', tone: 'primary', label: 'Settle', desc: (r) => `${short(r.uuid, r.id)} will be settled and ${inr(r.amount_inr)} debited from the assigned trader's balance. This cannot be undone.` },
+  returnToPool: { title: 'Return this payout to the pool?', tone: 'primary', label: 'Return to pool', desc: (r) => `${short(r.uuid, r.id)} goes back to the global pool for another trader to pick up — no funds moved. Use this when the trader didn't actually pay.` },
   void: { title: 'Void this disputed payout?', tone: 'danger', label: 'Void', desc: (r) => `${short(r.uuid, r.id)} will be marked Canceled with no funds moved.` },
 };
 
@@ -271,6 +272,7 @@ export default function Payouts() {
     if (actionKey === 'approve') act(() => adminApi.approvePayoutRequest(row.id), row.id);
     else if (actionKey === 'rejectProcessing' || actionKey === 'rejectSettlement') act(() => adminApi.rejectPayoutRequest(row.id, 'Rejected by admin'), row.id);
     else if (actionKey === 'settle') act(() => adminApi.resolvePayoutDispute(row.id, { action: 'settle' }), row.id);
+    else if (actionKey === 'returnToPool') act(() => adminApi.resolvePayoutDispute(row.id, { action: 'return_to_pool' }), row.id);
     else if (actionKey === 'void') act(() => adminApi.resolvePayoutDispute(row.id, { action: 'void' }), row.id);
   };
 
@@ -324,6 +326,7 @@ export default function Payouts() {
       return (
         <>
           <Button size={size} variant="success" disabled={busyId === r.id} onClick={() => setConfirming({ row: r, actionKey: 'settle' })}>Settle</Button>
+          <Button size={size} variant="ghost" disabled={busyId === r.id} onClick={() => setConfirming({ row: r, actionKey: 'returnToPool' })}>Return to pool</Button>
           <Button size={size} variant="ghost" disabled={busyId === r.id} onClick={() => setConfirming({ row: r, actionKey: 'void' })}>Void</Button>
         </>
       );

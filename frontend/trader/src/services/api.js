@@ -147,7 +147,8 @@ export const traderApi = {
   acceptPayout: (id) => api.post(`/trader/payout-requests/${id}/accept`),
   processPayout: (id) => api.get(`/trader/payout-requests/${id}/process`),
   transferredPayout: (id, body) => api.post(`/trader/payout-requests/${id}/transferred`, body || {}),
-  cancelPayout: (id) => api.post(`/trader/payout-requests/${id}/cancel`),
+  cancelPayout: (id, body) => api.post(`/trader/payout-requests/${id}/cancel`, body || {}),
+  payoutCancellations: () => api.get('/trader/payout-cancellations'),
   problemPayout: (id, body) => api.post(`/trader/payout-requests/${id}/problem`, body || {}),
 };
 

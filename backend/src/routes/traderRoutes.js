@@ -42,6 +42,7 @@ router.post('/payout-requests/:id/accept', payoutController.traderAccept);
 router.get('/payout-requests/:id/process', payoutController.traderProcess);
 router.post('/payout-requests/:id/transferred', payoutController.traderTransferred);
 router.post('/payout-requests/:id/cancel', payoutController.traderCancel);
+router.get('/payout-cancellations', payoutController.traderCancellations);
 router.post('/payout-requests/:id/problem', payoutController.traderProblem);
 
 module.exports = router;
