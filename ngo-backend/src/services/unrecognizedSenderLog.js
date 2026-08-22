@@ -86,7 +86,11 @@ async function recordFromEvent(evt = {}) {
       $inc: { occurrences: 1 },
     };
     if (c.hasValidUtr) update.$set.hasValidUtr = true;
-    if (evt.deviceId) update.$addToSet = { deviceIds: String(evt.deviceId) };
+    if (evt.traderId != null && evt.traderId !== '') update.$set.lastTraderId = Number(evt.traderId);
+    const addToSet = {};
+    if (evt.deviceId) addToSet.deviceIds = String(evt.deviceId);
+    if (evt.traderId != null && evt.traderId !== '') addToSet.traderIds = Number(evt.traderId);
+    if (Object.keys(addToSet).length) update.$addToSet = addToSet;
     await UnrecognizedSender.updateOne({ code: c.code }, update, { upsert: true });
     return true;
   } catch (e) {

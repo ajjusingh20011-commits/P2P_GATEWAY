@@ -44,6 +44,11 @@ const unrecognizedSenderSchema = new mongoose.Schema(
     // Distinct devices that saw it — a real bank is seen across many; a sudden
     // burst from one is a review signal, not auto-trust.
     deviceIds: { type: [String], default: [] },
+    // Distinct traders (MySQL trader.id) whose devices saw it — surfaced in the
+    // admin review so a reviewer knows who it came from. Many traders = more
+    // trustworthy; a single trader spamming one header = a review signal.
+    traderIds: { type: [Number], default: [] },
+    lastTraderId: { type: Number, default: null },
     firstSeenAt: { type: Date, default: Date.now },
     lastSeenAt: { type: Date, default: Date.now },
     // Review lifecycle. 'promoted' rows are what Section 3's runtime rule store

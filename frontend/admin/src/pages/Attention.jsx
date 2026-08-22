@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowDownLeft, ArrowUpRight, Scale } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Scale, Landmark } from 'lucide-react';
 import { Card, Badge, PageHeader, InlineLoader, SearchInput, Tabs, Button } from '../components/ui';
 import AdminIdPopover from '../components/AdminIdPopover';
 import { adminApi } from '../services/api';
@@ -23,8 +23,10 @@ const TYPE_META = {
   order: { label: 'Order review', tone: 'blue', Icon: ArrowDownLeft, route: '/orders' },
   dispute: { label: 'Dispute', tone: 'red', Icon: Scale, route: '/disputes' },
   payout: { label: 'Payout dispute', tone: 'amber', Icon: ArrowUpRight, route: '/payouts' },
+  // Unrecognized bank SMS — reviewed & actioned inline here (no separate page).
+  bank: { label: 'Unrecognized bank', tone: 'amber', Icon: Landmark, route: null },
 };
-const TYPE_BADGE_COLOR = { order: 'sky', dispute: 'red', payout: 'amber' };
+const TYPE_BADGE_COLOR = { order: 'sky', dispute: 'red', payout: 'amber', bank: 'amber' };
 
 function ageLabel(dateStr) {
   if (!dateStr) return '—';
@@ -65,8 +67,9 @@ export default function Attention() {
       fetchAllUnderReview().catch(() => []),
       adminApi.listDisputes({ status: 'open' }).catch(() => ({ disputes: [] })),
       adminApi.listPayoutRequests({ status: 'dispute' }).catch(() => ({ payout_requests: [] })),
+      adminApi.listUnrecognizedSenders({ status: 'pending', limit: 100 }).catch(() => ({ queue: [] })),
     ])
-      .then(([orders, d, p]) => {
+      .then(([orders, d, p, banks]) => {
         if (!alive) return;
         const orderItems = orders.map((o) => ({
           key: `order-${o.id}`,
@@ -113,7 +116,34 @@ export default function Attention() {
             { label: 'UUID', value: row.uuid },
           ],
         }));
-        const merged = [...orderItems, ...disputeItems, ...payoutItems].sort(
+        const bankItems = (banks.queue || []).map((b) => ({
+          key: `bank-${b.code}`,
+          type: 'bank',
+          // The bank's OWN sign-off name (real, from the SMS), else the raw code.
+          title: b.signoffName || b.code,
+          detail: b.sampleBody || '',
+          entity: b.lastTraderId
+            ? `Trader #${b.lastTraderId}${b.distinctDevices ? ` · ${b.distinctDevices} device${b.distinctDevices === 1 ? '' : 's'}` : ''}`
+            : (b.distinctDevices ? `${b.distinctDevices} device${b.distinctDevices === 1 ? '' : 's'}` : '—'),
+          amount: b.lastAmount ? (Number(String(b.lastAmount).replace(/[^0-9.]/g, '')) || null) : null,
+          status: `${b.occurrences}× seen`,
+          createdAt: b.lastSeenAt,
+          // Bank-specific fields for the inline actions.
+          code: b.code,
+          signoffName: b.signoffName,
+          hasValidUtr: b.hasValidUtr,
+          idRows: [
+            { label: 'Sender code', value: b.code },
+            { label: 'Last sender', value: b.lastSender },
+            { label: 'Bank sign-off', value: b.signoffName || '—' },
+            { label: 'Occurrences', value: b.occurrences },
+            { label: 'Distinct devices', value: b.distinctDevices },
+            { label: 'Traders', value: (b.traderIds || []).join(', ') || '—' },
+            { label: 'Valid 12-digit ref?', value: b.hasValidUtr ? 'Yes' : 'No' },
+            { label: 'Last reference', value: b.lastUtr || '—' },
+          ],
+        }));
+        const merged = [...orderItems, ...disputeItems, ...payoutItems, ...bankItems].sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
         setRows(merged);
@@ -123,12 +153,38 @@ export default function Attention() {
     return () => { alive = false; };
   }, []);
 
+  const [acting, setActing] = useState('');
+
+  // Confirm a real bank (promote → live everywhere at once, Section 3) or ignore
+  // noise. On success the row leaves the queue, so drop it from the list.
+  const reviewBank = async (row, action) => {
+    if (acting) return;
+    let confirmedName = row.signoffName;
+    if (action === 'promote' && !confirmedName) {
+      // No sign-off name captured — ask the reviewer for the real bank name.
+      // eslint-disable-next-line no-alert
+      confirmedName = (window.prompt(`Confirm the real bank name for sender ${row.code}:`, '') || '').trim();
+      if (!confirmedName) return;
+    }
+    setActing(row.key);
+    try {
+      if (action === 'promote') await adminApi.promoteUnrecognizedSender(row.code, { confirmedName });
+      else await adminApi.ignoreUnrecognizedSender(row.code);
+      setRows((prev) => prev.filter((r) => r.key !== row.key));
+    } catch {
+      setError(`Could not ${action === 'promote' ? 'confirm' : 'ignore'} ${row.code}. Try again.`);
+    } finally {
+      setActing('');
+    }
+  };
+
   const counts = useMemo(
     () => ({
       all: rows.length,
       order: rows.filter((r) => r.type === 'order').length,
       dispute: rows.filter((r) => r.type === 'dispute').length,
       payout: rows.filter((r) => r.type === 'payout').length,
+      bank: rows.filter((r) => r.type === 'bank').length,
     }),
     [rows]
   );
@@ -162,6 +218,7 @@ export default function Attention() {
             { key: 'order', label: 'Order review', count: counts.order },
             { key: 'dispute', label: 'Disputes', count: counts.dispute },
             { key: 'payout', label: 'Payout disputes', count: counts.payout },
+            { key: 'bank', label: 'Unrecognized banks', count: counts.bank },
           ]}
           active={type}
           onChange={setType}
@@ -216,11 +273,27 @@ export default function Attention() {
                       <td className="px-4 py-3" style={{ color: 'var(--text)' }}>{r.entity}</td>
                       <td className="px-4 py-3 font-medium" style={{ color: 'var(--text)' }}>{r.amount != null ? inr(r.amount) : '—'}</td>
                       <td className="px-4 py-3" style={{ color: 'var(--muted)' }}>{ageLabel(r.createdAt)}</td>
-                      <td className="px-4 py-3"><Badge color="gray">{r.status}</Badge></td>
                       <td className="px-4 py-3">
-                        <Button variant="ghost" size="sm" onClick={() => navigate(meta.route)}>
-                          Open
-                        </Button>
+                        <Badge color="gray">{r.status}</Badge>
+                        {r.type === 'bank' && r.hasValidUtr && (
+                          <Badge color="green" className="ml-1">valid ref</Badge>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {r.type === 'bank' ? (
+                          <div className="flex items-center gap-2">
+                            <Button variant="primary" size="sm" disabled={!!acting} onClick={() => reviewBank(r, 'promote')}>
+                              {acting === r.key ? '…' : 'Confirm'}
+                            </Button>
+                            <Button variant="ghost" size="sm" disabled={!!acting} onClick={() => reviewBank(r, 'ignore')}>
+                              Ignore
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button variant="ghost" size="sm" onClick={() => navigate(meta.route)}>
+                            Open
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   );

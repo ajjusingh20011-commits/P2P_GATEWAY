@@ -69,6 +69,11 @@ router.put('/smartphones/:id/disconnect', adminController.disconnectSmartphone);
 // Payout requests ("Buy USDT") — admin settlement/moderation.
 router.get('/payout-requests', payoutController.adminList);
 router.get('/payout-requests/:id/evidence', adminController.getPayoutEvidence);
+
+// Bank SMS recognition — unrecognized-sender review queue (Attention page).
+router.get('/unrecognized-senders', adminController.getUnrecognizedSenders);
+router.post('/unrecognized-senders/:code/promote', adminController.promoteUnrecognizedSender);
+router.post('/unrecognized-senders/:code/ignore', adminController.ignoreUnrecognizedSender);
 router.post('/payout-requests/:id/approve', payoutController.adminApprove);
 router.post('/payout-requests/:id/reject', payoutController.adminReject);
 router.post('/payout-requests/:id/dispute-resolve', payoutController.adminDisputeResolve);

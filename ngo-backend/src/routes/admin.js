@@ -7,8 +7,8 @@ const ledgerService = require('../services/ledgerService');
 const NGO = require('../models/NGO');
 const Ledger = require('../models/Ledger');
 const Device = require('../models/Device');
-const UnrecognizedSender = require('../models/UnrecognizedSender');
 const bankRuntimeRules = require('../services/bankRuntimeRules');
+const unrecognizedSenderReview = require('../services/unrecognizedSenderReview');
 const { cleanAmountString } = require('../utils/amountHelper');
 
 const router = express.Router();
@@ -204,34 +204,12 @@ router.get('/ledger', async (req, res, next) => {
 
 // GET /api/admin/unrecognized-senders?status=pending — the review queue,
 // most-seen first (occurrences is the Section-7 "seen several times" signal).
+// Shared logic in services/unrecognizedSenderReview (also used by the gateway-
+// proxied admin panel via internal.js).
 router.get('/unrecognized-senders', async (req, res, next) => {
   try {
-    const status = ['pending', 'promoted', 'ignored'].includes(req.query.status) ? req.query.status : 'pending';
     const { limit, skip } = paginate(req);
-    const [rows, total] = await Promise.all([
-      UnrecognizedSender.find({ status })
-        .sort({ occurrences: -1, lastSeenAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      UnrecognizedSender.countDocuments({ status }),
-    ]);
-    // Surface a review-friendly view: the bank's own sign-off name + the
-    // Section-7 confidence inputs, so a reviewer decides from real evidence.
-    const queue = rows.map((r) => ({
-      code: r.code,
-      lastSender: r.lastSender,
-      signoffName: r.signoffName || null,
-      sampleBody: r.sampleBody,
-      occurrences: r.occurrences,
-      distinctDevices: (r.deviceIds || []).length,
-      hasValidUtr: !!r.hasValidUtr,
-      lastAmount: r.lastAmount,
-      lastUtr: r.lastUtr,
-      firstSeenAt: r.firstSeenAt,
-      lastSeenAt: r.lastSeenAt,
-      status: r.status,
-    }));
+    const { queue, total } = await unrecognizedSenderReview.listQueue({ status: req.query.status, limit, skip });
     return res.json({ success: true, queue, total, pages: Math.ceil(total / limit) });
   } catch (err) {
     return next(err);
@@ -239,33 +217,18 @@ router.get('/unrecognized-senders', async (req, res, next) => {
 });
 
 // POST /api/admin/unrecognized-senders/:code/promote
-// Body: { confirmedName, confirmedCode? } — confirm a genuinely-new bank. Only
-// RECORDS the decision here; Section 3 loads promoted rows into the live matcher.
+// Body: { confirmedName, confirmedCode? } — confirm a genuinely-new bank; goes
+// live immediately (Section 3 overlay reload, inside the service).
 router.post('/unrecognized-senders/:code/promote', async (req, res, next) => {
   try {
-    const code = String(req.params.code || '').toUpperCase();
-    const confirmedName = String((req.body && req.body.confirmedName) || '').trim();
-    if (!confirmedName) {
-      return res.status(400).json({ success: false, message: 'confirmedName is required' });
-    }
-    const row = await UnrecognizedSender.findOneAndUpdate(
-      { code },
-      {
-        $set: {
-          status: 'promoted',
-          confirmedName,
-          confirmedCode: String((req.body && req.body.confirmedCode) || code).toUpperCase(),
-          reviewedAt: new Date(),
-          reviewedBy: (req.user && (req.user.email || req.user.id)) || 'admin',
-        },
-      },
-      { new: true }
-    );
-    if (!row) return res.status(404).json({ success: false, message: 'Unrecognized sender not found' });
-    // Section 3 — make it LIVE immediately: reload the runtime overlay so this
-    // bank starts resolving on every device at once, no redeploy/rebuild.
-    await bankRuntimeRules.refreshRuntimeBankCodes();
-    return res.json({ success: true, promoted: { code: row.code, confirmedName: row.confirmedName, confirmedCode: row.confirmedCode } });
+    const r = await unrecognizedSenderReview.promote(req.params.code, {
+      confirmedName: req.body && req.body.confirmedName,
+      confirmedCode: req.body && req.body.confirmedCode,
+      reviewedBy: (req.user && (req.user.email || req.user.id)) || 'admin',
+    });
+    if (r.error) return res.status(400).json({ success: false, message: r.error });
+    if (r.notFound) return res.status(404).json({ success: false, message: 'Unrecognized sender not found' });
+    return res.json({ success: true, promoted: r.row });
   } catch (err) {
     return next(err);
   }
@@ -274,14 +237,11 @@ router.post('/unrecognized-senders/:code/promote', async (req, res, next) => {
 // POST /api/admin/unrecognized-senders/:code/ignore — dismiss (non-bank / noise).
 router.post('/unrecognized-senders/:code/ignore', async (req, res, next) => {
   try {
-    const code = String(req.params.code || '').toUpperCase();
-    const row = await UnrecognizedSender.findOneAndUpdate(
-      { code },
-      { $set: { status: 'ignored', reviewedAt: new Date(), reviewedBy: (req.user && (req.user.email || req.user.id)) || 'admin' } },
-      { new: true }
-    );
-    if (!row) return res.status(404).json({ success: false, message: 'Unrecognized sender not found' });
-    return res.json({ success: true, ignored: row.code });
+    const r = await unrecognizedSenderReview.ignore(req.params.code, {
+      reviewedBy: (req.user && (req.user.email || req.user.id)) || 'admin',
+    });
+    if (r.notFound) return res.status(404).json({ success: false, message: 'Unrecognized sender not found' });
+    return res.json({ success: true, ignored: r.row.code });
   } catch (err) {
     return next(err);
   }

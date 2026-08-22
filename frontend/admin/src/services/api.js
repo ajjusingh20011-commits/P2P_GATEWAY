@@ -130,6 +130,11 @@ export const adminApi = {
   rejectPayoutRequest: (id, reason) => api.post(`/admin/payout-requests/${id}/reject`, { reason }).then(unwrap),
   resolvePayoutDispute: (id, payload) => api.post(`/admin/payout-requests/${id}/dispute-resolve`, payload).then(unwrap),
 
+  // Bank SMS recognition — unrecognized-sender review queue (Attention page).
+  listUnrecognizedSenders: (params) => api.get('/admin/unrecognized-senders', { params }).then(unwrap),
+  promoteUnrecognizedSender: (code, payload) => api.post(`/admin/unrecognized-senders/${encodeURIComponent(code)}/promote`, payload || {}).then(unwrap),
+  ignoreUnrecognizedSender: (code) => api.post(`/admin/unrecognized-senders/${encodeURIComponent(code)}/ignore`).then(unwrap),
+
   listSettlements: () => api.get('/admin/settlements').then(unwrap),
   triggerSettlement: () => api.post('/admin/settlements/trigger').then(unwrap),
 

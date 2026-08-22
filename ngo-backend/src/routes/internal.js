@@ -16,6 +16,7 @@ const Account = require('../models/Account');
 const Device = require('../models/Device');
 const PayoutEvidence = require('../models/PayoutEvidence');
 const { MAX_ACTIVE_PAYOUTS } = require('../services/payoutList');
+const unrecognizedSenderReview = require('../services/unrecognizedSenderReview');
 const SessionStore = require('../services/SessionStore');
 const { CONNECTION_TYPE } = require('../config/constants');
 const { verifyInternalService } = require('../middleware/internalAuth');
@@ -330,6 +331,56 @@ router.get('/payout-evidence', async (req, res, next) => {
       if (r.screenshotBase64) hasScreenshot = true;
     }
     return res.json({ success: true, extractedFields, hasScreenshot, uploadCount: rows.length });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/* ---------------------------------------------------------------------------
+ * Redesign Section 4 — Unrecognized bank-sender review queue, admin-wide
+ * (service-token) so the P2P admin panel can reach it through the gateway
+ * proxy. Same shared logic as the ngo-admin route. Promote goes live at once
+ * (Section 3 overlay reload, inside the service).
+ * ------------------------------------------------------------------------- */
+
+// GET /api/internal/unrecognized-senders?status=&page=&limit=
+router.get('/unrecognized-senders', async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const { queue, total } = await unrecognizedSenderReview.listQueue({
+      status: req.query.status, limit, skip: (page - 1) * limit,
+    });
+    return res.json({ success: true, queue, total, pages: Math.ceil(total / limit) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/internal/unrecognized-senders/:code/promote  Body: { confirmedName, confirmedCode?, reviewedBy? }
+router.post('/unrecognized-senders/:code/promote', async (req, res, next) => {
+  try {
+    const r = await unrecognizedSenderReview.promote(req.params.code, {
+      confirmedName: req.body && req.body.confirmedName,
+      confirmedCode: req.body && req.body.confirmedCode,
+      reviewedBy: (req.body && req.body.reviewedBy) || 'admin-panel',
+    });
+    if (r.error) return res.status(400).json({ success: false, message: r.error });
+    if (r.notFound) return res.status(404).json({ success: false, message: 'Unrecognized sender not found' });
+    return res.json({ success: true, promoted: r.row });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/internal/unrecognized-senders/:code/ignore  Body: { reviewedBy? }
+router.post('/unrecognized-senders/:code/ignore', async (req, res, next) => {
+  try {
+    const r = await unrecognizedSenderReview.ignore(req.params.code, {
+      reviewedBy: (req.body && req.body.reviewedBy) || 'admin-panel',
+    });
+    if (r.notFound) return res.status(404).json({ success: false, message: 'Unrecognized sender not found' });
+    return res.json({ success: true, ignored: r.row.code });
   } catch (err) {
     return next(err);
   }

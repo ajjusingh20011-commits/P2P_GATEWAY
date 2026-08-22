@@ -1025,6 +1025,64 @@ const getPayoutEvidence = asyncHandler(async (req, res) => {
   return ok(res, { evidence: resp.data.evidence || null });
 });
 
+/* ---------------------------------------------------------------------------
+ * Bank SMS recognition — unrecognized-sender review queue (proxied to ngo).
+ * Admin-WIDE (not trader-scoped), so it uses the internal service token
+ * (internalAuthHeaders → ngo /api/internal/*), not the per-trader token above.
+ * The queue, promote (goes live at once), and ignore all live in ngo; this is
+ * a thin proxy so the admin panel's Attention page can reach them.
+ * ------------------------------------------------------------------------- */
+async function ngoInternal(method, path, { params, data } = {}) {
+  const axios = require('axios');
+  const { internalAuthHeaders } = require('../services/ngoServiceAuth');
+  const base = process.env.NGO_BACKEND_URL || 'http://localhost:3000';
+  return axios({
+    method,
+    url: `${base}${path}`,
+    params,
+    data,
+    headers: internalAuthHeaders(),
+    timeout: 5000,
+    validateStatus: () => true,
+  });
+}
+
+const getUnrecognizedSenders = asyncHandler(async (req, res) => {
+  const resp = await ngoInternal('get', '/api/internal/unrecognized-senders', {
+    params: { status: req.query.status, page: req.query.page, limit: req.query.limit },
+  });
+  if (!resp || resp.status >= 400 || !resp.data) {
+    return fail(res, 502, 'Could not load the unrecognized-sender queue from ngo-backend');
+  }
+  return ok(res, { queue: resp.data.queue || [], total: resp.data.total || 0, pages: resp.data.pages || 1 });
+});
+
+const promoteUnrecognizedSender = asyncHandler(async (req, res) => {
+  const code = encodeURIComponent(String(req.params.code || ''));
+  const resp = await ngoInternal('post', `/api/internal/unrecognized-senders/${code}/promote`, {
+    data: {
+      confirmedName: req.body && req.body.confirmedName,
+      confirmedCode: req.body && req.body.confirmedCode,
+      reviewedBy: (req.user && (req.user.email || req.user.id)) || 'admin',
+    },
+  });
+  if (!resp || resp.status >= 400 || !resp.data || !resp.data.success) {
+    return fail(res, resp && resp.status === 400 ? 400 : 502, (resp && resp.data && resp.data.message) || 'Could not promote the sender');
+  }
+  return ok(res, { promoted: resp.data.promoted });
+});
+
+const ignoreUnrecognizedSender = asyncHandler(async (req, res) => {
+  const code = encodeURIComponent(String(req.params.code || ''));
+  const resp = await ngoInternal('post', `/api/internal/unrecognized-senders/${code}/ignore`, {
+    data: { reviewedBy: (req.user && (req.user.email || req.user.id)) || 'admin' },
+  });
+  if (!resp || resp.status >= 400 || !resp.data || !resp.data.success) {
+    return fail(res, 502, (resp && resp.data && resp.data.message) || 'Could not ignore the sender');
+  }
+  return ok(res, { ignored: resp.data.ignored });
+});
+
 // GET /admin/traders/:id — header + top summary + Overview + Payment
 // Accounts + Devices + Merchant Routing in one call (all naturally
 // small/bounded per trader); Orders/Balance History/Disputes stay separate,
@@ -1616,6 +1674,9 @@ module.exports = {
   getTraderDetail,
   getTraderNotifications,
   getPayoutEvidence,
+  getUnrecognizedSenders,
+  promoteUnrecognizedSender,
+  ignoreUnrecognizedSender,
   getTraderBalanceLogs,
   getTraderActivity,
   getMerchantDetail,

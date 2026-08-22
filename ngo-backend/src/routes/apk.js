@@ -400,6 +400,7 @@ router.post('/event', async (req, res, next) => {
       amount: rawEvent.amount,
       utr: rawEvent.utr,
       deviceId: rawEvent.deviceId,
+      traderId: rawEvent.traderId,
     }).catch(() => {});
 
     // Payment events drive reconciliation against pending donor intents

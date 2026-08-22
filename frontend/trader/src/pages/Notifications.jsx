@@ -76,6 +76,10 @@ function apiToRow(txn) {
     // "GPay Business" catches APK captures and scraped rows alike.
     method: appKey || txn.platform,
     appLabel: sourceApp.label || txn.platform,
+    // Section 5 — the bank SMS reached us and is a real, captured payment, but
+    // its sender header isn't matched to a known bank yet (shown via the
+    // sign-off name + an informational badge, not an error).
+    bankUnrecognized: !!sourceApp.bankUnrecognized,
     // How it reached us (Notification / SMS / Web scraper / Web login). Shown
     // as secondary text: useful for support, never the headline.
     channel: sourceApp.channel || '',
@@ -535,6 +539,14 @@ export default function Notifications() {
                         // we can't name) — still a real app name, rendered the
                         // same way, never the raw capture tag.
                         <Badge>{n.appLabel || n.method}</Badge>
+                      )}
+                      {/* Section 5 — real, captured payment whose bank isn't matched
+                          yet. Informational (amber), not alarming: it's a genuine
+                          payment pending bank confirmation, not an error. */}
+                      {n.bankUnrecognized && (
+                        <Badge color="amber" style={{ marginLeft: 6 }} title="This payment was captured but its bank sender isn't matched to a known bank yet — it's still a real payment, pending bank confirmation.">
+                          Unrecognized bank
+                        </Badge>
                       )}
                     </div>
                     {/* The UPI the money landed in, shown only once the row is
