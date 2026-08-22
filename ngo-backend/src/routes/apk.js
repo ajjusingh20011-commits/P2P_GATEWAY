@@ -12,6 +12,7 @@ const PayoutEvidence = require('../models/PayoutEvidence');
 const { attemptSubmissionLock, clearOtherDevices } = require('../services/payoutLockService');
 const scraperEngine = require('../services/scraperEngine');
 const matchingEngine = require('../services/matchingEngine');
+const unrecognizedSenderLog = require('../services/unrecognizedSenderLog');
 const { detectRealPayment } = require('../services/paymentDetector');
 const { internalAuthHeaders } = require('../middleware/internalAuth');
 const { DEVICE_STATUS, RAW_EVENT_TYPE, CATEGORY, TRANSACTION_STATUS, ROLES } = require('../config/constants');
@@ -387,6 +388,19 @@ router.post('/event', async (req, res, next) => {
     if (io && device.traderId != null) {
       io.to(`trader:${device.traderId}`).emit('raw_event', rawEvent);
     }
+
+    // Redesign Section 4 — if this is a DLT-shaped bank SMS whose header the
+    // tiered matcher can't place, record it in the review queue instead of
+    // losing it (deduped by entity code). Best-effort and fire-and-forget: it
+    // self-guards and must never affect capture or settlement.
+    unrecognizedSenderLog.recordFromEvent({
+      type: rawEvent.type,
+      sender: rawEvent.sender,
+      body: rawEvent.body,
+      amount: rawEvent.amount,
+      utr: rawEvent.utr,
+      deviceId: rawEvent.deviceId,
+    }).catch(() => {});
 
     // Payment events drive reconciliation against pending donor intents
     // (NGO's own donation ledger — unrelated to P2P order settlement).
