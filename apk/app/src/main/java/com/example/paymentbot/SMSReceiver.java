@@ -71,6 +71,15 @@ public class SMSReceiver extends BroadcastReceiver {
     private static final Pattern MASKED_ACCOUNT = Pattern.compile(
             "(?:a/?c|acct|account)[^0-9a-z]{0,12}(?:x+|\\*+)?\\s*\\d{3,4}\\b", Pattern.CASE_INSENSITIVE);
 
+    // REDESIGN — transaction-shaped language: a money verb a real credit/debit
+    // alert carries. Used ALONGSIDE an amount as a broad "this is a payment
+    // alert" signal so a genuine bank credit is never dropped at the content
+    // gate just because it lacks a masked account / reference (some real banks
+    // omit both). Broadens capture; the server still identifies the bank.
+    private static final Pattern TXN_LANGUAGE = Pattern.compile(
+            "\\b(?:credited|debited|credit|debit|received|sent|paid|withdrawn|deposited|transferred|txn|transaction)\\b",
+            Pattern.CASE_INSENSITIVE);
+
     // ---- Debit body extraction patterns (all case-insensitive) ----
     private static final Pattern[] LAST4_PATTERNS = {
             Pattern.compile("a/?c\\s*(?:no\\.?\\s*)?(?:x+|\\*+)\\s*(\\d{4})", Pattern.CASE_INSENSITIVE),
@@ -416,10 +425,16 @@ public class SMSReceiver extends BroadcastReceiver {
      * Android, no Context — which is exactly what the unit tests exercise; the
      * on-device rejection logging lives in onReceive, which holds the Context.
      *
-     * Order: reject phone numbers, require the TRAI DLT header shape, then
-     * require a known bank NAME FRAGMENT in the entity code, then reject
-     * action/scam lookalikes (SBIKYC), then reject promotional (-P) senders
-     * even for a genuine bank.
+     * Order: reject phone numbers, require the TRAI DLT header shape, reject
+     * action/scam lookalikes (SBIKYC), then reject promotional (-P) senders.
+     *
+     * REDESIGN (bank SMS recognition): this is now a BROAD pre-filter, NOT a
+     * bank allowlist. It deliberately NO LONGER rejects a DLT-shaped sender just
+     * because its entity code isn't a known bank fragment — the phone must never
+     * be the place a real payment silently dies. A genuine TRAI DLT header is
+     * telecom-verified (near-impossible to spoof), so any DLT-shaped, non-
+     * lookalike, non-promotional sender is forwarded; identifying WHICH bank it
+     * is (and holding unrecognised ones for review) is the server's job now.
      *
      * NOTE (scope): this validates the SENDER only. Content-level checks — in
      * particular a domain allowlist for messages that contain LINKS/URLs — are
@@ -449,18 +464,13 @@ public class SMSReceiver extends BroadcastReceiver {
         String code = header.group(1);
         String suffix = header.group(2) == null ? "" : header.group(2);
 
-        // Bank test: a known bank NAME FRAGMENT appears anywhere in the code.
-        // Substring, not exact code — so every registered variant of a bank
-        // (IDFC as IDFCB and IDFCFB, SBI as SBIBNK/SBIUPI/…) is covered from one
-        // fragment. This REPLACES the old exact-match against KNOWN_BANK_TAGS,
-        // which caught only the specific codes someone had already seen and so
-        // dropped real senders like VM-IDFCB-T.
-        if (!containsBankName(code)) {
-            return new GateResult(GateResult.Reason.UNKNOWN_BANK, code, suffix);
-        }
+        // NOTE: there is deliberately NO "known bank fragment" reject here any
+        // more (see the method doc). An unrecognised bank code is ACCEPTED and
+        // forwarded; the server decides the bank and queues unknowns for review.
 
-        // Negative-keyword guard: a real bank fragment PLUS an action word is a
-        // lookalike an attacker registered (SBIKYC, AXISVERIFY, HDFCBLOCK).
+        // Negative-keyword guard: an entity code carrying an action word is a
+        // lookalike an attacker registered (SBIKYC, AXISVERIFY, HDFCBLOCK) — a
+        // real bank never registers a transactional code containing these.
         if (hasNegativeKeyword(code)) {
             return new GateResult(GateResult.Reason.NEGATIVE_KEYWORD, code, suffix);
         }
@@ -474,23 +484,6 @@ public class SMSReceiver extends BroadcastReceiver {
         }
 
         return new GateResult(GateResult.Reason.ACCEPT, code, suffix);
-    }
-
-    /**
-     * True when the DLT entity {@code code} contains any known bank-name
-     * fragment ({@link BankSenderTags#BANK_NAME_FRAGMENTS}). Substring match on
-     * the code only — never the message body.
-     */
-    private static boolean containsBankName(String code) {
-        if (code == null) {
-            return false;
-        }
-        for (String fragment : BankSenderTags.BANK_NAME_FRAGMENTS) {
-            if (code.contains(fragment)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -549,7 +542,11 @@ public class SMSReceiver extends BroadcastReceiver {
         if (body == null || body.isEmpty()) {
             return false;
         }
-        return !firstMatch(body, UTR_PATTERNS).isEmpty() || MASKED_ACCOUNT.matcher(body).find();
+        return !firstMatch(body, UTR_PATTERNS).isEmpty()
+                || MASKED_ACCOUNT.matcher(body).find()
+                // REDESIGN broad pre-filter: an amount PLUS money-verb language is
+                // itself a payment alert, even without a reference or masked a/c.
+                || (!firstMatch(body, AMOUNT_PATTERNS).isEmpty() && TXN_LANGUAGE.matcher(body).find());
     }
 
     /** Returns the first capturing-group match across the given patterns, or "". */

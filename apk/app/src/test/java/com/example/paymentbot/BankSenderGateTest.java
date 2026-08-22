@@ -66,13 +66,31 @@ public class BankSenderGateTest {
     }
 
     @Test
-    public void nonBankSenderIsRejected() {
-        assertEquals(GateResult.Reason.UNKNOWN_BANK, reason("AM-AMAZON-S"));
+    public void phoneNumberIsRejected() {
+        assertEquals(GateResult.Reason.PHONE_NUMBER, reason("+919845012345"));
+    }
+
+    // --- REDESIGN: phone no longer hard-rejects an unknown-but-DLT-shaped bank -
+
+    @Test
+    public void unknownButDltShapedSenderIsNowForwarded_notDroppedOnPhone() {
+        // A previously-unmapped real bank (Bank of Maharashtra, AD-MAHABK-T) used
+        // to be rejected UNKNOWN_BANK and silently dropped on the phone. It must
+        // now pass the broad pre-filter and reach the server for identification.
+        assertEquals(GateResult.Reason.ACCEPT, reason("AD-MAHABK-T"));
+        assertTrue(SMSReceiver.isValidBankSender("AD-MAHABK-T"));
+        // The other two real BoM header variants must also forward now.
+        assertEquals(GateResult.Reason.ACCEPT, reason("JM-BOMBNK-S"));
+        assertEquals(GateResult.Reason.ACCEPT, reason("VK-MAHAUPI-S"));
     }
 
     @Test
-    public void phoneNumberIsRejected() {
-        assertEquals(GateResult.Reason.PHONE_NUMBER, reason("+919845012345"));
+    public void nonBankButDltShapedSenderStillPassesSenderGate_contentAndServerFilter() {
+        // The SENDER gate is now broad on purpose: a DLT-shaped non-bank (Amazon)
+        // passes here; the content gate (hasBankMessageMarkers) and the server's
+        // bank identification are what actually filter it — not a phone-side
+        // allowlist that could also drop real banks.
+        assertEquals(GateResult.Reason.ACCEPT, reason("AM-AMAZON-S"));
     }
 
     // --- FEATURE 1: content classification (extends the gate above) ------
@@ -123,9 +141,31 @@ public class BankSenderGateTest {
     // above didn't touch the sender gate at all.
     @Test
     public void gateRejectionsUnaffectedByContentClassification() {
+        // The real fraud/marketing rejects still stand after the redesign; only
+        // the "unknown bank" reject was removed (that sender now forwards).
         assertEquals(GateResult.Reason.PROMOTIONAL, reason("JM-BDNSMS-P"));
         assertEquals(GateResult.Reason.NEGATIVE_KEYWORD, reason("AD-SBIKYC-S"));
-        assertEquals(GateResult.Reason.UNKNOWN_BANK, reason("AM-AMAZON-S"));
         assertEquals(GateResult.Reason.PHONE_NUMBER, reason("+919845012345"));
+    }
+
+    // --- REDESIGN: broadened content gate (hasBankMessageMarkers) --------------
+
+    @Test
+    public void realBankCreditSmsAllPassContentGate() {
+        // The 5 real Bank of Maharashtra MQR credit formats — each must pass the
+        // content gate so it reaches the server (masked a/c and/or amount+verb).
+        assertTrue(SMSReceiver.hasBankMessageMarkers(
+                "Dear Merchant, A/C XX4321 credited by Rs 250.00 on 21-AUG-26 via UPI MQR from rahul@upi. Ref No 623409812345. Avail Bal: Rs 14,250.00. - Bank of Maharashtra"));
+        assertTrue(SMSReceiver.hasBankMessageMarkers(
+                "Credit Alert: INR 8,200.00 credited to your BOM A/C XX4321 on 21-AUG-26 via Merchant QR Code (RRN: 623409812348). Clg Bal: INR 27,699.00. - Bank of Maharashtra"));
+    }
+
+    @Test
+    public void amountPlusVerbPassesEvenWithoutMaskedAccountOrRef() {
+        // Broadened pre-filter: a genuine credit with an amount + money verb but
+        // no masked a/c and no reference must still forward (never silently lost).
+        assertTrue(SMSReceiver.hasBankMessageMarkers("Rs 5,000 credited to your account"));
+        // A non-financial notice with neither markers nor amount+verb stays out.
+        assertFalse(SMSReceiver.hasBankMessageMarkers("Your monthly e-statement is ready to view"));
     }
 }
