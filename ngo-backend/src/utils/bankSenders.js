@@ -87,6 +87,19 @@ const BANK_BY_SENDER_CODE = {
   KWIKSM: { name: 'MobiKwik', logo: 'mobikwik.svg' },
 };
 
+// ── Runtime overlay (Section 3) — admin-promoted codes, loaded from the review
+// queue at startup / after each promote (see services/bankRuntimeRules.js), so a
+// genuinely-new bank starts resolving on ALL devices with NO app rebuild. Same
+// shape as BANK_BY_SENDER_CODE ({ name, logo }); merged into Tier-1 above.
+// Kept a plain in-memory object so the matcher stays synchronous (settlement
+// calls it sync); the loader refreshes it out-of-band.
+let RUNTIME_CODES = {};
+
+/** Replace the runtime overlay. Pure setter (no DB) so it is unit-testable. */
+function setRuntimeBankCodes(map) {
+  RUNTIME_CODES = map && typeof map === 'object' ? map : {};
+}
+
 // ── Tier 3 — blacklist / disambiguation of known false-positive traps. ─────
 // Headers that resemble a bank prefix but are a different entity. Checked
 // before Tier 2 so they never resolve to a parent bank. Non-bank → never
@@ -164,9 +177,14 @@ function identifyBankFromSender(sender) {
   const tokens = headerTokens(sender);
 
   // Tier 1 — exact dictionary lookup. Highest confidence; stop immediately.
+  // Includes the RUNTIME overlay (Section 3): codes an admin PROMOTED from the
+  // review queue on real evidence. A promoted code is admin-confirmed, so it is
+  // treated as Tier-1 (settle-eligible) exactly like the static table — that is
+  // the whole point of promotion (a new bank starts working with no redeploy).
   for (const t of tokens) {
-    if (BANK_BY_SENDER_CODE[t]) {
-      return { tier: 1, code: t, ...BANK_BY_SENDER_CODE[t], isBank: true, confident: true };
+    const hit = BANK_BY_SENDER_CODE[t] || RUNTIME_CODES[t];
+    if (hit) {
+      return { tier: 1, code: t, name: hit.name, logo: hit.logo, isBank: true, confident: true };
     }
   }
 
@@ -265,6 +283,7 @@ module.exports = {
   settlementBankCode,
   extractBankSignoff,
   identifyBankFromSms,
+  setRuntimeBankCodes,
   BANK_BY_SENDER_CODE,
   HEADER_BLACKLIST,
   BANK_PREFIXES,

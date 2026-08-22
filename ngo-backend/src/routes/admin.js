@@ -8,12 +8,18 @@ const NGO = require('../models/NGO');
 const Ledger = require('../models/Ledger');
 const Device = require('../models/Device');
 const UnrecognizedSender = require('../models/UnrecognizedSender');
+const bankRuntimeRules = require('../services/bankRuntimeRules');
 const { cleanAmountString } = require('../utils/amountHelper');
 
 const router = express.Router();
 
 // Every admin route requires a valid token AND the admin role.
 router.use(verifyToken, requireRole(ROLES.ADMIN));
+
+// Section 3 — load admin-promoted bank codes into the matcher's runtime overlay
+// at startup + periodically (this route module is required at server boot). A
+// promote also refreshes on demand below, so a confirmed bank goes live at once.
+bankRuntimeRules.startRuntimeRulesRefresh();
 
 function paginate(req, defaultLimit = 50) {
   const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
@@ -256,6 +262,9 @@ router.post('/unrecognized-senders/:code/promote', async (req, res, next) => {
       { new: true }
     );
     if (!row) return res.status(404).json({ success: false, message: 'Unrecognized sender not found' });
+    // Section 3 — make it LIVE immediately: reload the runtime overlay so this
+    // bank starts resolving on every device at once, no redeploy/rebuild.
+    await bankRuntimeRules.refreshRuntimeBankCodes();
     return res.json({ success: true, promoted: { code: row.code, confirmedName: row.confirmedName, confirmedCode: row.confirmedCode } });
   } catch (err) {
     return next(err);
