@@ -1,6 +1,6 @@
 'use strict';
 
-const { identifyBankFromSender } = require('./bankSenders');
+const { identifyBankFromSender, extractBankSignoff } = require('./bankSenders');
 
 /**
  * Resolves which real payment app a captured transaction came from, and over
@@ -111,7 +111,7 @@ function senderPrefix(sender) {
  * @param {string} [txn.rawSender] - RawEvent.sender, when the row has one
  * @returns {{ key: string|null, label: string, channel: string }}
  */
-function resolveSourceApp({ platform, rawSender } = {}) {
+function resolveSourceApp({ platform, rawSender, body } = {}) {
   const plat = String(platform || '').trim();
 
   // Web Login captures are read from the platform's own dashboard API, so the
@@ -150,6 +150,18 @@ function resolveSourceApp({ platform, rawSender } = {}) {
   const bank = identifyBankFromSender(rawSender);
   if (bank) {
     return { key: null, label: bank.name, channel, bankTier: bank.tier, isBank: bank.isBank };
+  }
+
+  // REDESIGN — header not in the matcher: recover the real bank name from the
+  // SMS sign-off ("- Bank of Maharashtra") for DISPLAY/review, so an unmapped
+  // bank shows its real name (flagged unrecognised) instead of "Unknown app".
+  // DISPLAY-ONLY: key stays null and settlement uses settlementBankCode (Tier-1
+  // exact) — never this label — so this cannot affect BUG-58 auto-settle. Only
+  // runs when a caller passes `body`; the settlement caller doesn't, so its
+  // result is unchanged.
+  const signoff = extractBankSignoff(body);
+  if (signoff) {
+    return { key: null, label: signoff, channel, isBank: true, bankUnrecognized: true, viaSignoff: true };
   }
 
   // No sender at all, or a source we genuinely can't name: say so plainly

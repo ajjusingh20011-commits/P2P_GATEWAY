@@ -204,9 +204,67 @@ function settlementBankCode(sender) {
   return r && r.confident ? r.code : null;
 }
 
+// ── Bank sign-off extraction (redesign — a SECOND confirmation layer) ───────
+// Most genuine bank SMS end with the bank's own name after a trailing dash:
+//   "… Ref No 623409812345. Avail Bal: Rs 14,250.00. - Bank of Maharashtra"
+// This recovers that name and is used two ways (never for settlement):
+//   1. header recognised → cross-check header vs sign-off agree (a mismatch is
+//      a real suspicious signal worth surfacing).
+//   2. header NOT recognised → show the REAL bank name in the review queue /
+//      trader feed instead of a cryptic code (turns "unknown" into "Bank of X").
+// A confidence signal, NOT a requirement: some banks omit it — absence alone
+// must never count against a message.
+//
+// The trailing "- <phrase>" at the end of the SMS. Capture the phrase (letters,
+// spaces, and a few name punctuation chars — never digits, so an earlier
+// "21-AUG-26" or amount can't be captured), then keep it only if it actually
+// contains the word "bank" (checked in code, so a name STARTING with "Bank" —
+// "Bank of Maharashtra" — is handled as well as one ending in it).
+const SIGNOFF_PATTERN = /[-–—]\s*([A-Za-z][A-Za-z&.'()\- ]{2,60})\s*\.?\s*$/;
+
+function extractBankSignoff(body) {
+  if (!body) return '';
+  const m = SIGNOFF_PATTERN.exec(String(body).trim());
+  if (!m) return '';
+  const phrase = m[1].replace(/\s+/g, ' ').trim();
+  return /\bbank\b/i.test(phrase) ? phrase : '';
+}
+
+const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+/**
+ * Identify the bank behind an SMS using BOTH the header (tiered matcher, kept
+ * unchanged) and the body sign-off. Pure — no settlement side effects.
+ * @returns {{
+ *   header: object|null,        // identifyBankFromSender result (tier/name/…)
+ *   signoffName: string|null,   // bank name from the "- <Bank>" sign-off
+ *   signoffAgrees: boolean|null,// header vs sign-off agree? null = n/a
+ *   bankRecognized: boolean,    // did the header resolve to a bank?
+ *   displayName: string|null,   // best name to SHOW (header, else sign-off)
+ * }}
+ */
+function identifyBankFromSms(sender, body) {
+  const header = identifyBankFromSender(sender);
+  const signoffName = extractBankSignoff(body) || null;
+
+  let signoffAgrees = null;
+  if (header && header.name && signoffName) {
+    const a = normName(header.name);
+    const b = normName(signoffName);
+    signoffAgrees = a === b || a.includes(b) || b.includes(a);
+  }
+
+  const bankRecognized = !!(header && header.isBank);
+  const displayName = bankRecognized ? header.name : signoffName;
+
+  return { header, signoffName, signoffAgrees, bankRecognized, displayName };
+}
+
 module.exports = {
   identifyBankFromSender,
   settlementBankCode,
+  extractBankSignoff,
+  identifyBankFromSms,
   BANK_BY_SENDER_CODE,
   HEADER_BLACKLIST,
   BANK_PREFIXES,

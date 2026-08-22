@@ -357,6 +357,9 @@ router.get('/transactions', verifyServiceOrAdmin, async (req, res, next) => {
       obj.sourceApp = resolveSourceApp({
         platform: obj.platform,
         rawSender: obj.rawEventId && obj.rawEventId.sender,
+        // Body lets an UNRECOGNISED bank header fall back to the SMS sign-off
+        // name for display (redesign) — display-only, never settlement.
+        body: obj.rawEventId && obj.rawEventId.body,
       });
       // The line the trader reads, picked by which half of the capture names
       // an amount — see utils/captureText.js.
