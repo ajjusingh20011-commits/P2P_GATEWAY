@@ -185,8 +185,9 @@ function traderAcceptsType(trader, depositType) {
 }
 
 /**
- * True if this account — or any OTHER account collecting on the same physical
- * device — already holds an ACTIVE order for the exact amount.
+ * True if this account — or any OTHER account on the same physical device that
+ * a capture could not be told apart from — already holds an ACTIVE order for
+ * the exact amount.
  *
  * The per-account half stops one account holding two indistinguishable orders.
  * The device half stops the same ambiguity across accounts, and it exists
@@ -196,22 +197,53 @@ function traderAcceptsType(trader, depositType) {
  * ₹100 order, the arriving payment genuinely cannot be assigned — and settling
  * it against either one is a coin flip with a customer's money (BUG-41).
  *
- * Preventing the collision at assignment is strictly better than detecting it
- * at settlement: the second order simply routes to a different account or
- * queues, exactly as it already does when one account is busy at that amount.
+ * PLATFORM-SCOPED (this refinement). The device half used to block blanket:
+ * ANY two accounts sharing a phone were stopped from holding the same amount.
+ * That was stricter than the ambiguity it was protecting against. A capture
+ * DOES carry which app it came from, and matchingEngineV2.resolveReceivingUpis
+ * already uses exactly that to pin the receiving sibling (BUG-58): a GPay
+ * notification can only be the GPay account, so a GPay account and a Paytm
+ * account on one phone holding ₹100 each are individually attributable and were
+ * being blocked for nothing — needlessly shrinking a multi-account trader's
+ * capacity. Only siblings on the SAME platform are genuinely indistinguishable,
+ * so only those are blocked now.
+ *
+ * The trade this accepts, stated plainly: a capture whose platform cannot be
+ * determined (an unrecognised app, or a bank SMS, which names a bank rather
+ * than an app) can no longer be attributed when two different-platform siblings
+ * hold the same amount. resolveReceivingUpis REFUSES in that case rather than
+ * guessing, so the payment is held for manual confirmation — it is not
+ * mis-settled. That is the same outcome as any other unresolvable capture.
  *
  * Accounts with no device link are only ever compared against themselves —
- * ngo_device_id NULL is "not linked", not a group to collide within.
+ * ngo_device_id NULL is "not linked", not a group to collide within. A sibling
+ * with no account_type is treated as indistinguishable and still blocks: an
+ * unknown platform cannot be proven different from this one.
+ *
+ * @param {number} paymentDetailId
+ * @param {number|string} amount
+ * @param {string} [deviceId]      - the account's ngo_device_id (Mongo Device._id)
+ * @param {string} [accountType]   - the account's own platform (account_type).
+ *   Omitted → fall back to the old blanket device-wide block, which is the safe
+ *   direction for a caller that does not know its own platform.
  */
-async function hasSameAmountActiveOrder(paymentDetailId, amount, deviceId = undefined) {
+async function hasSameAmountActiveOrder(paymentDetailId, amount, deviceId = undefined, accountType = undefined) {
   const detailIds = [paymentDetailId];
 
   if (deviceId) {
     const siblings = await db.PaymentDetail.findAll({
       where: { ngo_device_id: deviceId, id: { [Op.ne]: paymentDetailId } },
-      attributes: ['id'],
+      attributes: ['id', 'account_type'],
     });
-    siblings.forEach((s) => detailIds.push(s.id));
+
+    const ownType = accountType ? String(accountType).trim().toLowerCase() : '';
+    siblings.forEach((s) => {
+      const sibType = s.account_type ? String(s.account_type).trim().toLowerCase() : '';
+      // No platform on our side (caller didn't pass one) or on the sibling's →
+      // cannot prove they are distinguishable, so keep blocking.
+      const indistinguishable = !ownType || !sibType || sibType === ownType;
+      if (indistinguishable) detailIds.push(s.id);
+    });
   }
 
   const n = await db.Order.count({
@@ -276,10 +308,12 @@ async function eligibleAccountsFor(trader, amount) {
     if (Number(account.min_amount) > 0 && Number(amount) < Number(account.min_amount)) continue;
     if (Number(account.max_amount) > 0 && Number(amount) > Number(account.max_amount)) continue;
 
-    // Same-amount lock.
+    // Same-amount lock. account_type is passed so the device half only blocks
+    // siblings on the SAME platform — a capture names its app, so a GPay and a
+    // Paytm account on one phone are individually attributable.
     // eslint-disable-next-line no-await-in-loop
-    if (await hasSameAmountActiveOrder(account.id, amount, account.ngo_device_id)) {
-      logger.info(`routing: account ${account.upi_id} busy with active ₹${amount} order — skipping (same amount${account.ngo_device_id ? ', checked across its device' : ''})`);
+    if (await hasSameAmountActiveOrder(account.id, amount, account.ngo_device_id, account.account_type)) {
+      logger.info(`routing: account ${account.upi_id} busy with active ₹${amount} order — skipping (same amount${account.ngo_device_id ? `, checked across its device for other ${account.account_type || 'unknown-platform'} accounts` : ''})`);
       continue;
     }
 

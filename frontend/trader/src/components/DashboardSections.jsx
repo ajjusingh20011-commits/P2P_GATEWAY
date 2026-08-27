@@ -613,25 +613,43 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
   // genuinely-connected accounts. See utils/accountState.js.
   const all = details || [];
   const live = all.filter(isLive);
-  const needsReconnect = all.filter((d) => accountState(d) === ACCOUNT_STATE.RECONNECT);
-  // The table lists everything routing could touch, each row labelled with its
-  // real state, so a "Reconnect needed" account is visible instead of absent.
-  // The table lists exactly what its own subtitle promises: accounts with a
-  // confirmed connection right now. It previously listed anything toggled on,
-  // so a disconnected account appeared as a Live-pool row carrying a red
-  // "No link" badge while the tiles directly above correctly read "0 live" —
-  // the table contradicted itself. Disconnected accounts are surfaced by the
-  // needs-reconnect count below and are actionable on their own row in
-  // Payment details, which is where the fix actually lives.
-  const shown = live;
+  // `is_active !== false` mirrors isLive's own guard: that flag is the ADMIN
+  // linkage switch, not the trader's. An account an admin has disabled is not
+  // something the trader can reconnect, so it must not appear in their pool as
+  // an actionable row — it would be an instruction they cannot follow.
+  const needsReconnect = all.filter((d) => d.is_active !== false && accountState(d) === ACCOUNT_STATE.RECONNECT);
+  // The table lists accounts that are LIVE plus those that need reconnecting,
+  // each row labelled with its real state.
+  //
+  // It used to list `live` only. That was a correction of an older bug where
+  // the table listed anything merely toggled on, so a disconnected account
+  // showed as a Live-pool row while the tiles above read "0 live" — the table
+  // contradicted itself. Narrowing to `live` fixed the contradiction but
+  // overshot: an account whose phone dropped vanished from the pool entirely,
+  // which reads as "deleted" rather than "needs attention", and the one screen
+  // a trader watches went silent about the exact problem they have to fix.
+  //
+  // Showing it with an honest amber "Reconnect" badge is neither of those
+  // failures. The contradiction stays fixed because the tiles and the "N live
+  // of M" count below remain strictly `live` — the table is a work list, the
+  // tiles are the state of the pool, and they are no longer the same set. Rows
+  // in this state already render their own badge and reconnect action; that
+  // code was simply unreachable while this was `live`.
+  //
+  // NEVER-linked accounts are deliberately still excluded: there is no
+  // connection to restore, so they belong in Payment details (where they can
+  // be linked), not in a pool of things that were working and stopped.
+  const shown = [...live, ...needsReconnect];
 
-  // Activity aggregates describe the rows the table actually lists (`shown`),
-  // not just the live subset — otherwise a pool with real orders on a
-  // manually-confirmed account would report zero.
-  const liveOrdersToday = shown.reduce((sum, d) => sum + (Number(d.usage?.used_today) || 0), 0);
+  // Activity aggregates describe the genuinely-live subset, NOT every row the
+  // table lists. A reconnecting account cannot take an order right now, so
+  // folding its history into "orders today" or the average success rate would
+  // overstate what the pool is currently doing — the same conflation of intent
+  // and real connection state that accountState.js exists to keep apart.
+  const liveOrdersToday = live.reduce((sum, d) => sum + (Number(d.usage?.used_today) || 0), 0);
   // Averaged over accounts that have a real scored session; an account with
   // nothing scored yet has no rate and must not be averaged in as a zero.
-  const withUsage = shown.filter((d) => d.usage?.success_rate != null);
+  const withUsage = live.filter((d) => d.usage?.success_rate != null);
   const avgSuccess = withUsage.length
     ? Math.round(withUsage.reduce((sum, d) => sum + d.usage.success_rate, 0) / withUsage.length)
     : null;
@@ -642,9 +660,11 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '20px 22px 16px' }}>
         <div>
           <h3 style={{ fontWeight: 700, fontSize: 17, margin: 0 }}>Live pool</h3>
+          {/* The subtitle has to describe what the table actually lists, which
+              is no longer only the confirmed-connected set. */}
           <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0 0' }}>
-            Accounts with a confirmed connection right now
-            {needsReconnect.length > 0 && ` · ${needsReconnect.length} need reconnecting`}
+            Accounts routing can use, and any that need reconnecting
+            {needsReconnect.length > 0 && ` · ${needsReconnect.length} ${needsReconnect.length === 1 ? 'needs' : 'need'} reconnecting`}
           </p>
         </div>
         <button
@@ -688,16 +708,23 @@ export function LivePoolSection({ details, todayVolumeInr, onChanged }) {
         </div>
         {shown.length === 0 ? (
           <div style={{ padding: '22px', textAlign: 'center' }}>
-            <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>No accounts have a confirmed connection right now.</p>
-            {needsReconnect.length > 0 && (
+            {/* Reconnecting accounts are rows now, so reaching this branch
+                means there are neither — not "none connected, some broken". */}
+            <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>No accounts are connected or awaiting reconnection.</p>
+            {/* The "N need reconnecting — fix in Payment details" prompt that
+                used to live here has been removed rather than left in place:
+                reconnecting accounts are rows in the table now, so reaching
+                this branch means there are none, and the condition could never
+                be true again. */}
+            {all.length > 0 && (
               <p style={{ color: 'var(--muted)', fontSize: 12, margin: '6px 0 0' }}>
-                {needsReconnect.length} account{needsReconnect.length === 1 ? '' : 's'} need reconnecting —
+                {all.length} account{all.length === 1 ? '' : 's'} set up —
                 {' '}
                 <button
                   onClick={() => navigate('/offers')}
                   style={{ background: 'none', border: 0, padding: 0, color: 'var(--accent)', fontWeight: 700, cursor: 'pointer', fontSize: 12 }}
                 >
-                  fix in Payment details
+                  link a device in Payment details
                 </button>
               </p>
             )}

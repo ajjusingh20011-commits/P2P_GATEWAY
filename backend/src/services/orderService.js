@@ -60,10 +60,15 @@ async function createOrder(merchant, body = {}) {
   try {
     // Re-checked under the lock, and across the account's device — the
     // eligibility pass that chose this account did the same, but another order
-    // can have landed on a SIBLING account sharing its phone in between. See
-    // hasSameAmountActiveOrder.
+    // can have landed on a SIBLING account sharing its phone in between. The
+    // account's own platform is passed for the same reason it is at the
+    // eligibility call site: only a SAME-platform sibling is genuinely
+    // indistinguishable at capture time. See hasSameAmountActiveOrder.
     if (await routingEngine.hasSameAmountActiveOrder(
-      assignment.paymentDetail.id, amount, assignment.paymentDetail.ngo_device_id,
+      assignment.paymentDetail.id,
+      amount,
+      assignment.paymentDetail.ngo_device_id,
+      assignment.paymentDetail.account_type,
     )) {
       throw typedErr(503, 'no_provider_available', 'Provider just took a same-amount order — please retry', { deposit_type: actualDepositType });
     }
