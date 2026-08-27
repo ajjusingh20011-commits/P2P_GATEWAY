@@ -90,7 +90,13 @@ const create = asyncHandler(async (req, res) => {
       customer_ref: r.order.customer_ref,
       amount: Number(r.order.amount_inr),
       amount_inr: Number(r.order.amount_inr),
-      amount_usdt: Number(Number(r.amountUsdt).toFixed(8)),
+      // Named `estimated_` deliberately. This is amount_inr / trader_rate — an
+      // indicative figure at the assigned trader's rate, at creation time. It
+      // is NOT what the merchant is credited on settlement: that is the
+      // `amount_usdt` in the payment.success webhook, computed at the admin
+      // rate. Both used to be called `amount_usdt` while meaning different
+      // numbers, which is a trap for anyone integrating against both.
+      estimated_amount_usdt: Number(Number(r.amountUsdt).toFixed(8)),
       deposit_type: r.actualDepositType,
       status: 'pending',
       checkout_url: r.checkoutUrl,
@@ -101,6 +107,93 @@ const create = asyncHandler(async (req, res) => {
     const status = err.status || 500;
     return res.status(status).json({ success: false, error: err.error || 'server_error', message: err.message, ...(err.extra || {}) });
   }
+});
+
+/* --------------------- GET /status  (API key, H2H) ------------------------ */
+/**
+ * The authenticated order-status lookup for server-to-server merchants.
+ *
+ * Until this existed, the ONLY way a merchant could check an order was the
+ * public `GET /:id` below — no authentication, and `findOrder` resolves a bare
+ * integer as a primary key, so any order in the system was readable by counting
+ * upwards. That is not something a partner's security review can be asked to
+ * accept, and it exposed the assigned trader's real UPI id, account name and
+ * bank to anyone who could reach the host.
+ *
+ * This route:
+ *   - requires the same X-API-Key / X-API-Secret pair as order creation;
+ *   - looks up by the merchant's OWN reference (`merchant_order_id`), or by our
+ *     `order_id` uuid / `gateway_order_id`. Numeric primary keys are not
+ *     accepted at all, so there is nothing to enumerate;
+ *   - is scoped to `merchant_id = req.merchant.id`, so one merchant can never
+ *     read another's order — a foreign order is reported as not found rather
+ *     than 403, which would confirm it exists.
+ *
+ * Query: ?merchant_order_id=... | ?order_id=<uuid> | ?gateway_order_id=...
+ */
+const apiStatus = asyncHandler(async (req, res) => {
+  const merchantOrderId = String(req.query.merchant_order_id || '').trim();
+  const orderUuid = String(req.query.order_id || req.query.uuid || '').trim();
+  const gatewayOrderId = String(req.query.gateway_order_id || '').trim();
+
+  if (!merchantOrderId && !orderUuid && !gatewayOrderId) {
+    return res.status(400).json({
+      success: false,
+      error: 'missing_identifier',
+      message: 'Provide one of: merchant_order_id, order_id (uuid) or gateway_order_id',
+    });
+  }
+
+  const where = { merchant_id: req.merchant.id };
+  if (merchantOrderId) where.merchant_order_id = merchantOrderId;
+  else if (orderUuid) where.uuid = orderUuid;
+  else where.gateway_order_id = gatewayOrderId;
+
+  const order = await db.Order.findOne({
+    where,
+    include: [{ model: db.PaymentDetail, as: 'paymentDetail' }],
+  });
+
+  if (!order) {
+    return res.status(404).json({ success: false, error: 'order_not_found', message: 'Order not found' });
+  }
+
+  const pd = order.paymentDetail;
+  const pay = pd ? upiService.paymentPayload(order, pd) : {};
+
+  return ok(res, {
+    gateway_order_id: order.gateway_order_id,
+    merchant_order_id: order.merchant_order_id,
+    order_id: order.uuid,
+    customer_ref: order.customer_ref,
+    amount_inr: Number(order.amount_inr),
+    deposit_type: order.deposit_type,
+    status: order.status,
+    // Present only once the order has actually settled, so a partner never has
+    // to guess whether a figure is indicative or final.
+    settled_amount_usdt: order.status === 'success' && order.amount_usdt != null
+      ? Number(order.amount_usdt)
+      : null,
+    utr: order.utr_number || null,
+    // What the customer submitted, when they submitted it, and how.
+    customer_submitted_utr: order.donor_submitted_utr || null,
+    confirmation_type: order.confirmation_type || null,
+    claimed_paid_at: order.claimed_paid_at,
+    confirmed_at: order.confirmed_at,
+    expires_at: order.expires_at,
+    created_at: order.created_at,
+    checkout_url: `${config.frontend.checkout}/?order=${order.uuid}`,
+    // The payment instructions for this order, so an H2H partner rendering its
+    // own payment screen does not have to fall back to the public route.
+    payment: pd
+      ? {
+        upi_id: pay.assigned_upi_id,
+        payee_name: pay.payee_name,
+        qr_data: pay.qr_data,
+        upi_link: pay.upi_link,
+      }
+      : null,
+  });
 });
 
 /* ------------------------------ GET /:id ---------------------------------- */
@@ -270,7 +363,7 @@ const cancel = asyncHandler(async (req, res) => {
   if (traderId) emitToTrader(traderId, 'order:cancelled', { order_id: order.uuid });
   emitToAdmin('order:cancelled', { order_id: order.uuid });
   emitToOrder(order.uuid, 'order:cancelled', { order_id: order.uuid, status: 'failed' });
-  webhookService.sendWebhook(order.merchant_id, 'order.cancelled', { order_id: order.uuid }).catch(() => {});
+  webhookService.sendWebhook(order.merchant_id, 'order.cancelled', { order_id: order.uuid }, { order }).catch(() => {});
 
   return ok(res, { order: orderView(order) });
 });
@@ -295,7 +388,7 @@ const cancelCheckout = asyncHandler(async (req, res) => {
   if (traderId) emitToTrader(traderId, 'order:cancelled', { order_id: order.uuid });
   emitToAdmin('order:cancelled', { order_id: order.uuid });
   emitToOrder(order.uuid, 'order:cancelled', { order_id: order.uuid, status: 'cancelled' });
-  webhookService.sendWebhook(order.merchant_id, 'order.cancelled', { order_id: order.uuid }).catch(() => {});
+  webhookService.sendWebhook(order.merchant_id, 'order.cancelled', { order_id: order.uuid }, { order }).catch(() => {});
 
   return ok(res, { success: true, status: 'cancelled', order: orderView(order) });
 });
@@ -315,7 +408,7 @@ const expire = asyncHandler(async (req, res) => {
   if (traderId) emitToTrader(traderId, 'order:expired', { order_id: order.uuid });
   emitToMerchant(order.merchant_id, 'order:expired', { order_id: order.uuid });
   emitToOrder(order.uuid, 'order:expired', { order_id: order.uuid, status: 'failed' });
-  webhookService.sendWebhook(order.merchant_id, 'order.expired', { order_id: order.uuid }).catch(() => {});
+  webhookService.sendWebhook(order.merchant_id, 'order.expired', { order_id: order.uuid }, { order }).catch(() => {});
 
   return ok(res, { order: orderView(order) });
 });
@@ -636,4 +729,4 @@ const list = asyncHandler(async (req, res) => {
   return ok(res, { orders: rows.map(orderView), pagination: { page, limit, total: count } });
 });
 
-module.exports = { create, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, markPaid, cancel, cancelCheckout, verifyPayment, traderConfirm, reopenForReview };
+module.exports = { create, apiStatus, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, markPaid, cancel, cancelCheckout, verifyPayment, traderConfirm, reopenForReview };

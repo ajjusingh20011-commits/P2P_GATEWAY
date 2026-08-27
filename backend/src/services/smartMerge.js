@@ -164,13 +164,18 @@ async function confirmOrder(order, { utrNumber, engine, senderName, reviewedBy }
       merchant_order_id: order.merchant_order_id,
       order_id: order.uuid,
       amount_inr: order.amount_inr,
+      // The real USDT the merchant is credited, at the admin rate. Distinct
+      // from the order-creation response's `estimated_amount_usdt`, which is
+      // computed at the TRADER rate — the two were both called `amount_usdt`
+      // and meant different numbers, which no partner could be expected to
+      // guess. This one is the settled, authoritative figure.
       amount_usdt: fees ? fees.merchant_receives_usdt : undefined,
       customer_ref: order.customer_ref,
       deposit_type: order.deposit_type,
       status: 'success',
       utr: utrNumber,
       timestamp: new Date().toISOString(),
-    })
+    }, { order })
     .catch((err) => logger.error('webhook enqueue failed', err));
 
   logger.info(`smartMerge: order ${order.id} settled (success) via ${engine || 'merge'}`);

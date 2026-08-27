@@ -23,6 +23,18 @@ const router = Router();
 
 router.post('/create', apiKeyAuth, orderController.create);
 router.get('/', verifyToken, orderController.list);
+
+// Authenticated (API-key) status lookup for server-to-server merchants.
+//
+// MUST stay above `/:id` — Express matches in declaration order, so declaring
+// it after the catch-all would make "status" a value for :id and hand this
+// straight to the public route instead.
+//
+// This is the endpoint an H2H partner should poll. `/:id` below is public and
+// resolves bare integers as primary keys, so it must never be the documented
+// way to check an order.
+router.get('/status', apiKeyAuth, orderController.apiStatus);
+
 router.get('/:id', orderController.getOne);
 router.get('/:id/checkout', orderController.checkout);
 router.post('/:id/new-upi', orderController.newUpi);

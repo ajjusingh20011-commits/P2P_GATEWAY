@@ -28,6 +28,7 @@ db.Dispute = require('./dispute.model')(sequelize);
 db.BalanceLog = require('./balanceLog.model')(sequelize);
 db.Setting = require('./setting.model')(sequelize);
 db.UtrDiscrepancyLog = require('./utrDiscrepancyLog.model')(sequelize);
+db.WebhookLog = require('./webhookLog.model')(sequelize);
 
 // Wire associations
 Object.values(db).forEach((model) => {

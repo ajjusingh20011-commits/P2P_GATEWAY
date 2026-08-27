@@ -476,7 +476,11 @@ export default function Orders() {
         merchantOrderId: d.merchant_order_id,
         depositType: d.deposit_type,
         amountInr: d.amount_inr ?? body.amount_inr,
-        amountUsdt: d.amount_usdt,
+        // Renamed server-side: an order-creation response can only ever give an
+        // ESTIMATE (it is priced at the assigned trader's rate). The credited
+        // amount arrives with settlement. `amount_usdt` is kept as a fallback
+        // so a panel deployed ahead of the API keeps working.
+        amountUsdt: d.estimated_amount_usdt ?? d.amount_usdt,
         customerRef: d.customer_ref ?? body.customer_ref,
         status: d.status || 'pending',
         checkoutUrl: d.checkout_url,

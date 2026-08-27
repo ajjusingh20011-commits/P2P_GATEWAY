@@ -34,7 +34,7 @@ async function checkExpiredOrders() {
       emitToTrader(traderId, 'order:expired', { order_id: order.uuid });
     }
     emitToMerchant(order.merchant_id, 'order:expired', { order_id: order.uuid });
-    webhookService.sendWebhook(order.merchant_id, 'order.expired', { order_id: order.uuid }).catch(() => {});
+    webhookService.sendWebhook(order.merchant_id, 'order.expired', { order_id: order.uuid }, { order }).catch(() => {});
   }
 
   if (orders.length) logger.info(`orderExpiry: expired ${orders.length} order(s)`);

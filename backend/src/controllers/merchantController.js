@@ -105,7 +105,10 @@ const createOrder = asyncHandler(async (req, res) => {
       order_id: r.order.uuid,
       customer_ref: r.order.customer_ref,
       amount_inr: Number(r.order.amount_inr),
-      amount_usdt: Number(Number(r.amountUsdt).toFixed(8)),
+      // Indicative, at the assigned trader's rate — see the same field in
+      // orderController.create. The credited figure arrives in the
+      // payment.success webhook as `amount_usdt`.
+      estimated_amount_usdt: Number(Number(r.amountUsdt).toFixed(8)),
       deposit_type: r.actualDepositType,
       status: 'pending',
       checkout_url: r.checkoutUrl,

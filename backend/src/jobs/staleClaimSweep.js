@@ -46,7 +46,7 @@ async function checkStaleClaims() {
       stale_minutes: STALE_CLAIM_MINUTES,
     });
     emitToOrder(order.uuid, 'order:updated', { order_id: order.uuid, status: 'under_review' });
-    webhookService.sendWebhook(order.merchant_id, 'order.stale_review', { order_id: order.uuid }).catch(() => {});
+    webhookService.sendWebhook(order.merchant_id, 'order.stale_review', { order_id: order.uuid }, { order }).catch(() => {});
   }
 
   if (orders.length) logger.info(`staleClaimSweep: flagged ${orders.length} stale claimed_paid order(s) for review`);

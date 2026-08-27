@@ -153,6 +153,24 @@ async function bootstrap() {
     logger.warn(`Could not start payout-expiry sweep: ${err.message}`);
   }
 
+  // ---- In-process webhook retry sweep (works with or without Redis) ----
+  // The durable half of merchant webhook delivery. sendWebhook attempts the
+  // first delivery inline and leaves anything that failed `pending` in
+  // webhook_logs with a next_attempt_at; this retries them on schedule. It is
+  // deliberately NOT on BullMQ: retries used to happen only when Redis was new
+  // enough for it, so the guarantee we could give a partner varied by host.
+  try {
+    const { checkDueWebhooks } = require('./jobs/webhookRetrySweep');
+    setInterval(() => {
+      checkDueWebhooks().catch((err) => {
+        logger.warn(`Webhook retry sweep error (ignored): ${err.message}`);
+      });
+    }, 30_000).unref();
+    logger.info('Webhook retry sweep running every 30s');
+  } catch (err) {
+    logger.warn(`Could not start webhook retry sweep: ${err.message}`);
+  }
+
   server.listen(config.port, () => {
     logger.info(`Server listening on port ${config.port} [${config.env}]`);
     logger.info(`Health check: http://localhost:${config.port}/api/health`);
