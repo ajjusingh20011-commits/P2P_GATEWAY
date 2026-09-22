@@ -37,14 +37,25 @@ const fmtDateTime = (v) => (v ? new Date(v).toLocaleString('en-IN', { day: '2-di
 // current status (payoutService.reject): from awaiting_processing it
 // cancels; from awaiting_settlement it routes to Dispute for review, since
 // a payout that already reached settlement can't just be silently voided.
+// Text for the mandatory acknowledgement checkbox on an unverified payout's
+// approve/settle confirm dialog — see ConfirmModal's requireAck/ackLabel and
+// payoutService.settleAndCredit's evidence_unverified gate. A distinct,
+// separately-checked box, not just extra sentences in the same description
+// an admin could click past exactly like a normal approval.
+const UNVERIFIED_ACK_LABEL = 'I have manually checked that this payment was actually made before settling it.';
+
 const ACTION_COPY = {
-  approve: { title: 'Approve this payout?', tone: 'primary', label: 'Approve & settle', desc: (r) => `${r.evidence_unverified ? '⚠ UNVERIFIED — the trader submitted this without auto-verified payment evidence. Confirm you have checked the payment before settling. ' : ''}${short(r.uuid, r.id)} will be settled and ${inr(r.amount_inr)} debited from the assigned trader's balance. This cannot be undone.` },
+  approve: { title: 'Approve this payout?', tone: 'primary', label: 'Approve & settle', desc: (r) => `${r.evidence_unverified ? '⚠ UNVERIFIED — the trader submitted this without auto-verified payment evidence. ' : ''}${short(r.uuid, r.id)} will be settled and ${inr(r.amount_inr)} debited from the assigned trader's balance. This cannot be undone.` },
   rejectProcessing: { title: 'Reject this payout?', tone: 'danger', label: 'Reject', desc: (r) => `${short(r.uuid, r.id)} will be marked Canceled and the merchant notified.` },
   rejectSettlement: { title: 'Reject this payout?', tone: 'danger', label: 'Reject', desc: (r) => `${short(r.uuid, r.id)} will move to Dispute for review — an already-processing payout can't be silently canceled.` },
-  settle: { title: 'Settle this disputed payout?', tone: 'primary', label: 'Settle', desc: (r) => `${short(r.uuid, r.id)} will be settled and ${inr(r.amount_inr)} debited from the assigned trader's balance. This cannot be undone.` },
+  settle: { title: 'Settle this disputed payout?', tone: 'primary', label: 'Settle', desc: (r) => `${r.evidence_unverified ? '⚠ UNVERIFIED — the captured evidence was never auto-verified. ' : ''}${short(r.uuid, r.id)} will be settled and ${inr(r.amount_inr)} debited from the assigned trader's balance. This cannot be undone.` },
   returnToPool: { title: 'Return this payout to the pool?', tone: 'primary', label: 'Return to pool', desc: (r) => `${short(r.uuid, r.id)} goes back to the global pool for another trader to pick up — no funds moved. Use this when the trader didn't actually pay.` },
   void: { title: 'Void this disputed payout?', tone: 'danger', label: 'Void', desc: (r) => `${short(r.uuid, r.id)} will be marked Canceled with no funds moved.` },
 };
+
+// Actions that move real money AND respect the evidence_unverified gate —
+// these are the two that need the extra checkbox when the row is unverified.
+const SETTLEMENT_ACTIONS = new Set(['approve', 'settle']);
 
 // ---- Payout evidence review (Feature 2) ----------------------------------
 const digitsOnly = (s) => String(s == null ? '' : s).replace(/\D/g, '');
@@ -289,12 +300,16 @@ export default function Payouts() {
     }
   };
 
-  const runConfirmed = () => {
+  // `acked` is only meaningful for approve/settle on an evidence_unverified
+  // row — ConfirmModal passes it through regardless, but it's a no-op
+  // (ignored server-side) unless the row actually needs it, since
+  // acknowledge_unverified only has effect when evidence_unverified is true.
+  const runConfirmed = (acked) => {
     if (!confirming) return;
     const { row, actionKey } = confirming;
-    if (actionKey === 'approve') act(() => adminApi.approvePayoutRequest(row.id), row.id);
+    if (actionKey === 'approve') act(() => adminApi.approvePayoutRequest(row.id, { acknowledge_unverified: acked === true }), row.id);
     else if (actionKey === 'rejectProcessing' || actionKey === 'rejectSettlement') act(() => adminApi.rejectPayoutRequest(row.id, 'Rejected by admin'), row.id);
-    else if (actionKey === 'settle') act(() => adminApi.resolvePayoutDispute(row.id, { action: 'settle' }), row.id);
+    else if (actionKey === 'settle') act(() => adminApi.resolvePayoutDispute(row.id, { action: 'settle', acknowledge_unverified: acked === true }), row.id);
     else if (actionKey === 'returnToPool') act(() => adminApi.resolvePayoutDispute(row.id, { action: 'return_to_pool' }), row.id);
     else if (actionKey === 'void') act(() => adminApi.resolvePayoutDispute(row.id, { action: 'void' }), row.id);
   };
@@ -500,6 +515,8 @@ export default function Payouts() {
         busy={busyId != null}
         onConfirm={runConfirmed}
         onClose={() => setConfirming(null)}
+        requireAck={!!confirming && SETTLEMENT_ACTIONS.has(confirming.actionKey) && !!confirming.row.evidence_unverified}
+        ackLabel={UNVERIFIED_ACK_LABEL}
       />
     </div>
   );

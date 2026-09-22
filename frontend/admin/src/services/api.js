@@ -126,7 +126,7 @@ export const adminApi = {
   // Full captured payout evidence (screenshot + SMS + recorded input) for the
   // review modal's image viewer + match indicator.
   getPayoutEvidence: (id) => api.get(`/admin/payout-requests/${id}/evidence`).then(unwrap),
-  approvePayoutRequest: (id) => api.post(`/admin/payout-requests/${id}/approve`).then(unwrap),
+  approvePayoutRequest: (id, payload) => api.post(`/admin/payout-requests/${id}/approve`, payload).then(unwrap),
   rejectPayoutRequest: (id, reason) => api.post(`/admin/payout-requests/${id}/reject`, { reason }).then(unwrap),
   resolvePayoutDispute: (id, payload) => api.post(`/admin/payout-requests/${id}/dispute-resolve`, payload).then(unwrap),
 

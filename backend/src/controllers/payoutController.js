@@ -31,9 +31,13 @@ async function currentTrader(req, res) {
 }
 
 // Wrap a service call so thrown {status,message} errors become clean responses.
+// `code` (when the service set one, e.g. evidence_unverified_ack_required) is
+// forwarded too — additive, existing callers that only read `message` are
+// unaffected — so the frontend can distinguish a specific, actionable error
+// from a generic one instead of pattern-matching on message text.
 function handleErr(res, err) {
   const status = err.status || 500;
-  return res.status(status).json({ success: false, message: err.message });
+  return res.status(status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) });
 }
 
 /* ------------------------------- merchant --------------------------------- */
@@ -187,7 +191,13 @@ const adminList = asyncHandler(async (req, res) => {
 
 const adminApprove = asyncHandler(async (req, res) => {
   try {
-    const row = await payoutService.approve(req.params.id);
+    // acknowledge_unverified: the admin UI sets this true only after showing
+    // a dedicated "this payout's evidence was never verified" prompt and the
+    // admin explicitly confirming through it — never as a default or a side
+    // effect of the normal Approve click. See settleAndCredit's doc comment.
+    const row = await payoutService.approve(req.params.id, {
+      acknowledgeUnverified: req.body?.acknowledge_unverified === true,
+    });
     return ok(res, { payout_request: row });
   } catch (err) {
     return handleErr(res, err);
@@ -210,6 +220,8 @@ const disputeResolveSchema = Joi.object({
   proof_url: Joi.string().max(512).allow('', null),
   // Back-compat: older callers send `reason` as free text.
   reason: Joi.string().max(1000).allow('', null),
+  // See adminApprove's matching comment — only meaningful for action:'settle'.
+  acknowledge_unverified: Joi.boolean().default(false),
 });
 
 const adminDisputeResolve = asyncHandler(async (req, res) => {
@@ -222,6 +234,7 @@ const adminDisputeResolve = asyncHandler(async (req, res) => {
       reason_note: value.reason_note || value.reason,
       proof_url: value.proof_url,
       adminUserId: req.user && req.user.id,
+      acknowledgeUnverified: value.acknowledge_unverified === true,
     });
     return ok(res, { payout_request: row });
   } catch (err) {

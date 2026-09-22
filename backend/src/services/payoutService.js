@@ -727,7 +727,7 @@ async function adminCounts() {
  * locked transaction, immediately before the debit, so it can't race with
  * another payout settling against the same merchant concurrently.
  */
-async function settleAndCredit(id, { fromStatuses }) {
+async function settleAndCredit(id, { fromStatuses, acknowledgeUnverified }) {
   let platformProfit = 0;
   const row = await db.sequelize.transaction(async (transaction) => {
     const r = await db.PayoutRequest.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
@@ -739,6 +739,24 @@ async function settleAndCredit(id, { fromStatuses }) {
       throw Object.assign(new Error(`Cannot settle from ${r.status}`), { status: 409 });
     }
     if (!r.assigned_trader_id) throw Object.assign(new Error('No trader assigned'), { status: 409 });
+
+    // This payout's captured evidence was never hard-verified (capture
+    // genuinely failed and the trader flagged it, or the capture matched
+    // more than one live order and had to be held) — settling it moves real
+    // money on nothing more than trust. Previously this one-click Approve
+    // ran identically whether or not evidence was ever confirmed; there was
+    // no way for an admin to know they were settling an unverified payout
+    // from the action itself. Now it requires an explicit, distinct
+    // acknowledgement — the caller must pass acknowledgeUnverified:true,
+    // which the UI only sets after the admin has seen and confirmed a
+    // dedicated "this one wasn't verified" prompt, not as a side effect of
+    // the same click that settles a normal payout.
+    if (r.evidence_unverified && !acknowledgeUnverified) {
+      throw Object.assign(
+        new Error('This payout\'s evidence was never verified — explicit acknowledgement is required before approving it'),
+        { status: 409, code: 'evidence_unverified_ack_required' }
+      );
+    }
 
     const credit = Number(r.trader_credit_usdt);
     if (!(credit > 0)) throw Object.assign(new Error('Missing rate snapshot; cannot settle'), { status: 409 });
@@ -793,37 +811,67 @@ async function settleAndCredit(id, { fromStatuses }) {
   return row;
 }
 
-/** Approve: awaiting_settlement → settlement_completed (+ credit). */
-async function approve(id) {
-  return settleAndCredit(id, { fromStatuses: ['awaiting_settlement'] });
+/**
+ * Approve: awaiting_settlement → settlement_completed (+ credit).
+ * @param {number|string} id
+ * @param {{acknowledgeUnverified?: boolean}} [opts] - must be true if the
+ *   row's evidence_unverified flag is set, or settleAndCredit refuses with
+ *   evidence_unverified_ack_required — see its own doc comment.
+ */
+async function approve(id, { acknowledgeUnverified } = {}) {
+  return settleAndCredit(id, { fromStatuses: ['awaiting_settlement'], acknowledgeUnverified });
 }
 
 /**
  * Reject: awaiting_processing → canceled, or awaiting_settlement → dispute
  * (a transferred payout can't just be voided — it needs review).
+ *
+ * Row-locked + re-checked under the transaction, matching accept()/
+ * cancelByTrader()/checkExpired()/settleAndCredit() — the proven pattern
+ * elsewhere in this file. Previously this read the row unlocked and wrote
+ * unconditionally, so it could race a trader's properly-locked accept()
+ * (terminally cancelling a payout the trader had already legitimately
+ * claimed, with no recovery path) or a concurrent approve()/settleAndCredit
+ * (stomping an already-settled, money-moved payout's status back to
+ * 'dispute' after the fact). Taking the same row lock here means MySQL
+ * serializes reject() against both of those: whichever transaction commits
+ * first wins, and the loser's re-check under the lock sees the new status
+ * and throws a clean 409 instead of blindly overwriting it.
  */
 async function reject(id, { reason } = {}) {
-  const row = await db.PayoutRequest.findByPk(id);
-  if (!row) throw Object.assign(new Error('Payout request not found'), { status: 404 });
+  const row = await db.sequelize.transaction(async (transaction) => {
+    const fresh = await db.PayoutRequest.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+    if (!fresh) throw Object.assign(new Error('Payout request not found'), { status: 404 });
 
-  if (row.status === 'awaiting_processing') {
-    await row.update({ status: 'canceled', canceled_at: new Date() });
+    if (fresh.status === 'awaiting_processing') {
+      await fresh.update({ status: 'canceled', canceled_at: new Date() }, { transaction });
+      return fresh;
+    }
+    if (fresh.status === 'awaiting_settlement') {
+      await fresh.update(
+        { status: 'dispute', disputed_at: new Date(), dispute_reason: reason || 'Rejected by admin — under review' },
+        { transaction }
+      );
+      return fresh;
+    }
+    throw Object.assign(new Error(`Cannot reject from ${fresh.status}`), { status: 409 });
+  });
+
+  // Side effects after commit — `row.status` reliably tells us which branch
+  // actually ran, since only one of the two above could have executed.
+  if (row.status === 'canceled') {
     const summary = { id: row.id, uuid: row.uuid, status: row.status };
     broadcast('payout:canceled', summary);
     emitToMerchant(row.merchant_id, 'payout:canceled', summary);
     logger.info(`payout: admin rejected (canceled) ${row.uuid}`);
-    return row;
-  }
-  if (row.status === 'awaiting_settlement') {
-    await row.update({ status: 'dispute', disputed_at: new Date(), dispute_reason: reason || 'Rejected by admin — under review' });
+  } else {
     const summary = { id: row.id, uuid: row.uuid, trader_id: row.assigned_trader_id, status: row.status };
     emitToAdmin('payout:disputed', summary);
     emitToMerchant(row.merchant_id, 'payout:disputed', summary);
     if (row.assigned_trader_id) emitToTrader(row.assigned_trader_id, 'payout:disputed', summary);
     logger.info(`payout: admin rejected (disputed) ${row.uuid}`);
-    return row;
   }
-  throw Object.assign(new Error(`Cannot reject from ${row.status}`), { status: 409 });
+  return row;
 }
 
 /**
@@ -834,13 +882,16 @@ async function reject(id, { reason } = {}) {
  *   action 'void'            → terminally cancel (no funds moved).
  * The last two write a payout_cancellations audit row (actor: admin).
  */
-async function disputeResolve(id, { action, reason_code, reason_note, proof_url, adminUserId } = {}) {
+async function disputeResolve(id, { action, reason_code, reason_note, proof_url, adminUserId, acknowledgeUnverified } = {}) {
   const row = await db.PayoutRequest.findByPk(id);
   if (!row) throw Object.assign(new Error('Payout request not found'), { status: 404 });
   if (row.status !== 'dispute') throw Object.assign(new Error(`Cannot resolve from ${row.status}`), { status: 409 });
 
   if (action === 'settle') {
-    return settleAndCredit(id, { fromStatuses: ['dispute'] });
+    // Same evidence_unverified gate as approve() — a disputed payout being
+    // settled from here needs the same explicit acknowledgement if its
+    // evidence was never verified. See settleAndCredit's doc comment.
+    return settleAndCredit(id, { fromStatuses: ['dispute'], acknowledgeUnverified });
   }
 
   if (action === 'return_to_pool') {
@@ -879,19 +930,35 @@ async function disputeResolve(id, { action, reason_code, reason_note, proof_url,
     return db.PayoutRequest.findByPk(id);
   }
 
-  // void — terminal cancel
-  await row.update({ status: 'canceled', canceled_at: new Date(), dispute_reason: reason_note || reason_code || row.dispute_reason });
-  await recordCancellation(row, {
-    actorType: 'admin', actorId: adminUserId,
-    reasonCode: reason_code || 'admin_void', reasonNote: reason_note, proofUrl: proof_url,
-    outcome: 'terminal_canceled',
+  // void — terminal cancel. Locked + re-checked under the transaction, same
+  // reasoning as reject() above and the same protection return_to_pool
+  // (just above) already had: without this, a void racing a concurrent
+  // approve()/settleAndCredit() on the same row could silently overwrite an
+  // already-settled, money-moved payout's status back to 'canceled' — the
+  // books would say no money moved when it genuinely had, with settled_at
+  // still populated and no way back short of manual DB correction.
+  const voided = await db.sequelize.transaction(async (transaction) => {
+    const fresh = await db.PayoutRequest.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+    if (!fresh || fresh.status !== 'dispute') {
+      throw Object.assign(new Error(`Cannot resolve from ${fresh ? fresh.status : 'missing'}`), { status: 409 });
+    }
+    await fresh.update(
+      { status: 'canceled', canceled_at: new Date(), dispute_reason: reason_note || reason_code || fresh.dispute_reason },
+      { transaction }
+    );
+    await recordCancellation(fresh, {
+      actorType: 'admin', actorId: adminUserId,
+      reasonCode: reason_code || 'admin_void', reasonNote: reason_note, proofUrl: proof_url,
+      outcome: 'terminal_canceled',
+    }, transaction);
+    return fresh;
   });
-  const summary = { id: row.id, uuid: row.uuid, status: row.status };
+  const summary = { id: voided.id, uuid: voided.uuid, status: voided.status };
   emitToAdmin('payout:canceled', summary);
-  emitToMerchant(row.merchant_id, 'payout:canceled', summary);
-  if (row.assigned_trader_id) emitToTrader(row.assigned_trader_id, 'payout:canceled', summary);
-  logger.info(`payout: admin voided disputed ${row.uuid}`);
-  return row;
+  emitToMerchant(voided.merchant_id, 'payout:canceled', summary);
+  if (voided.assigned_trader_id) emitToTrader(voided.assigned_trader_id, 'payout:canceled', summary);
+  logger.info(`payout: admin voided disputed ${voided.uuid}`);
+  return voided;
 }
 
 /* --------------------------------- job ------------------------------------ */
