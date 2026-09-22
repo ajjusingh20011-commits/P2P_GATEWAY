@@ -629,8 +629,16 @@ router.post('/debit-sms', async (req, res, next) => {
 
     // 1-2. Resolve the device and its NGO.
     const device = deviceId ? await Device.findOne({ deviceId }) : null;
-    const ngoId = device && device.ngoId ? String(device.ngoId) : '';
-    const traderRoom = device && device.traderId != null ? `trader:${device.traderId}` : null;
+    // Same gate /heartbeat already applies (see its own doc comment): no
+    // matching, currently-registered device means nothing gets written —
+    // previously this lookup only gated downstream effects (ngoId/traderRoom
+    // below), not the DebitSMS write itself, so a deviceId with no Device
+    // document could still get a debit SMS persisted.
+    if (!device) {
+      return res.status(404).json({ success: false, message: 'Device not registered' });
+    }
+    const ngoId = device.ngoId ? String(device.ngoId) : '';
+    const traderRoom = device.traderId != null ? `trader:${device.traderId}` : null;
 
     // 3. Persist the debit SMS.
     const debit = await DebitSMS.create({
@@ -772,6 +780,14 @@ router.post('/payout-evidence', async (req, res, next) => {
     // or an APK that still resolves the order locally). Attach to that order.
     // The armed-gate is GONE (redesign) — the first-submission lock stays.
     if (orderId) {
+      // Same gate /heartbeat already applies (see its own doc comment): no
+      // matching, currently-registered device means nothing gets written.
+      // The REDESIGN (non-orderId) path below already refuses on !traderId
+      // before ever calling storeFor — this legacy path didn't, so a
+      // deviceId with no Device document could still get evidence persisted.
+      if (!device) {
+        return res.status(404).json({ success: false, message: 'Device not registered' });
+      }
       const orderIdStr = String(orderId);
       const lock = await attemptSubmissionLock(orderIdStr, deviceId || '', traderId);
       if (!lock.allowed) {
@@ -850,8 +866,15 @@ router.post('/outgoing-payment', async (req, res, next) => {
     } = req.body;
 
     const device = deviceId ? await Device.findOne({ deviceId }) : null;
-    const ngoId = device && device.ngoId ? String(device.ngoId) : '';
-    const traderRoom = device && device.traderId != null ? `trader:${device.traderId}` : null;
+    // Same gate /heartbeat already applies (see its own doc comment): no
+    // matching, currently-registered device means nothing gets written —
+    // previously this lookup only gated downstream effects (ngoId/traderRoom
+    // below), not the OutgoingPayment write itself.
+    if (!device) {
+      return res.status(404).json({ success: false, message: 'Device not registered' });
+    }
+    const ngoId = device.ngoId ? String(device.ngoId) : '';
+    const traderRoom = device.traderId != null ? `trader:${device.traderId}` : null;
 
     const payment = await OutgoingPayment.create({
       ngoId,
