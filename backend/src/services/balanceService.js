@@ -94,13 +94,43 @@ async function computeFees(order) {
 /**
  * Settle a confirmed order under the rate-margin model. Deducts
  * trader_deduction_usdt from the trader, credits merchant_receives_usdt to the
- * merchant, and persists the full breakdown on the order. Idempotent per order
- * (the caller only settles once, on the confirm transition).
+ * merchant, and persists the full breakdown on the order.
+ *
+ * MUST be called with an active `transaction` that already holds the order
+ * row's lock (see smartMerge.confirmOrder) — this function locks the
+ * trader/merchant rows WITHIN that same transaction, so the balance
+ * read-modify-write and the order's status transition commit or fail
+ * together as one atomic unit. Two concurrent settlement attempts for the
+ * same order can then no longer both move money: the second caller blocks
+ * on confirmOrder's order-row lock until the first transaction commits,
+ * then its own re-check of order.status (done by the caller, before this
+ * runs) sees the order is no longer active and never calls this at all.
+ *
+ * Separately, locking the trader/merchant rows here (previously the
+ * merchant was read unlocked, so its new balance was computed from a
+ * possibly-stale read) also closes a real lost-update: two different
+ * orders settling to the same merchant at nearly the same moment could
+ * previously clobber each other's credit.
+ *
+ * @param {object} order
+ * @param {import('sequelize').Transaction} transaction - required; caller
+ *   already holds this order row's FOR UPDATE lock inside it.
  * @returns the fee breakdown.
  */
-async function settleOrder(order) {
-  const trader = order.trader_id ? await db.Trader.findByPk(order.trader_id) : null;
-  const merchant = order.merchant_id ? await db.Merchant.findByPk(order.merchant_id) : null;
+async function settleOrder(order, transaction) {
+  if (!transaction) {
+    throw Object.assign(
+      new Error('settleOrder requires an active transaction — the caller must already hold the order row lock'),
+      { status: 500 }
+    );
+  }
+
+  const trader = order.trader_id
+    ? await db.Trader.findByPk(order.trader_id, { transaction, lock: transaction.LOCK.UPDATE })
+    : null;
+  const merchant = order.merchant_id
+    ? await db.Merchant.findByPk(order.merchant_id, { transaction, lock: transaction.LOCK.UPDATE })
+    : null;
   const fees = await computeFees(order);
 
   // Deduction ALWAYS uses the trader rate; merchant settlement uses the admin rate.
@@ -120,46 +150,52 @@ async function settleOrder(order) {
     );
   }
 
-  await db.sequelize.transaction(async (transaction) => {
-    if (trader) {
-      // Trader gives USDT (amount_inr / trader_rate). No commission credit —
-      // the trader's margin is already baked into their (higher) rate.
-      await adjustBalance(
-        order.trader_id,
-        {
-          type: 'deduction',
-          amountUsdt: fees.trader_deduction_usdt,
-          orderId: order.id,
-          note: `Order confirmed - ${order.amount_inr} INR @ rate ${fees.trader_rate}`,
-        },
-        { transaction }
-      );
-    }
-    if (merchant) {
-      // Merchant is credited amount_inr / admin_rate (fee baked into the rate).
-      const newMerchantBal = round8(Number(merchant.balance_usdt) + fees.merchant_settlement_usdt);
-      await merchant.update({ balance_usdt: newMerchantBal }, { transaction });
-    }
-
-    await order.update(
+  if (trader) {
+    // Trader gives USDT (amount_inr / trader_rate). No commission credit —
+    // the trader's margin is already baked into their (higher) rate.
+    // adjustBalance re-reads the trader by id; passing the same lock option
+    // is harmless (InnoDB row locks are reentrant within one transaction)
+    // and keeps this using the shared, log-writing helper.
+    await adjustBalance(
+      order.trader_id,
       {
-        exchange_rate: fees.base_rate,
-        trader_rate: fees.trader_rate,
-        admin_rate: fees.admin_rate,
-        amount_usdt: fees.merchant_settlement_usdt,
-        trader_deduction_usdt: fees.trader_deduction_usdt,
-        admin_receives_usdt: fees.merchant_settlement_usdt,
-        merchant_fee_usdt: fees.merchant_fee_usdt,
-        merchant_receives_usdt: fees.merchant_settlement_usdt,
-        platform_profit_usdt: fees.platform_profit_usdt,
-        confirmed_at: new Date(),
+        type: 'deduction',
+        amountUsdt: fees.trader_deduction_usdt,
+        orderId: order.id,
+        note: `Order confirmed - ${order.amount_inr} INR @ rate ${fees.trader_rate}`,
       },
-      { transaction }
+      { transaction, lock: transaction.LOCK.UPDATE }
     );
-  });
+  }
+  if (merchant) {
+    // Merchant is credited amount_inr / admin_rate (fee baked into the rate).
+    // Computed from the LOCKED read above, not a stale unlocked one.
+    const newMerchantBal = round8(Number(merchant.balance_usdt) + fees.merchant_settlement_usdt);
+    await merchant.update({ balance_usdt: newMerchantBal }, { transaction });
+  }
 
-  // Accumulate the platform revenue wallet (settings table). Done outside the
-  // transaction since settings live in their own table + cache.
+  await order.update(
+    {
+      exchange_rate: fees.base_rate,
+      trader_rate: fees.trader_rate,
+      admin_rate: fees.admin_rate,
+      amount_usdt: fees.merchant_settlement_usdt,
+      trader_deduction_usdt: fees.trader_deduction_usdt,
+      admin_receives_usdt: fees.merchant_settlement_usdt,
+      merchant_fee_usdt: fees.merchant_fee_usdt,
+      merchant_receives_usdt: fees.merchant_settlement_usdt,
+      platform_profit_usdt: fees.platform_profit_usdt,
+      confirmed_at: new Date(),
+    },
+    { transaction }
+  );
+
+  // Accumulate the platform revenue wallet (settings table). Done outside
+  // this transaction on purpose: settings live in their own table + cache,
+  // and this figure is a best-effort accounting total, not a per-order
+  // balance that must stay perfectly atomic with the settlement itself —
+  // matches the original code's placement (this ran after the old inner
+  // transaction committed too).
   try {
     const current = await settingsService.getNumber('platform_revenue_usdt', 0);
     await settingsService.set('platform_revenue_usdt', round8(current + fees.platform_profit_usdt));

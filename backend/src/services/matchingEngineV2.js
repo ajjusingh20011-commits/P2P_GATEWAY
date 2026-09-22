@@ -319,7 +319,10 @@ async function matchAndSettle({ upiIds, deviceId, traderId, amount, utr, eventTi
   if (order.status === 'success') {
     // Already settled (e.g. a duplicate/retried delivery of the same
     // event) — confirmOrder is idempotent, but skip the tier/discrepancy
-    // bookkeeping since there's nothing new to record.
+    // bookkeeping since there's nothing new to record. This is a fast-path
+    // check only — confirmOrder re-verifies under lock regardless, so a
+    // concurrent settlement racing this exact read is still handled
+    // correctly by the try/catch below, not by this check.
     return { matched: true, tier: order.match_tier, order_id: order.id, alreadySettled: true };
   }
 
@@ -361,11 +364,31 @@ async function matchAndSettle({ upiIds, deviceId, traderId, amount, utr, eventTi
     auto_verified: true,
   });
 
-  await smartMerge.confirmOrder(order, {
-    utrNumber: cleanUtr || undefined,
-    engine: source,
-    senderName: payerName || undefined,
-  });
+  // confirmOrder re-fetches this order under a row lock and re-verifies its
+  // status before moving any money — see its own doc comment. That means a
+  // concurrent settlement attempt for this same order (e.g. this event's SMS
+  // sibling arriving at nearly the same moment) can lose the race here even
+  // though it passed every check above; that's correct, not an error, so
+  // it's translated into a clean refusal rather than left to surface as an
+  // unhandled 500 through /api/internal/match-settlement.
+  try {
+    const settled = await smartMerge.confirmOrder(order, {
+      utrNumber: cleanUtr || undefined,
+      engine: source,
+      senderName: payerName || undefined,
+    });
+    if (settled.status !== 'success') {
+      // Shouldn't happen — confirmOrder either settles or throws — but
+      // guard against silently reporting matched:true if it ever doesn't.
+      return { matched: false, reason: 'settle_incomplete', order_id: order.id };
+    }
+  } catch (err) {
+    if (err.code === 'order_terminal') {
+      logger.warn(`matchingEngineV2: lost the settlement race for order ${order.id} to a concurrent caller — ${err.message}`);
+      return { matched: false, reason: 'lost_settlement_race', order_id: order.id };
+    }
+    throw err;
+  }
 
   logger.info(`matchingEngineV2: order ${order.id} settled via Tier ${tier} (source=${source || 'unknown'})`);
   return { matched: true, tier, order_id: order.id };

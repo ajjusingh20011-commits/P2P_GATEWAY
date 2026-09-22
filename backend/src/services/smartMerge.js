@@ -61,30 +61,84 @@ function amountMatches(detected, expected) {
 }
 
 /**
- * Transition an order to SUCCESS (settled) and fire all side effects. Idempotent:
- * a no-op if the order is already success. Used by both high-confidence
- * auto-confirmation and the admin manual Confirm endpoint (reviewedBy set).
+ * Transition an order to SUCCESS (settled) and fire all side effects.
+ * Idempotent and race-safe: the order row is re-fetched under a
+ * SELECT...FOR UPDATE lock and its status re-verified BEFORE any money
+ * moves, all inside one transaction — matching the lock-and-recheck
+ * pattern already proven elsewhere in this codebase (routingEngine's
+ * amount-lock, payoutService's accept()/checkExpired()/settleAndCredit()).
+ *
+ * This closes two real races the un-locked version had:
+ *   - Two concurrent callers (e.g. an SMS capture and a notification
+ *     capture for the same real payment arriving close together) could
+ *     both pass a stale `order.status === 'success'` check and both call
+ *     settleOrder, double-crediting the merchant and double-debiting the
+ *     trader for one real payment. Now only one caller's transaction can
+ *     hold the row lock at a time, and the loser's re-check under that
+ *     lock sees the winner's already-committed 'success' status and
+ *     returns without moving money a second time.
+ *   - A late settlement attempt landing after the order was independently
+ *     flipped to a terminal status (e.g. 'failed' by the expiry sweep,
+ *     which now takes the same lock — see orderExpiry.js) could previously
+ *     resurrect it straight back to 'success', even after its trader/
+ *     account had already been released and possibly reassigned. The
+ *     ACTIVE_STATUSES re-check below refuses that instead of guessing.
+ *
+ * Used by both high-confidence auto-confirmation and the admin manual
+ * Confirm endpoint (reviewedBy set).
  */
 async function confirmOrder(order, { utrNumber, engine, senderName, reviewedBy } = {}) {
-  if (order.status === 'success') return order;
+  if (order.status === 'success') return order; // fast-path only — re-checked under lock below regardless.
 
-  // Settle FIRST, then mark success. settleOrder moves trader + merchant USDT
-  // balances, writes balance_logs, and persists the order's locked financial
-  // fields (exchange_rate, amount_usdt, trader_rate, trader_deduction_usdt) in
-  // its own transaction. Only once it succeeds do we flip the order to success
-  // and fire the success side-effects.
-  //
-  // Previously status was set to 'success' first and a settlement failure was
-  // swallowed as "non-fatal", which left a confirmed order with NULL financial
-  // fields and no money actually moved — a half-settled success. A failed
-  // settlement (e.g. the trader has insufficient USDT balance) must instead
-  // stop the confirmation and surface: the order stays in its pre-confirm
-  // status for admin handling, and an alert is emitted. confirmOrderV2 already
-  // try/catches this call, so manual confirms report the real reason.
   let fees;
+  let freshOrder;
+  let alreadySettled = false;
+
   try {
-    fees = await balanceService.settleOrder(order);
+    await db.sequelize.transaction(async (transaction) => {
+      freshOrder = await db.Order.findByPk(order.id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!freshOrder) throw Object.assign(new Error('Order not found'), { status: 404 });
+
+      if (freshOrder.status === 'success') {
+        // A concurrent call already settled this order while we were
+        // waiting on the lock — idempotent no-op, not an error.
+        alreadySettled = true;
+        return;
+      }
+      if (!db.Order.ACTIVE_STATUSES.includes(freshOrder.status)) {
+        // Terminal (failed/rejected/disputed/cancelled) — refuse to
+        // resurrect it. A late settlement landing here means something
+        // else already concluded this order; that must win, not us.
+        throw Object.assign(
+          new Error(`Cannot settle order ${freshOrder.id} — status is terminal ('${freshOrder.status}')`),
+          { status: 409, code: 'order_terminal' }
+        );
+      }
+
+      // Settle FIRST, then mark success — both inside this same locked
+      // transaction now, so a settlement failure (e.g. insufficient trader
+      // balance) rolls back cleanly with nothing partially written, and a
+      // successful settlement can never be observed by another transaction
+      // without the status flip already having happened too.
+      fees = await balanceService.settleOrder(freshOrder, transaction);
+
+      await freshOrder.update(
+        {
+          status: 'success',
+          confirmed_at: freshOrder.confirmed_at || new Date(),
+          upi_ref_id: utrNumber || freshOrder.upi_ref_id,
+          utr_number: utrNumber || freshOrder.utr_number,
+          confirm_engine: engine || freshOrder.confirm_engine,
+          ...(reviewedBy ? { reviewed_by: reviewedBy, reviewed_at: new Date() } : {}),
+        },
+        { transaction }
+      );
+    });
   } catch (err) {
+    if (err.code === 'order_terminal') {
+      logger.warn(`smartMerge: ${err.message} — refusing to settle (not an error, a correctly-lost race)`);
+      throw err;
+    }
     logger.error(`smartMerge: settlement failed for order ${order.id}: ${err.message} — not marking success`);
     emitToAdmin('order:settlement_failed', {
       order_id: order.uuid,
@@ -96,90 +150,82 @@ async function confirmOrder(order, { utrNumber, engine, senderName, reviewedBy }
     throw Object.assign(err, { status: err.status || 422 });
   }
 
-  await order.update({
-    // settleOrder already stamped confirmed_at + the financial fields.
-    status: 'success',
-    confirmed_at: order.confirmed_at || new Date(),
-    upi_ref_id: utrNumber || order.upi_ref_id,
-    utr_number: utrNumber || order.utr_number,
-    confirm_engine: engine || order.confirm_engine,
-    ...(reviewedBy ? { reviewed_by: reviewedBy, reviewed_at: new Date() } : {}),
-  });
+  if (alreadySettled) return freshOrder;
 
   // Mark this order's transactions merged.
-  await db.Transaction.update({ is_merged: true }, { where: { order_id: order.id } });
+  await db.Transaction.update({ is_merged: true }, { where: { order_id: freshOrder.id } });
 
   // Update daily-usage counters and release the trader.
-  if (order.trader_id) {
-    const amount = Number(order.amount_inr);
-    if (order.payment_detail_id) {
-      await db.PaymentDetail.increment({ today_used: amount }, { where: { id: order.payment_detail_id } });
+  if (freshOrder.trader_id) {
+    const amount = Number(freshOrder.amount_inr);
+    if (freshOrder.payment_detail_id) {
+      await db.PaymentDetail.increment({ today_used: amount }, { where: { id: freshOrder.payment_detail_id } });
     }
-    await db.Trader.increment({ current_daily_used: amount }, { where: { id: order.trader_id } });
-    await routingEngine.releaseTrader(order.trader_id, order.id);
+    await db.Trader.increment({ current_daily_used: amount }, { where: { id: freshOrder.trader_id } });
+    await routingEngine.releaseTrader(freshOrder.trader_id, freshOrder.id);
 
-    const trader = await db.Trader.findByPk(order.trader_id);
+    const trader = await db.Trader.findByPk(freshOrder.trader_id);
     // Trader gets an earnings-aware confirmation event (USDT deducted at their rate).
-    emitToTrader(order.trader_id, 'order:confirmed', {
-      order_id: order.uuid,
-      amount_inr: order.amount_inr,
+    emitToTrader(freshOrder.trader_id, 'order:confirmed', {
+      order_id: freshOrder.uuid,
+      amount_inr: freshOrder.amount_inr,
       deducted_usdt: fees ? fees.trader_deduction_usdt : undefined,
       trader_rate: fees ? fees.trader_rate : undefined,
       new_balance: trader ? Number(trader.balance_usdt) : undefined,
       utr: utrNumber,
       engine,
     });
-    emitToTrader(order.trader_id, 'payment:detected', {
-      order_id: order.id,
-      amount_inr: order.amount_inr,
+    emitToTrader(freshOrder.trader_id, 'payment:detected', {
+      order_id: freshOrder.id,
+      amount_inr: freshOrder.amount_inr,
       utr: utrNumber,
       engine,
     });
-    telegramService.sendPayInNotification(trader, order, order.amount_inr, senderName).catch(() => {});
+    telegramService.sendPayInNotification(trader, freshOrder, freshOrder.amount_inr, senderName).catch(() => {});
   }
 
   // Emit both the legacy 'order:confirmed' (panels re-broadcast it as order:update)
   // and the v2 'order:success' event.
   for (const ev of ['order:confirmed', 'order:success']) {
-    emitToMerchant(order.merchant_id, ev, {
-      order_id: order.uuid,
-      gateway_order_id: order.gateway_order_id,
-      amount_inr: order.amount_inr,
+    emitToMerchant(freshOrder.merchant_id, ev, {
+      order_id: freshOrder.uuid,
+      gateway_order_id: freshOrder.gateway_order_id,
+      amount_inr: freshOrder.amount_inr,
       amount_usdt: fees ? fees.merchant_receives_usdt : undefined,
       utr: utrNumber,
     });
     emitToAdmin(ev, {
-      order_id: order.uuid,
-      gateway_order_id: order.gateway_order_id,
-      trader_id: order.trader_id,
+      order_id: freshOrder.uuid,
+      gateway_order_id: freshOrder.gateway_order_id,
+      trader_id: freshOrder.trader_id,
       platform_profit_usdt: fees ? fees.platform_profit_usdt : undefined,
     });
-    emitToOrder(order.uuid, ev, { order_id: order.uuid, status: 'success', utr: utrNumber });
+    emitToOrder(freshOrder.uuid, ev, { order_id: freshOrder.uuid, status: 'success', utr: utrNumber });
   }
 
   webhookService
-    .sendWebhook(order.merchant_id, 'payment.success', {
+    .sendWebhook(freshOrder.merchant_id, 'payment.success', {
       event: 'payment.success',
-      gateway_order_id: order.gateway_order_id,
-      merchant_order_id: order.merchant_order_id,
-      order_id: order.uuid,
-      amount_inr: order.amount_inr,
+      gateway_order_id: freshOrder.gateway_order_id,
+      merchant_order_id: freshOrder.merchant_order_id,
+      order_id: freshOrder.uuid,
+      amount_inr: freshOrder.amount_inr,
       // The real USDT the merchant is credited, at the admin rate. Distinct
       // from the order-creation response's `estimated_amount_usdt`, which is
       // computed at the TRADER rate — the two were both called `amount_usdt`
       // and meant different numbers, which no partner could be expected to
       // guess. This one is the settled, authoritative figure.
       amount_usdt: fees ? fees.merchant_receives_usdt : undefined,
-      customer_ref: order.customer_ref,
-      deposit_type: order.deposit_type,
+      customer_ref: freshOrder.customer_ref,
+      deposit_type: freshOrder.deposit_type,
       status: 'success',
       utr: utrNumber,
       timestamp: new Date().toISOString(),
-    }, { order })
+    }, { order: freshOrder })
     .catch((err) => logger.error('webhook enqueue failed', err));
 
-  logger.info(`smartMerge: order ${order.id} settled (success) via ${engine || 'merge'}`);
-  return order;
+  logger.info(`smartMerge: order ${freshOrder.id} settled (success) via ${engine || 'merge'}`);
+  return freshOrder;
 }
 
 /**
@@ -219,11 +265,24 @@ async function mergePaymentData(orderId) {
   }
 
   if (confidence >= AUTO_CONFIRM_THRESHOLD) {
-    await confirmOrder(order, {
-      utrNumber: best.utr_number,
-      engine: best.engine_used,
-      senderName: best.sender_name,
-    });
+    // confirmOrder re-verifies the order's status under a row lock before
+    // moving any money — a concurrent settlement for this same order can
+    // legitimately win that race instead of this call. That's correct, not
+    // a crash: report it as the (already-true) settled outcome rather than
+    // letting the exception surface as a 500 to this route's caller.
+    try {
+      await confirmOrder(order, {
+        utrNumber: best.utr_number,
+        engine: best.engine_used,
+        senderName: best.sender_name,
+      });
+    } catch (err) {
+      if (err.code === 'order_terminal') {
+        logger.warn(`smartMerge: mergePaymentData lost the settlement race for order ${orderId} — ${err.message}`);
+        return { confidence, status: 'success', confirmed: true };
+      }
+      throw err;
+    }
     return { confidence, status: 'success', confirmed: true };
   }
 
