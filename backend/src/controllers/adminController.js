@@ -99,7 +99,7 @@ const updateTrader = asyncHandler(async (req, res) => {
 
   const patch = {};
   ['daily_limit', 'balance_usdt', 'commission_rate', 'payout_commission', 'rate_label', 'telegram_chat_id',
-    'payout_pool_access', 'payout_daily_limit']
+    'payout_pool_access', 'payout_daily_limit', 'minimum_deposit_usd']
     .forEach((k) => { if (req.body[k] != null) patch[k] = req.body[k]; });
   // deposit_types: keep only valid FTD/STD; ignore empty (must accept ≥1 type).
   if (req.body.deposit_types != null) {
@@ -1095,7 +1095,7 @@ const getTraderDetail = asyncHandler(async (req, res) => {
 
   const [
     todayOrdersCount, todayVolume, closedToday, confirmedToday,
-    paymentDetails, deviceRows, commissionEarnedUsdt, openDisputesCount, recentOrders,
+    paymentDetails, deviceRows, commissionEarnedUsdt, openDisputesCount, recentOrders, balanceLocks,
   ] = await Promise.all([
     db.Order.count({ where: { trader_id: trader.id, created_at: { [Op.gte]: today } } }),
     db.Order.sum('amount_inr', { where: { trader_id: trader.id, status: 'success', created_at: { [Op.gte]: today } } }),
@@ -1114,6 +1114,7 @@ const getTraderDetail = asyncHandler(async (req, res) => {
       order: [['created_at', 'DESC']],
       limit: TRADER_ROUTING_ORDER_CAP,
     }),
+    balanceService.getBalanceLocks(trader.id),
   ]);
 
   // Payment Accounts — real per-account usage via the same computeWindowUsage
@@ -1215,6 +1216,7 @@ const getTraderDetail = asyncHandler(async (req, res) => {
       depositTypes: trader.deposit_types || ['FTD', 'STD'],
       payoutPoolAccess: !!trader.payout_pool_access,
       payoutDailyLimit: Number(trader.payout_daily_limit) || 0,
+      minimumDepositUsd: Number(trader.minimum_deposit_usd) || 0,
       commissionEarnedUsdt,
     },
     summary: {
@@ -1226,6 +1228,15 @@ const getTraderDetail = asyncHandler(async (req, res) => {
       totalDevices: devices.length,
       ordersToday: todayOrdersCount,
       successRate: closedToday ? +((confirmedToday / closedToday) * 100).toFixed(1) : null,
+      // Security deposit + open-dispute locking (balanceService.getBalanceLocks).
+      orderLockedUsdt: balanceLocks?.orderLockedUsdt ?? 0,
+      disputeLockedUsdt: balanceLocks?.disputeLockedUsdt ?? 0,
+      disputeLockedPayinUsdt: balanceLocks?.disputeLockedPayinUsdt ?? 0,
+      disputeLockedPayoutUsdt: balanceLocks?.disputeLockedPayoutUsdt ?? 0,
+      minimumDepositUsdt: balanceLocks?.minimumDepositUsdt ?? 0,
+      availableUsdt: balanceLocks?.availableUsdt ?? (Number(trader.balance_usdt) || 0),
+      belowMinimum: balanceLocks?.belowMinimum ?? false,
+      approachingMinimum: balanceLocks?.approachingMinimum ?? false,
     },
     accounts,
     devices,

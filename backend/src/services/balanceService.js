@@ -212,8 +212,84 @@ async function settleOrder(order, transaction) {
 }
 
 /**
- * Trader balance summary for the panel: total, locked (in active orders),
- * available, and commission earned today / all-time.
+ * Every USDT amount currently locked away from a trader's usable/
+ * order-eligible balance: active orders (existing, unchanged), plus the two
+ * NEW locks — the admin-set base security deposit, and any amount tied up in
+ * an OPEN dispute (pay-in Dispute or payout PayoutRequest.status='dispute').
+ *
+ * Both new locks are computed live, the same "aggregate over current rows"
+ * style as the existing active-order lock below, rather than a separate
+ * persisted ledger — there is nothing to explicitly release when a dispute
+ * resolves: once its status leaves open/reviewing (pay-in) or 'dispute'
+ * (payout), it simply drops out of these sums on the next read. Multiple
+ * simultaneous disputes stack automatically, since both are plain SUMs.
+ *
+ * Pay-in dispute amount: the order's amount_inr (disputes open before/around
+ * settlement, so there is no frozen USDT figure to reuse — converted via
+ * rateService.inrToUsdt like the active-order lock).
+ * Payout dispute amount: PayoutRequest.trader_credit_usdt, which is already
+ * frozen in USDT at accept() time — reused directly, no reconversion.
+ *
+ * PLACEHOLDER (flagged, not a final design): a new dispute lock is allowed to
+ * push availableUsdt negative rather than being blocked or capped — see
+ * "insufficient balance for a new dispute lock" in the open design questions.
+ */
+async function getBalanceLocks(traderId) {
+  const { Op } = require('sequelize');
+  const trader = await db.Trader.findByPk(traderId);
+  if (!trader) return null;
+
+  const activeInr = (await db.Order.sum('amount_inr', {
+    where: { trader_id: traderId, status: { [Op.in]: db.Order.ACTIVE_STATUSES } },
+  })) || 0;
+  const { amountUsdt: orderLockedUsdt } = await rateService.inrToUsdt(activeInr);
+
+  const openDisputes = await db.Dispute.findAll({
+    where: { status: { [Op.in]: ['open', 'reviewing'] } },
+    include: [{ model: db.Order, as: 'order', where: { trader_id: traderId }, attributes: ['id', 'amount_inr'] }],
+  });
+  const payinDisputeInr = openDisputes.reduce((sum, d) => sum + Number(d.order?.amount_inr || 0), 0);
+  const { amountUsdt: disputeLockedPayinUsdt } = await rateService.inrToUsdt(payinDisputeInr);
+
+  const disputeLockedPayoutUsdt = Number(
+    (await db.PayoutRequest.sum('trader_credit_usdt', {
+      where: { status: 'dispute', assigned_trader_id: traderId },
+    })) || 0
+  );
+
+  const disputeLockedUsdt = round8(disputeLockedPayinUsdt + disputeLockedPayoutUsdt);
+  const minimumDepositUsdt = round8(Number(trader.minimum_deposit_usd) || 0);
+  const total = Number(trader.balance_usdt);
+
+  // "Spendable" = the pre-existing notion of available balance (total minus
+  // USDT tied up in active orders), before the new deposit/dispute floor.
+  const spendableUsdt = round8(total - orderLockedUsdt);
+  // Usable/order-eligible balance = spendable minus the base deposit and any
+  // open-dispute lock. NOT floored at zero — see PLACEHOLDER note above.
+  const availableUsdt = round8(spendableUsdt - minimumDepositUsdt - disputeLockedUsdt);
+  // Warning floor: 50% buffer above the base minimum (matches the product
+  // example: $200 minimum -> warn around $300), plus any dispute lock, which
+  // is a real hard number rather than something to "approach".
+  const warningThresholdUsdt = round8(minimumDepositUsdt * 1.5 + disputeLockedUsdt);
+
+  return {
+    total,
+    orderLockedUsdt: round8(orderLockedUsdt),
+    disputeLockedUsdt,
+    disputeLockedPayinUsdt: round8(disputeLockedPayinUsdt),
+    disputeLockedPayoutUsdt: round8(disputeLockedPayoutUsdt),
+    minimumDepositUsdt,
+    spendableUsdt,
+    availableUsdt,
+    warningThresholdUsdt,
+    belowMinimum: availableUsdt <= 0,
+    approachingMinimum: availableUsdt > 0 && spendableUsdt <= warningThresholdUsdt,
+  };
+}
+
+/**
+ * Trader balance summary for the panel: total, locked (active orders +
+ * deposit + disputes), available, and commission earned today / all-time.
  */
 async function traderBalanceSummary(traderId) {
   const { Op } = require('sequelize');
@@ -223,24 +299,29 @@ async function traderBalanceSummary(traderId) {
   const startToday = new Date();
   startToday.setHours(0, 0, 0, 0);
 
-  // USDT locked in active (assigned/paid) orders, valued at the current rate.
-  const activeInr = (await db.Order.sum('amount_inr', {
-    where: { trader_id: traderId, status: { [Op.in]: db.Order.ACTIVE_STATUSES } },
-  })) || 0;
-  const { amountUsdt: lockedUsdt } = await rateService.inrToUsdt(activeInr);
+  const locks = await getBalanceLocks(traderId);
 
   const [commissionToday, commissionTotal] = await Promise.all([
     db.BalanceLog.sum('amount_usdt', { where: { trader_id: traderId, type: 'commission', created_at: { [Op.gte]: startToday } } }),
     db.BalanceLog.sum('amount_usdt', { where: { trader_id: traderId, type: 'commission' } }),
   ]);
 
-  const total = Number(trader.balance_usdt);
-  const available = round8(total - lockedUsdt);
-
   return {
-    balance_usdt: total,
-    locked_usdt: round8(lockedUsdt),
-    available_usdt: available < 0 ? 0 : available,
+    balance_usdt: locks.total,
+    // Unchanged meaning: USDT locked in active orders only.
+    locked_usdt: locks.orderLockedUsdt,
+    order_locked_usdt: locks.orderLockedUsdt,
+    dispute_locked_usdt: locks.disputeLockedUsdt,
+    dispute_locked_payin_usdt: locks.disputeLockedPayinUsdt,
+    dispute_locked_payout_usdt: locks.disputeLockedPayoutUsdt,
+    minimum_deposit_usdt: locks.minimumDepositUsdt,
+    warning_threshold_usdt: locks.warningThresholdUsdt,
+    below_minimum: locks.belowMinimum,
+    approaching_minimum: locks.approachingMinimum,
+    // CHANGED behaviour: now the true usable/order-eligible balance (total
+    // minus active-order lock, base deposit, and any open-dispute lock), and
+    // no longer floored at 0 — see getBalanceLocks' PLACEHOLDER note.
+    available_usdt: locks.availableUsdt,
     commission_today_usdt: round8(commissionToday || 0),
     commission_total_usdt: round8(commissionTotal || 0),
     commission_rate: Number(trader.commission_rate),
@@ -248,4 +329,4 @@ async function traderBalanceSummary(traderId) {
   };
 }
 
-module.exports = { adjustBalance, adminAdjust, computeFees, settleOrder, traderBalanceSummary };
+module.exports = { adjustBalance, adminAdjust, computeFees, settleOrder, traderBalanceSummary, getBalanceLocks };

@@ -39,6 +39,12 @@ module.exports = (sequelize) => {
       payout_daily_limit: { type: DataTypes.DECIMAL(15, 2), allowNull: false, defaultValue: 0 },
       rate_label: { type: DataTypes.STRING(50), allowNull: false, defaultValue: 'My Rate' },
 
+      // Security deposit — a base amount always excluded from this trader's
+      // usable/order-eligible balance (balanceService.getBalanceLocks), on
+      // top of any additional lock from an open dispute. Admin-adjustable,
+      // same pattern as payout_pool_access/payout_daily_limit above.
+      minimum_deposit_usd: { type: DataTypes.DECIMAL(20, 8), allowNull: false, defaultValue: 200 },
+
       // Rate-margin system: trader_margin = "My Rate" % over base; admin_margin =
       // admin profit % over base. Platform profit is the spread between them.
       trader_margin: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 4.0 },

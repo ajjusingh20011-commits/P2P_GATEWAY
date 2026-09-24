@@ -1,12 +1,41 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layers3, Plus, ArrowRight } from 'lucide-react';
+import { Layers3, Plus, ArrowRight, AlertTriangle } from 'lucide-react';
 import { Card, Badge, SearchInput, Button } from '../components/ui';
 import { CommissionSection, AttentionSection, LivePoolSection, TransactionActivityChart, VolumeStatCard, SuccessRateStatCard } from '../components/DashboardSections';
 import { useApi } from '../hooks/useApi';
 import { traderApi } from '../services/api';
-import { balance, stats, ACCOUNT_TYPES } from '../utils/mock';
+import { balance, stats, ACCOUNT_TYPES, usdt } from '../utils/mock';
 import { isLive } from '../utils/accountState';
+
+// Security deposit + open-dispute locking (backend balanceService.getBalanceLocks).
+// below_minimum: trading has actually stopped — the trader is excluded from
+// routing right now. approaching_minimum: a 50%-buffer warning before that.
+function DepositBanner({ dash }) {
+  if (!dash.below_minimum && !dash.approaching_minimum) return null;
+  const critical = !!dash.below_minimum;
+  return (
+    <div
+      className="mb-4 flex items-start gap-3 rounded-xl px-4 py-3"
+      style={{
+        background: critical ? 'rgba(239,68,68,.12)' : 'rgba(245,158,11,.12)',
+        border: `1px solid ${critical ? 'rgba(239,68,68,.35)' : 'rgba(245,158,11,.35)'}`,
+      }}
+    >
+      <AlertTriangle size={18} color={critical ? '#ef4444' : '#f59e0b'} style={{ flexShrink: 0, marginTop: 1 }} />
+      <div>
+        <p style={{ fontWeight: 700, fontSize: 13.5, margin: 0, color: critical ? '#ef4444' : '#f59e0b' }}>
+          {critical ? 'Trading paused — top up to keep receiving orders' : 'Your balance is approaching your minimum deposit'}
+        </p>
+        <p style={{ fontSize: 12.5, margin: '4px 0 0', color: 'var(--muted)' }}>
+          {critical
+            ? `Your available balance has reached your minimum security deposit (${usdt(dash.minimum_deposit_usdt)}${dash.dispute_locked_usdt > 0 ? ` + ${usdt(dash.dispute_locked_usdt)} locked in open disputes` : ''}). You won't receive new orders until you top up above this floor.`
+            : `Top up soon — once your available balance drops to ${usdt(dash.minimum_deposit_usdt)}${dash.dispute_locked_usdt > 0 ? ` (plus ${usdt(dash.dispute_locked_usdt)} currently locked in open disputes)` : ''}, trading stops until you fund your account.`}
+        </p>
+      </div>
+    </div>
+  );
+}
 
 // Success-rate → red / yellow / green thresholds (shared with the currency widget).
 function rateColor(rate) {
@@ -69,6 +98,11 @@ export default function Dashboard() {
         balance_usdt: balance,
         available_usdt: 0,
         locked_usdt: 0,
+        minimum_deposit_usdt: 0,
+        dispute_locked_usdt: 0,
+        warning_threshold_usdt: 0,
+        below_minimum: false,
+        approaching_minimum: false,
         commission_today_usdt: 0,
         commission_total_usdt: 0,
         base_rate: 100,
@@ -187,6 +221,7 @@ export default function Dashboard() {
 
   return (
     <div>
+      <DepositBanner dash={dash} />
       <div className="flex justify-end" style={{ marginBottom: 16 }}>
         {loading && <span style={{ fontSize: 12, color: 'var(--muted)', marginRight: 12, alignSelf: 'center' }}>Loading…</span>}
         <Button onClick={() => navigate('/offers')}>

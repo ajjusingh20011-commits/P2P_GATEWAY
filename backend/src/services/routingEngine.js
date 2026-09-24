@@ -20,6 +20,7 @@ const { Op } = require('sequelize');
 const config = require('../config');
 const db = require('../models');
 const logger = require('../utils/logger');
+const balanceService = require('./balanceService');
 const accountScore = require('./accountScore');
 const weightedRotation = require('./weightedRotation');
 const { connection, isRedisAvailable } = require('../loaders/redis');
@@ -365,7 +366,19 @@ async function pickEligibleAccount(trader, amount) {
   return winner ? winner.account : null;
 }
 
-/** Online, active, funded traders that accept `depositType`, with their accounts. */
+/**
+ * Online, active, funded traders that accept `depositType`, with their
+ * accounts.
+ *
+ * Balance-based eligibility is a two-stage check: `balance_usdt > 0` above is
+ * a cheap first pass at the DB level, then each survivor is checked against
+ * its REAL usable/order-eligible balance — total minus active-order lock,
+ * base security deposit, and any open-dispute lock
+ * (balanceService.getBalanceLocks). A trader at or below that floor is
+ * excluded here, BEFORE weighted-rotation scoring (selectCandidate) ever
+ * sees them — a hard gate, not a scoring input, so an ineligible trader
+ * cannot be picked no matter how good their success rate is.
+ */
 async function eligibleTraders(depositType) {
   const traders = await db.Trader.findAll({
     where: { is_online: true, balance_usdt: { [Op.gt]: 0 } },
@@ -375,7 +388,22 @@ async function eligibleTraders(depositType) {
     ],
     order: [['id', 'ASC']],
   });
-  return traders.filter((t) => traderAcceptsType(t, depositType));
+  const acceptsType = traders.filter((t) => traderAcceptsType(t, depositType));
+
+  const funded = [];
+  for (const trader of acceptsType) {
+    // eslint-disable-next-line no-await-in-loop
+    const locks = await balanceService.getBalanceLocks(trader.id);
+    if (locks && locks.belowMinimum) {
+      logger.info(
+        `routing: trader ${trader.id} at/below deposit floor (available=${locks.availableUsdt} USDT, ` +
+        `minimum=${locks.minimumDepositUsdt}, disputeLocked=${locks.disputeLockedUsdt}) — excluded from routing`
+      );
+      continue;
+    }
+    funded.push(trader);
+  }
+  return funded;
 }
 
 /**
@@ -518,5 +546,6 @@ module.exports = {
   acquireAmountLock,
   releaseAmountLock,
   hasSameAmountActiveOrder,
+  eligibleTraders,
   ORDER_QUEUE_KEY,
 };

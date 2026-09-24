@@ -85,6 +85,13 @@ const dashboard = asyncHandler(async (req, res) => {
     balance_usdt: trader.balance_usdt,
     available_usdt: summary ? summary.available_usdt : trader.balance_usdt,
     locked_usdt: summary ? summary.locked_usdt : 0,
+    // Security deposit + open-dispute locking — drives the low-balance
+    // warning banner / trading-stopped state on the trader dashboard.
+    minimum_deposit_usdt: summary ? summary.minimum_deposit_usdt : 0,
+    dispute_locked_usdt: summary ? summary.dispute_locked_usdt : 0,
+    warning_threshold_usdt: summary ? summary.warning_threshold_usdt : 0,
+    below_minimum: summary ? summary.below_minimum : false,
+    approaching_minimum: summary ? summary.approaching_minimum : false,
     commission_today_usdt: summary ? summary.commission_today_usdt : 0,
     commission_total_usdt: summary ? summary.commission_total_usdt : 0,
     // Rate-margin fields.
@@ -580,8 +587,13 @@ const requestPayout = asyncHandler(async (req, res) => {
   const { error, value } = payoutSchema.validate(req.body);
   if (error) return fail(res, 422, error.details[0].message);
 
-  if (Number(value.amount_usdt) > Number(trader.balance_usdt)) {
-    return fail(res, 422, 'Requested amount exceeds available balance');
+  // Withdrawal-eligible balance excludes the security deposit and any
+  // open-dispute lock, same as order-eligibility (balanceService.getBalanceLocks) —
+  // a trader cannot withdraw funds that are walled off from their usable balance.
+  const locks = await balanceService.getBalanceLocks(trader.id);
+  const withdrawable = locks ? locks.availableUsdt : Number(trader.balance_usdt);
+  if (Number(value.amount_usdt) > withdrawable) {
+    return fail(res, 422, 'Requested amount exceeds available balance (excludes your security deposit and any locked dispute funds)');
   }
 
   const rate = 89;

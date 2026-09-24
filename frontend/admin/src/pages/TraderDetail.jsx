@@ -241,6 +241,9 @@ function OverviewTab({ detail }) {
           <Field label="Payout commission">{pct(trader.payoutCommission)}</Field>
           <Field label="Today's volume">{inr(summary.todayVolumeInr)} of {inr(trader.dailyLimit)}</Field>
           <Field label="Rate label">{trader.rateLabel || '—'}</Field>
+          <Field label="Minimum deposit">{usdt(trader.minimumDepositUsd)}</Field>
+          <Field label="Dispute-locked">{usdt(summary.disputeLockedUsdt)}</Field>
+          <Field label="Available (order-eligible)">{usdt(summary.availableUsdt)}</Field>
         </div>
       </section>
 
@@ -758,6 +761,48 @@ function PayoutAccessModal({ trader, onClose, onSaved }) {
   );
 }
 
+// Security deposit — a base amount always excluded from this trader's usable/
+// order-eligible balance (backend/src/services/balanceService.js getBalanceLocks).
+function DepositModal({ trader, onClose, onSaved }) {
+  const [minimum, setMinimum] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (trader) setMinimum(String(trader.minimumDepositUsd ?? 200));
+  }, [trader?.id]);
+  if (!trader) return null;
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await adminApi.updateTrader(trader.id, { minimum_deposit_usd: Number(minimum) || 0 });
+      toast('Security deposit updated', 'success');
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast(err.response?.data?.message || err.response?.data?.error?.message || 'Failed to update', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal open={!!trader} onClose={onClose} size="md" title="Security deposit" subtitle={`Trader #${trader.id} · balance ${usdt(trader.balanceUsdt)}`}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button onClick={submit} disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Button></>}>
+      <div className="space-y-4">
+        <div>
+          <label className="mb-1.5 block text-sm" style={{ color: 'var(--muted)' }}>Minimum deposit (USDT)</label>
+          <Input type="number" step="0.01" min="0" value={minimum} onChange={(e) => setMinimum(e.target.value)} placeholder="200" />
+        </div>
+        <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>
+          Always excluded from this trader's usable/order-eligible balance, on top of
+          any additional amount locked by an open dispute. When usable balance reaches
+          this floor, the trader stops receiving new orders until they top back up.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
 /* ------------------------------------ Page ------------------------------------ */
 
 const TABS = [
@@ -781,6 +826,7 @@ export default function TraderDetail() {
   const [balanceModal, setBalanceModal] = useState(false);
   const [commissionModal, setCommissionModal] = useState(false);
   const [payoutModal, setPayoutModal] = useState(false);
+  const [depositModal, setDepositModal] = useState(false);
   const [confirming, setConfirming] = useState(null); // { next: boolean }
   const [suspending, setSuspending] = useState(false);
 
@@ -855,6 +901,8 @@ export default function TraderDetail() {
           <div className="flex items-center gap-2.5">
             <h1 style={{ color: 'var(--text)', fontWeight: 800, fontSize: 22, margin: 0, letterSpacing: '-.5px' }}>{displayName}</h1>
             <Badge color={statusColor}>{trader.status}</Badge>
+            {summary.belowMinimum && <Badge color="red">Below deposit floor — excluded from routing</Badge>}
+            {!summary.belowMinimum && summary.approachingMinimum && <Badge color="amber">Approaching deposit floor</Badge>}
           </div>
           <p style={{ color: 'var(--muted)', fontSize: 13, margin: '4px 0 0' }}>Trader #{trader.id} · {trader.email} · joined {fmtDate(trader.joined)}</p>
         </div>
@@ -862,6 +910,7 @@ export default function TraderDetail() {
           <Button variant="ghost" size="sm" onClick={() => setBalanceModal(true)}>Edit Balance</Button>
           <Button variant="ghost" size="sm" onClick={() => setCommissionModal(true)}>Edit Commission</Button>
           <Button variant="ghost" size="sm" onClick={() => setPayoutModal(true)}>Payout access</Button>
+          <Button variant="ghost" size="sm" onClick={() => setDepositModal(true)}>Security deposit</Button>
           {trader.status === 'suspended'
             ? <Button variant="success" size="sm" onClick={() => setConfirming({ next: false })}>Reactivate</Button>
             : <Button variant="danger" size="sm" onClick={() => setConfirming({ next: true })}>Suspend</Button>}
@@ -872,6 +921,18 @@ export default function TraderDetail() {
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {[
           { icon: Wallet, label: 'Balance', value: usdt(trader.balanceUsdt) },
+          {
+            icon: Wallet,
+            label: 'Available (order-eligible)',
+            value: usdt(summary.availableUsdt),
+            tone: summary.belowMinimum ? '#ef4444' : summary.approachingMinimum ? '#f59e0b' : undefined,
+          },
+          {
+            icon: Wallet,
+            label: 'Locked (deposit + disputes)',
+            value: usdt((summary.minimumDepositUsdt || 0) + (summary.disputeLockedUsdt || 0)),
+            sub: `deposit ${usdt(summary.minimumDepositUsdt)} · disputes ${usdt(summary.disputeLockedUsdt)}`,
+          },
           { icon: Activity, label: "Today's volume", value: compactInr(summary.todayVolumeInr) },
           { icon: Users, label: 'Active accounts', value: `${summary.activeAccounts}/${accounts.length}` },
           { icon: SmartphoneIcon, label: 'Devices online', value: `${summary.devicesOnline}/${devices.length}` },
@@ -880,7 +941,8 @@ export default function TraderDetail() {
         ].map((m) => (
           <Card key={m.label} style={{ padding: '14px 16px' }}>
             <div className="flex items-center gap-2" style={{ color: 'var(--muted)', fontSize: 11.5 }}><m.icon size={13} />{m.label}</div>
-            <p style={{ color: 'var(--text)', fontWeight: 800, fontSize: 19, margin: '8px 0 0' }}>{m.value}</p>
+            <p style={{ color: m.tone || 'var(--text)', fontWeight: 800, fontSize: 19, margin: '8px 0 0' }}>{m.value}</p>
+            {m.sub && <p style={{ color: 'var(--muted)', fontSize: 10.5, margin: '2px 0 0' }}>{m.sub}</p>}
           </Card>
         ))}
       </div>
@@ -927,6 +989,7 @@ export default function TraderDetail() {
       {balanceModal && <BalanceModal trader={trader} onClose={() => setBalanceModal(false)} onSaved={load} />}
       {commissionModal && <CommissionModal trader={trader} onClose={() => setCommissionModal(false)} onSaved={load} />}
       {payoutModal && <PayoutAccessModal trader={trader} onClose={() => setPayoutModal(false)} onSaved={load} />}
+      {depositModal && <DepositModal trader={trader} onClose={() => setDepositModal(false)} onSaved={load} />}
 
       <ConfirmModal
         open={!!confirming}
