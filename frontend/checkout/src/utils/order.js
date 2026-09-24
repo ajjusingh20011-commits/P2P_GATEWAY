@@ -47,7 +47,13 @@ export function getOrder() {
 }
 
 export const inr = (n) =>
-  '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  '₹' +
+  Number(n).toLocaleString('en-IN', {
+    // Paise only when the amount actually has them, so a whole-rupee order reads
+    // "₹5,000" instead of "₹5,000.00". Display only — the value is untouched.
+    minimumFractionDigits: Math.round(Number(n) * 100) % 100 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
 
 /** Build the standard UPI deep link (also used to render the QR code). */
 export function upiLink({ upiId, payeeName, amountInr, id }, scheme = 'upi') {

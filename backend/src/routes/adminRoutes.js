@@ -46,6 +46,7 @@ router.put('/orders/:id/confirm', adminController.confirmOrderV2);
 router.put('/orders/:id/reject', adminController.rejectOrderV2);
 router.put('/orders/:id/dispute', adminController.disputeOrderV2);
 router.put('/orders/:id', adminController.updateOrder);
+router.get('/orders/:id/receipt', adminController.getOrderReceipt);
 
 router.get('/settings', adminController.getSettings);
 router.put('/settings', adminController.updateSettings);

@@ -1002,6 +1002,26 @@ const getTraderNotifications = asyncHandler(async (req, res) => {
   });
 });
 
+// GET /admin/orders/:id/receipt — the customer-uploaded receipt file
+// (orderController.uploadReceipt), served only to an authenticated admin.
+// Deliberately not statically hosted under /uploads: a payment receipt can
+// show bank account numbers or other transactions, so it stays behind the
+// same admin JWT as every other route in this file rather than being
+// reachable by anyone who guesses/leaks the filename.
+const getOrderReceipt = asyncHandler(async (req, res) => {
+  const path = require('path');
+  const { UPLOAD_ROOT } = require('../middleware/receiptUpload');
+  const order = await findOrder(req.params.id);
+  if (!order) return fail(res, 404, 'Order not found');
+  if (!order.screenshot_path) return fail(res, 404, 'No receipt uploaded for this order');
+
+  const filename = path.basename(order.screenshot_path);
+  const filePath = path.join(UPLOAD_ROOT, filename);
+  return res.sendFile(filePath, (err) => {
+    if (err && !res.headersSent) fail(res, 404, 'Receipt file not found on disk');
+  });
+});
+
 // GET /admin/payout-requests/:id/evidence — the captured payout evidence for
 // the admin review queue (Feature 2). Evidence lives in ngo-backend (Mongo),
 // keyed by the order id the device uploaded under; we proxy there with a
@@ -1685,6 +1705,7 @@ module.exports = {
   getTraderDetail,
   getTraderNotifications,
   getPayoutEvidence,
+  getOrderReceipt,
   getUnrecognizedSenders,
   promoteUnrecognizedSender,
   ignoreUnrecognizedSender,

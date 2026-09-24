@@ -50,6 +50,7 @@ export function mapCheckout(d) {
     confirmationType: d.confirmation_type || null,
     rejectionReason: d.rejection_reason || null,
     redirectUrl: d.redirect_url || null,
+    hasReceipt: !!d.has_receipt,
   };
 }
 
@@ -109,6 +110,28 @@ export async function claimPaid(id, { utrNumber, confirmationType } = {}) {
     }),
   });
   return data?.order ? mapOrder(data.order) : data;
+}
+
+/**
+ * POST /api/orders/:id/receipt — optional supporting-evidence upload
+ * (claimed_paid/under_review only). Multipart, not JSON — real file, really
+ * persisted to disk server-side (backend/src/middleware/receiptUpload.js).
+ */
+export async function uploadReceipt(id, file) {
+  const form = new FormData();
+  form.append('receipt', file);
+  const res = await fetch(`${BASE}/orders/${encodeURIComponent(id)}/receipt`, {
+    method: 'POST',
+    body: form,
+  });
+  let json = null;
+  try { json = await res.json(); } catch (_) { /* non-JSON error body */ }
+  if (!res.ok) {
+    const err = new Error(json?.message || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return json?.data;
 }
 
 /** Back-compat alias (old callers). */

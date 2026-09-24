@@ -455,14 +455,16 @@ async function findAvailableTrader(amountInr, depositType = 'STD') {
  * and status → pending.
  * @returns {Promise<{trader, paymentDetail}|null>}
  */
-async function assignTraderToOrder(order, { excludeTraderId } = {}) {
+/**
+ * Pure lookup — gathers every eligible trader+account pair for `order` and
+ * chooses by weighted rotation (Item 1), the same selection findAvailableTrader
+ * uses. Does NOT touch the order; callers decide what to do with the result.
+ */
+async function findEligibleCandidate(order, { excludeTraderId } = {}) {
   const amount = Number(order.amount_inr);
   const depositType = order.deposit_type || 'STD';
   const traders = (await eligibleTraders(depositType)).filter((t) => t.id !== excludeTraderId);
 
-  // Gather every eligible trader+account pair, then choose by weighted rotation
-  // (Item 1) — the same selection findAvailableTrader uses — rather than taking
-  // the first trader in id order that happens to have an eligible account.
   const candidates = [];
   for (const trader of traders) {
     if (Number(trader.daily_limit) > 0 && Number(trader.current_daily_used) + amount > Number(trader.daily_limit)) continue;
@@ -470,8 +472,11 @@ async function assignTraderToOrder(order, { excludeTraderId } = {}) {
     const accounts = await eligibleAccountsFor(trader, amount);
     for (const entry of accounts) candidates.push({ ...entry, trader });
   }
+  return selectCandidate(candidates);
+}
 
-  const selected = await selectCandidate(candidates);
+async function assignTraderToOrder(order, { excludeTraderId } = {}) {
+  const selected = await findEligibleCandidate(order, { excludeTraderId });
   if (!selected) {
     await queueOrder(order);
     return null;
@@ -501,13 +506,27 @@ async function getNewUpiId(orderId) {
     throw Object.assign(new Error(`Order is ${order.status}`), { status: 409 });
   }
   const previousTraderId = order.trader_id;
-  if (previousTraderId) await releaseTrader(previousTraderId, order.id);
-  await order.update({ trader_id: null, payment_detail_id: null, status: 'pending' });
 
-  const result = await assignTraderToOrder(order, { excludeTraderId: previousTraderId });
-  if (!result) return null;
+  // Find a replacement BEFORE touching the order's current assignment. This
+  // used to clear trader_id/payment_detail_id unconditionally first and only
+  // then look for a replacement — so a reassignment that found nobody left
+  // the order stranded with NO account assigned (stuck on "Finding payment
+  // details…") instead of keeping the customer on their original, still-
+  // working UPI id. There was no automatic recovery short of some other
+  // trader/account happening to come online later.
+  const selected = await findEligibleCandidate(order, { excludeTraderId: previousTraderId });
+  if (!selected) return null;
+
+  if (previousTraderId) await releaseTrader(previousTraderId, order.id);
+  const { trader, account } = selected;
+  await order.update({ trader_id: trader.id, payment_detail_id: account.id, status: 'pending', expires_at: new Date(Date.now() + config.platform.orderExpiryMinutes * 60 * 1000) });
+  const payload = upiService.paymentPayload(order, account);
+  emitToTrader(trader.id, 'order:assigned', { order_id: order.id, uuid: order.uuid, amount_inr: order.amount_inr, ...payload });
+  emitToAdmin('order:assigned', { order_id: order.id, trader_id: trader.id });
+  logger.info(`routing: order ${order.id} -> trader ${trader.id} (account ${account.id}) via weighted rotation (reassign)`);
+
   const fresh = await db.Order.findByPk(orderId, { include: [{ model: db.PaymentDetail, as: 'paymentDetail' }] });
-  return { order: fresh, paymentDetail: result.paymentDetail };
+  return { order: fresh, paymentDetail: account };
 }
 
 /** Retry pass — assign any still-unassigned pending orders. */

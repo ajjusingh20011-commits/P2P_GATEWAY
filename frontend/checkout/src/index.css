@@ -2,77 +2,1207 @@
 @tailwind components;
 @tailwind utilities;
 
-@keyframes pop {
-  0% { transform: scale(0.3); opacity: 0; }
-  60% { transform: scale(1.15); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
+/* ============================================================================
+   MaxPay checkout — customer-facing payment page.
+
+   Mobile-first. Palette is the approved MaxPay emerald used by the APK: deep
+   green for primary actions, mint for secondary/status surfaces, white cards on
+   a very light cool-gray page, charcoal text. Orange/red appear ONLY for real
+   warnings and errors, never as decoration.
+
+   Layout contract: the page scrolls, the primary action does not. `.co-cta` is
+   fixed to the bottom with safe-area insets, and `.co-scroll` reserves matching
+   bottom padding so the CTA never covers the QR or the UPI id.
+   ========================================================================== */
+
+:root {
+  --mp-brand: #0f6a5a;
+  --mp-brand-dark: #0a5748;
+  --mp-brand-mid: #2a8c77;
+  --mp-mint: #e7f6f2;
+  --mp-mint-line: #cfe9e1;
+
+  --mp-bg: #f6faf9;   /* near-white + ~2% mint */
+  --mp-card: #ffffff;
+  --mp-line: #e4ebe8;
+  --mp-line-soft: #edf3f1;
+
+  --mp-text: #111827;
+  --mp-muted: #6b7280;
+  --mp-subtle: #9ca3af;
+
+  --mp-warn: #b45309;
+  --mp-warn-soft: #fff7e8;
+  --mp-err: #d64545;
+  --mp-err-soft: #fff0f0;
+
+  --mp-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px rgba(16, 24, 40, 0.06);
+  --mp-cta-h: 74px;
 }
 
-/* ============================================================================
-   Shared design tokens — same palette/fonts as the trader/admin/merchant
-   panels so the checkout feels like the same product. Light-only (this is a
-   focused, calm payment page: no theme toggle, no dashboard chrome).
-   Checkout accent = teal (#14b8c4).
-   ========================================================================== */
-:root {
-  --bg: #f4f6f8;
-  --card: #ffffff;
-  --text: #1e293b;
-  --muted: #94a3b8;
-  --accent: #14b8c4;
-  --cardborder: rgba(0, 0, 0, 0.06);
-  --input-border: rgba(0, 0, 0, 0.12);
-  --shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
-  --radius: 18px;
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  overflow-x: hidden;
 }
 
 body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  background: var(--mp-bg);
+  color: var(--mp-text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Surfaces */
+/* ── Page shell ──────────────────────────────────────────────────────────── */
+.co-page {
+  min-height: 100vh;
+  min-height: 100dvh; /* survives the mobile address bar collapsing */
+  display: flex;
+  flex-direction: column;
+  background: var(--mp-bg);
+}
+
+/* Desktop keeps the phone-width column instead of stretching. */
+.co-frame {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Header: ×  MaxPay        09:44  support ─────────────────────────────── */
+.co-head {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--mp-bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--mp-line-soft);
+}
+
+.co-headBtn {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mp-muted);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.co-headBtn:hover {
+  background: rgba(17, 24, 39, 0.05);
+  color: var(--mp-text);
+}
+
+.co-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--mp-text);
+}
+
+.co-brand > b {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: linear-gradient(145deg, var(--mp-brand-mid), var(--mp-brand-dark));
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.co-headRight {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.co-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--mp-mint);
+  color: var(--mp-brand);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Real urgency only — under two minutes. */
+.co-timer.urgent {
+  background: var(--mp-err-soft);
+  color: var(--mp-err);
+}
+
+/* ── Scroll body ─────────────────────────────────────────────────────────── */
+.co-scroll {
+  flex: 1;
+  padding: 10px 14px calc(var(--mp-cta-h) + env(safe-area-inset-bottom, 0px) + 16px);
+}
+
+.co-scroll.noCta {
+  padding-bottom: 28px;
+}
+
+/* ── Amount block ────────────────────────────────────────────────────────── */
+.co-payLabel {
+  margin: 0;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mp-muted);
+}
+
+.co-amount {
+  margin: 1px 0 0;
+  text-align: center;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  color: var(--mp-text);
+}
+
+.co-orderId {
+  margin: 3px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--mp-muted);
+}
+
+.co-orderId code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--mp-text);
+}
+
+.co-chip {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* ── Card ────────────────────────────────────────────────────────────────── */
 .co-card {
-  background: var(--card);
-  border: 1px solid var(--cardborder);
-  box-shadow: var(--shadow);
-  border-radius: var(--radius);
+  margin-top: 10px;
+  padding: 13px;
+  background: var(--mp-card);
+  border: 1px solid var(--mp-line);
+  border-radius: 16px;
+  box-shadow: var(--mp-shadow);
 }
-.co-inset {
-  background: var(--bg);
-  border: 1px solid var(--cardborder);
-  border-radius: var(--radius);
+
+/* ── QR ──────────────────────────────────────────────────────────────────── */
+.co-qrWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
-.co-tile {
-  background: var(--card);
-  border: 1px solid var(--cardborder);
+
+.co-qr {
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--mp-line);
+  border-radius: 14px;
+  line-height: 0;
+}
+
+/* Keeps the QR square and never clipped on a 360px phone. */
+.co-qr svg {
+  display: block;
+  width: min(190px, 50vw);
+  height: min(190px, 50vw);
+}
+
+.co-qrHint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--mp-muted);
+}
+
+/* ── UPI id row ──────────────────────────────────────────────────────────── */
+.co-upiRow {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--mp-line);
   border-radius: 12px;
+  background: #fff;
 }
 
-/* Primary CTA — matches the panels' accent button */
-.co-btn-primary {
-  background: var(--accent);
-  color: #ffffff;
+.co-upiVal {
+  min-width: 0;
+  flex: 1;
+}
+
+.co-upiVal small {
+  display: block;
+  font-size: 10.5px;
+  color: var(--mp-muted);
+}
+
+.co-upiVal strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 14px;
+  font-weight: 650;
+  word-break: break-all;
+  line-height: 1.3;
+  color: var(--mp-text);
+}
+
+.co-copy {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 11px;
+  border: 1px solid var(--mp-mint-line);
+  border-radius: 9px;
+  background: var(--mp-mint);
+  color: var(--mp-brand);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.co-copy.done {
+  border-color: var(--mp-brand);
+}
+
+/* ── UPI apps ────────────────────────────────────────────────────────────── */
+.co-sectionLabel {
+  margin: 12px 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--mp-muted);
+}
+
+.co-apps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.co-app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border: 1px solid var(--mp-line);
   border-radius: 12px;
-  transition: filter 0.2s;
+  background: var(--mp-card);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--mp-text);
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.1s;
 }
-.co-btn-primary:hover { filter: brightness(1.06); }
 
-/* Muted interactive text (exit / support / cancel) */
-.co-muted { color: var(--muted); transition: color 0.2s; }
-.co-muted:hover { color: var(--text); }
+.co-app:active {
+  transform: scale(0.98);
+}
 
-/* Accent link */
-.co-link { color: var(--accent); }
+.co-app:hover:not(:disabled) {
+  border-color: var(--mp-brand-mid);
+}
 
-/* Themed input with a teal focus ring */
+.co-app:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.co-app svg {
+  width: 22px;
+  height: 22px;
+}
+
+.co-appNote {
+  margin: 8px 0 0;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: var(--mp-warn-soft);
+  color: var(--mp-warn);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+/* ── Secondary actions ───────────────────────────────────────────────────── */
+.co-linkRow {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.co-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--mp-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.co-link:hover {
+  color: var(--mp-brand);
+}
+
+.co-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Status line ─────────────────────────────────────────────────────────── */
+.co-status {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: var(--mp-mint);
+  color: var(--mp-brand);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.co-status.neutral {
+  background: #eef1f4;
+  color: var(--mp-muted);
+}
+
+.co-status.warn {
+  background: var(--mp-warn-soft);
+  color: var(--mp-warn);
+}
+
+.co-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: co-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes co-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.co-spin {
+  width: 13px;
+  height: 13px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: co-rot 0.7s linear infinite;
+}
+
+@keyframes co-rot {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Fixed bottom CTA ────────────────────────────────────────────────────── */
+.co-cta {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: color-mix(in srgb, var(--mp-bg) 92%, transparent);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--mp-line-soft);
+}
+
+.co-ctaInner {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.co-btn {
+  width: 100%;
+  height: 54px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 13px;
+  background: var(--mp-brand);
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-decoration: none;
+}
+
+.co-btn:hover:not(:disabled) {
+  background: var(--mp-brand-dark);
+}
+
+.co-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.co-btn.ghost {
+  background: transparent;
+  border: 1px solid var(--mp-line);
+  color: var(--mp-text);
+}
+
+.co-btnTimer {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+  font-weight: 600;
+}
+
+/* ── Centred states (finding / success / expired / review) ───────────────── */
+.co-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 32px 22px 48px;
+  text-align: center;
+}
+
+.co-stateIcon {
+  width: 66px;
+  height: 66px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--mp-mint);
+  color: var(--mp-brand);
+  margin-bottom: 4px;
+}
+
+.co-stateIcon.err {
+  background: var(--mp-err-soft);
+  color: var(--mp-err);
+}
+
+.co-stateIcon.warn {
+  background: var(--mp-warn-soft);
+  color: var(--mp-warn);
+}
+
+.co-stateTitle {
+  margin: 6px 0 0;
+  font-size: 19px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  color: var(--mp-text);
+}
+
+.co-stateSub {
+  margin: 5px 0 0;
+  max-width: 300px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--mp-muted);
+}
+
+.co-stateAmount {
+  margin: 12px 0 0;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--mp-text);
+}
+
+.co-bigSpin {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--mp-mint-line);
+  border-top-color: var(--mp-brand);
+  border-radius: 50%;
+  animation: co-rot 0.8s linear infinite;
+}
+
+.co-ref {
+  margin-top: 14px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid var(--mp-line);
+  font-size: 12px;
+  color: var(--mp-muted);
+}
+
+.co-ref code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--mp-text);
+}
+
+/* ── UTR bottom sheet ────────────────────────────────────────────────────── */
+.co-sheetBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(17, 24, 39, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.co-sheet {
+  width: 100%;
+  max-width: 480px;
+  background: var(--mp-card);
+  border-radius: 20px 20px 0 0;
+  padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  /* Keyboard-safe: the sheet scrolls internally rather than pushing the page. */
+  max-height: 92dvh;
+  overflow-y: auto;
+  animation: co-rise 0.22s ease-out;
+}
+
+@keyframes co-rise {
+  from { transform: translateY(14px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.co-sheetHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.co-sheetHead h2 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 680;
+  color: var(--mp-text);
+}
+
 .co-input {
-  border: 1px solid var(--input-border);
+  width: 100%;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--mp-line);
   border-radius: 12px;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  background: #fff;
+  color: var(--mp-text);
+  font: inherit;
+  font-size: 16px; /* >=16px stops iOS Safari zooming on focus */
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
+
 .co-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(20, 184, 196, 0.18);
+  border-color: var(--mp-brand-mid);
+  box-shadow: 0 0 0 3px rgba(42, 140, 119, 0.13);
+}
+
+.co-input.bad {
+  border-color: var(--mp-err);
+}
+
+.co-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mp-text);
+}
+
+.co-err {
+  margin: 7px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mp-err);
+}
+
+.co-sheetBtn {
+  margin-top: 14px;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────────── */
+.co-foot {
+  margin: 16px 0 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--mp-subtle);
+}
+
+/* ── Wider screens: a little more air, same column ───────────────────────── */
+@media (min-width: 481px) {
+  .co-scroll {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+  .co-qr svg {
+    width: 196px;
+    height: 196px;
+  }
+}
+
+/* ── Amount row with copy ────────────────────────────────────────────────── */
+.co-amountRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.co-amtCopy {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--mp-line);
+  border-radius: 8px;
+  background: var(--mp-card);
+  color: var(--mp-muted);
+  cursor: pointer;
+  flex: none;
+}
+
+.co-amtCopy:hover { color: var(--mp-brand); border-color: var(--mp-mint-line); }
+.co-amtCopy.done { color: var(--mp-brand); border-color: var(--mp-brand); background: var(--mp-mint); }
+
+/* Transient inline confirmation — never a modal. */
+.co-toast {
+  margin: 4px 0 0;
+  text-align: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--mp-brand);
+}
+
+/* ── Secondary: rotate payment details ───────────────────────────────────── */
+.co-rotate {
+  margin-top: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--mp-brand);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.co-rotate:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── Tiny help link (not a card) ─────────────────────────────────────────── */
+.co-help {
+  margin-top: 9px;
+  display: flex;
+  justify-content: center;
+}
+
+.co-help button,
+.co-help a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 4px;
+  color: var(--mp-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.co-help button:hover, .co-help a:hover { color: var(--mp-brand); }
+
+/* ── "Have your payment reference? Add UTR →" ────────────────────────────── */
+.co-utrPrompt {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 11px;
+  border: 1px dashed var(--mp-line);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--mp-muted);
+}
+
+.co-utrPrompt button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--mp-brand);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* ── Small centred confirm dialog (no-UTR, cancel) ───────────────────────── */
+.co-confirm {
+  width: 100%;
+  max-width: 340px;
+  margin: auto;
+  background: var(--mp-card);
+  border-radius: 18px;
+  padding: 20px 18px 16px;
+  text-align: center;
+}
+
+.co-confirm h3 { margin: 0; font-size: 16px; font-weight: 680; color: var(--mp-text); }
+.co-confirm p { margin: 7px 0 0; font-size: 13px; line-height: 1.5; color: var(--mp-muted); }
+.co-confirmBtns { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+
+/* Shorter phones: trim gaps and QR before anything becomes unreadable. */
+@media (max-height: 800px) {
+  .co-scroll { padding-top: 4px; }
+  .co-amount { font-size: 28px; }
+  .co-card { margin-top: 7px; padding: 10px; }
+  /* Footer + language row also live in this column now, so the QR gives back
+     the last ~40px rather than letting the page scroll. */
+  /* 156px is the floor that stays comfortably scannable; below this the QR
+     starts failing on low-end cameras, so a short scroll is preferred. */
+  .co-qr svg { width: min(156px, 43vw); height: min(156px, 43vw); }
+  .co-sectionLabel { margin: 7px 0 4px; }
+  .co-app { padding: 6px 4px; }
+  .co-addUtr { height: 32px; margin-top: 7px; }
+  .co-upiRow { margin-top: 7px; padding: 7px 10px; }
+  .co-footBar { padding-top: 2px; padding-bottom: calc(2px + env(safe-area-inset-bottom, 0px)); }
+  .co-sectionLabel { margin: 9px 0 5px; }
+  .co-app { padding: 7px 4px; }
+  .co-help { margin-top: 7px; }
+  .co-utrPrompt { margin-top: 8px; }
+  .co-status { margin-top: 8px; }
+}
+
+/* ── Geometrically centred timer ─────────────────────────────────────────── */
+.co-head { position: sticky; }
+.co-headCenter {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.co-headCenter .co-timer { pointer-events: auto; }
+
+/* Support keeps its label, not icon-only. */
+.co-support {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--mp-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+  cursor: pointer;
+}
+.co-support:hover { color: var(--mp-brand); background: rgba(17,24,39,.04); }
+
+/* ── Pay-exactly row ─────────────────────────────────────────────────────── */
+.co-payExact { margin-top: 8px; }
+
+/* ── Secondary "Add UTR" ─────────────────────────────────────────────────── */
+.co-addUtr {
+  margin-top: 10px;
+  width: 100%;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px dashed var(--mp-line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--mp-brand);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.co-addUtr:hover { border-color: var(--mp-mint-line); background: var(--mp-mint); }
+.co-addUtr.saved { border-style: solid; border-color: var(--mp-mint-line); background: var(--mp-mint); }
+
+/* ── Footer + language ───────────────────────────────────────────────────── */
+.co-footBar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 6px 14px calc(6px + env(safe-area-inset-bottom, 0px));
+}
+.co-lang { position: relative; }
+.co-langBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid var(--mp-line);
+  border-radius: 8px;
+  background: var(--mp-card);
+  color: var(--mp-muted);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.co-langBtn:hover { color: var(--mp-brand); }
+.co-langMenu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  min-width: 132px;
+  padding: 4px;
+  background: var(--mp-card);
+  border: 1px solid var(--mp-line);
+  border-radius: 11px;
+  box-shadow: 0 10px 28px rgba(16,24,40,.14);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  z-index: 40;
+}
+.co-langMenu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mp-text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+}
+.co-langMenu button:hover { background: var(--mp-bg); }
+.co-langMenu button.active { color: var(--mp-brand); font-weight: 700; }
+
+/* ── Status pages ────────────────────────────────────────────────────────── */
+.co-statePage { flex: 1; display: flex; flex-direction: column; }
+.co-stateBody {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 18px 8px;
+  text-align: center;
+}
+.co-stateCard {
+  width: 100%;
+  background: var(--mp-card);
+  border: 1px solid var(--mp-line);
+  border-radius: 16px;
+  box-shadow: var(--mp-shadow);
+  padding: 22px 18px 18px;
+}
+.co-kv {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--mp-line-soft);
+  display: grid;
+  gap: 9px;
+}
+.co-kv > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.co-kv small { font-size: 11.5px; color: var(--mp-muted); }
+.co-kv strong {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--mp-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+  text-align: right;
+}
+
+/* Restrained processing indicator — not a huge spinner. */
+.co-pulse {
+  width: 34px;
+  height: 34px;
+  border: 2.5px solid var(--mp-mint-line);
+  border-top-color: var(--mp-brand);
+  border-radius: 50%;
+  animation: co-rot 0.9s linear infinite;
+  margin: 0 auto;
+}
+.co-stateIcon.ok { background: var(--mp-mint); color: var(--mp-brand); }
+
+.co-stateActions { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.co-noteLine {
+  margin: 10px 0 0;
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: var(--mp-bg);
+  color: var(--mp-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-align: left;
+}
+
+/*
+ * 844-tall phones (iPhone 12/13/14 class): the footer + language row costs the
+ * last ~44px, so trim the QR and the smallest gaps rather than let the page
+ * scroll. Kept above the 800px rule so shorter devices still get the tighter set.
+ */
+@media (min-height: 801px) and (max-height: 880px) {
+  .co-qr svg { width: min(168px, 45vw); height: min(168px, 45vw); }
+  .co-card { padding: 11px; }
+  .co-qrHint { margin-top: 6px; }
+  .co-sectionLabel { margin: 9px 0 5px; }
+  .co-addUtr { height: 34px; margin-top: 8px; }
+  .co-status { margin-top: 8px; padding: 6px 12px; }
+  .co-footBar { padding-top: 3px; padding-bottom: calc(3px + env(safe-area-inset-bottom, 0px)); }
+}
+.co-footBar { position: relative; z-index: 25; }
+
+/* ── Help guides row + modal content ─────────────────────────────────────── */
+.co-guideRow {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.co-guide {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  color: var(--mp-muted);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.co-guide:hover {
+  color: var(--mp-brand);
+}
+
+.co-guideContent {
+  padding: 8px 0;
+}
+
+.co-guideStep {
+  margin: 12px 0;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--mp-line-soft);
+}
+
+.co-guideStep:last-child {
+  border-bottom: 0;
+}
+
+.co-guideStep .co-stepNum {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--mp-mint);
+  color: var(--mp-brand);
+  font-weight: 700;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.co-guideStep p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--mp-text);
+}
+
+.co-guideStep strong {
+  display: block;
+  font-weight: 650;
+  margin-bottom: 3px;
+}
+
+.co-guideSub {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--mp-muted);
+  margin: 0 0 10px;
+}
+
+/* ── Optional receipt upload box (POST /:id/receipt — real endpoint) ───────── */
+.co-receiptBox {
+  margin-top: 18px;
+  padding: 0;
+  width: 100%;
+}
+
+.co-receiptLabel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 14px;
+  border: 1px dashed var(--mp-line);
+  border-radius: 12px;
+  background: var(--mp-bg);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  text-align: center;
+  position: relative;
+}
+
+.co-receiptLabel:hover {
+  border-color: var(--mp-mint-line);
+  background: var(--mp-mint);
+}
+
+.co-receiptLabel svg,
+.co-receiptLabel .co-checkMark {
+  color: var(--mp-brand);
+  display: block;
+}
+
+.co-receiptLabel span:not(.co-checkMark):not(.co-receiptName):not(.co-removeReceipt) {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mp-text);
+}
+
+.co-receiptNote {
+  display: block;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  color: var(--mp-subtle) !important;
+}
+
+.co-receiptName {
+  display: block;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--mp-brand);
+  max-width: 80%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.co-removeReceipt {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--mp-line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--mp-muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: color 0.15s;
+}
+
+.co-removeReceipt:hover {
+  color: var(--mp-err);
+  border-color: var(--mp-err);
+}
+
+.co-checkMark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mp-brand);
+}
+
+/* ── Trust marks (test-only, see SHOW_TEST_ONLY_TRUST_MARKS) ───────────────── */
+.co-footBar.withMarks {
+  justify-content: space-between;
+}
+
+.co-footMarks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.co-npci {
+  padding: 3px 6px;
+  border: 1px solid var(--mp-line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--mp-text);
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.co-upiMark {
+  padding: 3px 6px;
+  border: 1px solid var(--mp-brand);
+  border-radius: 4px;
+  background: var(--mp-mint);
+  color: var(--mp-brand);
+  font-weight: 700;
 }

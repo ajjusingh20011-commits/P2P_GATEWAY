@@ -27,10 +27,29 @@ export function useOrderSocket(orderId, onStatus) {
     socket.on('connect', subscribe);
 
     const handle = (status) => (payload) => cbRef.current?.(status, payload);
-    socket.on('order:confirmed', handle('confirmed'));
-    socket.on('order:expired', handle('expired'));
-    socket.on('order:cancelled', handle('cancelled'));
-    socket.on('order:paid', handle('paid'));
+
+    /*
+     * Every event the backend actually emits into the order room (`emitToOrder`
+     * — see backend/src/websocket/index.js and services/smartMerge.js). The
+     * previous list subscribed to `order:paid`, which nothing emits, and omitted
+     * rejected / disputed / claimed_paid / assigned / updated — so CheckoutPage's
+     * handler branches for those statuses could never fire and the page silently
+     * fell back to the 3s poll. Event names are mapped onto the status strings
+     * the page already switches on; no handling logic changed.
+     */
+    const EVENTS = {
+      'order:confirmed': 'confirmed',
+      'order:success': 'success',
+      'order:completed': 'completed',
+      'order:claimed_paid': 'claimed_paid',
+      'order:rejected': 'rejected',
+      'order:disputed': 'disputed',
+      'order:expired': 'expired',
+      'order:cancelled': 'cancelled',
+      'order:assigned': 'assigned',
+      'order:updated': 'updated',
+    };
+    Object.entries(EVENTS).forEach(([event, status]) => socket.on(event, handle(status)));
 
     return () => socket.disconnect();
   }, [orderId]);

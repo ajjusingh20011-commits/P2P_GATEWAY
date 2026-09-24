@@ -262,6 +262,7 @@ const checkout = asyncHandler(async (req, res) => {
     confirmation_type: order.confirmation_type || null,
     rejection_reason: order.rejection_reason || null,
     redirect_url: order.redirect_url || null,
+    has_receipt: !!order.screenshot_path,
   });
 });
 
@@ -309,7 +310,10 @@ const claimPaid = asyncHandler(async (req, res) => {
     donor_submitted_utr: utrNumber || order.donor_submitted_utr,
     confirmation_type: confirmationType,
     customer_confirmed_at: new Date(),
-    screenshot_path: req.body?.screenshot_path || order.screenshot_path,
+    // screenshot_path is set ONLY by the real upload endpoint (POST
+    // /:id/receipt, orderController.uploadReceipt) — it used to accept an
+    // arbitrary client-supplied string here with no file behind it, which
+    // would have made `has_receipt` lie about evidence that doesn't exist.
   });
 
   // Donation-ledger subsystem retired (2026-08-06): this used to bridge into
@@ -535,6 +539,27 @@ const newUpi = asyncHandler(async (req, res) => {
   return ok(res, { order: view });
 });
 
+/* --------------------------- POST /:id/receipt ----------------------------- */
+// Public (checkout page): optional supporting-evidence upload once the
+// customer has claimed payment. Never required to complete the flow, never
+// itself a confirmation — an admin reviewing the order can look at it, same
+// as the UTR, but only smartMerge.confirmOrder/admin action actually settles
+// anything. Persisted to real local disk via middleware/receiptUpload.js;
+// only the random on-disk filename is stored, never served back publicly
+// (see adminController.getOrderReceipt for the authenticated read side).
+const uploadReceipt = asyncHandler(async (req, res) => {
+  const order = await findOrder(req.params.id);
+  if (!order) return fail(res, 404, 'Order not found');
+  if (!db.Order.REVIEWABLE_STATUSES.includes(order.status)) {
+    return fail(res, 409, `A receipt can only be attached while the order is claimed_paid or under_review (current status: ${order.status})`);
+  }
+  if (!req.file) return fail(res, 422, 'No receipt file received');
+
+  await order.update({ screenshot_path: `receipts/${req.file.filename}` });
+
+  return ok(res, { success: true, screenshot_path: order.screenshot_path });
+});
+
 /* --------------------- POST /verify-payment (internal) -------------------- */
 // Server-to-server callback FROM the NGO backend once it has independently
 // matched a scraped bank/UPI transaction to the donor intent created in
@@ -729,4 +754,4 @@ const list = asyncHandler(async (req, res) => {
   return ok(res, { orders: rows.map(orderView), pagination: { page, limit, total: count } });
 });
 
-module.exports = { create, apiStatus, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, markPaid, cancel, cancelCheckout, verifyPayment, traderConfirm, reopenForReview };
+module.exports = { create, apiStatus, getOne, checkout, checkoutOpened, claimPaid, confirm, expire, dispute, list, newUpi, uploadReceipt, markPaid, cancel, cancelCheckout, verifyPayment, traderConfirm, reopenForReview };

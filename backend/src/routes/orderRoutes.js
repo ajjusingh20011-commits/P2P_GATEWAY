@@ -18,6 +18,7 @@ const orderController = require('../controllers/orderController');
 const { verifyToken, checkRole } = require('../middleware/auth');
 const { apiKeyAuth } = require('../middleware/apiKeyAuth');
 const { verifyInternalService } = require('../middleware/internalAuth');
+const { uploadReceiptMiddleware } = require('../middleware/receiptUpload');
 
 const router = Router();
 
@@ -48,6 +49,9 @@ router.post('/:id/customer-confirm', orderController.markPaid);
 // Public (checkout page): customer-initiated cancel, pending/checkout_open
 // only. Distinct from the authenticated /:id/cancel below (trader/admin).
 router.post('/:id/cancel-checkout', orderController.cancelCheckout);
+// Public (checkout page): optional receipt/screenshot upload, claimed_paid or
+// under_review only. Real disk persistence — see middleware/receiptUpload.js.
+router.post('/:id/receipt', uploadReceiptMiddleware, orderController.uploadReceipt);
 // Internal callback: NGO backend -> P2P backend once it verifies a payment.
 //
 // Was unauthenticated and publicly reachable on the production API host, and
