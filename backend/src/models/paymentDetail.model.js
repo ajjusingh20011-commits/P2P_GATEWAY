@@ -92,6 +92,18 @@ module.exports = (sequelize) => {
       // ambiguous side and a score reset did not reliably clear. Order ids
       // are monotonic, so this partitions exactly, with no clock involved.
       live_session_start_order_id: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+
+      // Feature 2 — APK Device Verification via Random Test Payment. NULL
+      // until the linked device's APK has genuinely detected a random small
+      // test payment for this detail (see ngo-backend's DeviceVerification
+      // flow, correlated in apk.js's POST /event handler). Additive gate:
+      // routingEngine.eligibleAccountsFor() requires this NOT NULL alongside
+      // the existing checks. The migration that added this column backfilled
+      // it for every row already connection_alive === true at the time, so
+      // existing working accounts were not silently taken out of routing —
+      // only brand-new payment details actually need to pass through the QR
+      // flow. See migrations/20260811000003-*.
+      device_verified_at: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
     },
     {
       sequelize,

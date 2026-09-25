@@ -17,6 +17,7 @@ const Device = require('../models/Device');
 const PayoutEvidence = require('../models/PayoutEvidence');
 const { MAX_ACTIVE_PAYOUTS } = require('../services/payoutList');
 const unrecognizedSenderReview = require('../services/unrecognizedSenderReview');
+const DeviceVerification = require('../models/DeviceVerification');
 const SessionStore = require('../services/SessionStore');
 const { CONNECTION_TYPE } = require('../config/constants');
 const { verifyInternalService } = require('../middleware/internalAuth');
@@ -121,6 +122,68 @@ router.get('/connection-liveness', async (req, res, next) => {
         alive: isOnline(d.lastSeen),
       })),
       webAccounts,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * POST /api/internal/device-verification — called by the P2P gateway
+ * backend's POST /api/trader/payment-details/:id/verify/start, once it has
+ * minted and amount-locked a random verification amount, to create the
+ * actual correlation record. See Feature 2 — APK Device Verification.
+ * Body: { deviceId, traderId, paymentDetailId, amount, expiresInSeconds }
+ *
+ * `deviceId` here is payment_details.ngo_device_id — the Device's Mongo
+ * _id as a string (see paymentDetail.model.js's comment on that column,
+ * and connection-liveness's identical convention above), NOT this schema's
+ * own `deviceId` string field. Resolved via findById, then the REAL
+ * deviceId string field is what actually gets stored on the
+ * DeviceVerification row — that's the field RawEvent.deviceId carries
+ * (apk.js stamps device.deviceId onto every RawEvent), so it's what the
+ * POST /event correlation check must compare against.
+ */
+router.post('/device-verification', async (req, res, next) => {
+  try {
+    const { deviceId, traderId, paymentDetailId, amount, expiresInSeconds } = req.body || {};
+    if (!deviceId || !Number.isFinite(Number(traderId)) || !Number.isFinite(Number(paymentDetailId)) || !amount) {
+      return res.status(400).json({ success: false, message: 'deviceId, traderId, paymentDetailId, and amount are required' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(deviceId)) {
+      return res.status(400).json({ success: false, message: 'deviceId must be a valid Device _id' });
+    }
+
+    const device = await Device.findById(deviceId);
+    if (!device) {
+      return res.status(404).json({ success: false, message: 'Device not found' });
+    }
+    if (device.traderId !== Number(traderId)) {
+      // Same ownership check every other trader-scoped route here makes —
+      // a device belongs to exactly one trader, and this must never let
+      // trader A start a verification against trader B's device.
+      return res.status(403).json({ success: false, message: 'Device does not belong to this trader' });
+    }
+
+    const expiresAt = new Date(Date.now() + (Number(expiresInSeconds) || 300) * 1000);
+    const verification = await DeviceVerification.create({
+      deviceId: device.deviceId, // the real Android-string field, not the Mongo _id we were given
+      traderId: Number(traderId),
+      paymentDetailId: Number(paymentDetailId),
+      amount: String(amount),
+      status: 'pending',
+      expiresAt,
+    });
+
+    return res.status(201).json({
+      success: true,
+      verification: {
+        id: verification._id.toString(),
+        deviceId: verification.deviceId,
+        amount: verification.amount,
+        status: verification.status,
+        expiresAt: verification.expiresAt,
+      },
     });
   } catch (err) {
     return next(err);

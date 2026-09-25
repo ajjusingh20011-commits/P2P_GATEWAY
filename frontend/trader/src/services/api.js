@@ -141,6 +141,11 @@ export const traderApi = {
   addPaymentDetail: (body) => api.post('/trader/payment-details', body),
   updatePaymentDetail: (id, body) => api.put(`/trader/payment-details/${id}`, body),
   deletePaymentDetail: (id) => api.delete(`/trader/payment-details/${id}`),
+  // Feature 2 — APK Device Verification via Random Test Payment. Real random
+  // small amount + QR data; the actual detection/[Check] status comes from
+  // ngo-backend (see ngoApi.js's checkDeviceVerification), since that's
+  // where the correlation with the linked device's captured payment happens.
+  startDeviceVerification: (id) => api.post(`/trader/payment-details/${id}/verify/start`),
 
   // Payout requests ("Buy USDT") — merchant payouts this trader can process.
   payoutRequests: (status) => api.get('/trader/payout-requests', { params: status ? { status } : {} }),

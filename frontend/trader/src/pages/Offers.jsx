@@ -14,9 +14,10 @@ import DevicePicker, { useDevices, deviceLabel } from '../components/DevicePicke
 import ConfirmModal from '../components/ConfirmModal';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
+import QRCode from 'react-qr-code';
 import {
   saveWebAccount, getAccounts, toggleAccount, updateAccount, connectAccount, verifyOTP, deleteAccount,
-  getDevices, getAccountStatus, getNgoSocketToken, NGO_SOCKET_ORIGIN,
+  getDevices, getAccountStatus, getNgoSocketToken, NGO_SOCKET_ORIGIN, checkDeviceVerification,
 } from '../lib/ngoApi';
 
 // A device counts as "live" for the readiness gate only within this window —
@@ -363,6 +364,19 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [caps, setCaps] = useState({ month: false, week: false, day: false, hour: false });
 
+  // Feature 2 — APK Device Verification via Random Test Payment. `verification`
+  // holds the real, currently-open verification attempt (or null before step 4
+  // / after it's been superseded by a retry). `savedDetailId` is the real
+  // payment_detail row created at the end of step 3 — verification always
+  // targets that same row, retries included, per the design (no restart).
+  const [savedDetailId, setSavedDetailId] = useState(null);
+  const [verification, setVerification] = useState(null); // { id, amount, qrData, expiresAt }
+  const [verificationStatus, setVerificationStatus] = useState('pending'); // pending | verified | expired
+  const [diagnosis, setDiagnosis] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const [startingVerification, setStartingVerification] = useState(false);
+  const [remainingMs, setRemainingMs] = useState(0);
+
   // Real paired devices (ngo-backend Mongo Device, via the same
   // getDevices() the Smartphones page uses) — Fix 1: this dropdown used to
   // be a static "No devices" placeholder pointed at an unrelated, dead
@@ -429,10 +443,34 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
   const deviceValid = !!form.ngo_device_id;
   const step2Valid = nameValid && upiValid && orgValid && deviceValid;
 
+  // Feature 2 — real POST /verify/start against the just-saved detail. Kept
+  // separate from save() below so the retry-after-expiry path (step 4's
+  // "Generate new QR" button) can call it again without re-running the
+  // whole add-payment-detail save.
+  const startVerification = async (detailId) => {
+    setStartingVerification(true);
+    setDiagnosis(null);
+    setVerificationStatus('pending');
+    try {
+      const res = await traderApi.startDeviceVerification(detailId);
+      const data = res?.data?.data;
+      setVerification({
+        id: data.verification_id,
+        amount: data.amount,
+        qrData: data.qr_data,
+        expiresAt: data.expires_at,
+      });
+    } catch (e) {
+      toast(apiError(e), 'error');
+    } finally {
+      setStartingVerification(false);
+    }
+  };
+
   const save = async () => {
     setSaving(true);
     try {
-      await traderApi.addPaymentDetail(
+      const res = await traderApi.addPaymentDetail(
         buildBody(form, bank?.type || 'gpay', caps, {
           account_name: form.account_name,
           upi_id: form.upi_id,
@@ -442,8 +480,20 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
         })
       );
       toast('Payment detail added', 'success');
+      const newId = res?.data?.data?.payment_detail?.id;
       await onSaved();
-      onClose();
+      if (newId) {
+        // Feature 2 — move into the verification step instead of closing.
+        // The detail is real and saved either way; verification only gates
+        // routing eligibility, so failing to start it here (e.g. no device
+        // linked) must not undo the save or block the trader from finishing
+        // later from the Offers list.
+        setSavedDetailId(newId);
+        setStep(4);
+        await startVerification(newId);
+      } else {
+        onClose();
+      }
     } catch (e) {
       toast(apiError(e), 'error'); // Fix 1 — surface the exact backend message
     } finally {
@@ -451,7 +501,93 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
     }
   };
 
-  const STEP_LABELS = { 1: 'Bank', 2: 'Account & device', 3: 'Limits' };
+  // Feature 2 — manual [Check] button: real GET against ngo-backend's
+  // correlation state, not a client-side guess.
+  const runCheck = async () => {
+    if (!verification) return;
+    setChecking(true);
+    try {
+      const res = await checkDeviceVerification(verification.id);
+      if (!res.success) {
+        toast(res.message || 'Could not check verification status', 'error');
+        return;
+      }
+      setVerificationStatus(res.status);
+      setDiagnosis(res.status === 'pending' ? res.diagnosis : null);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  // Feature 2 — real-time detection: a live socket push (device-verification:
+  // verified, emitted by ngo-backend's apk.js the instant it correlates a
+  // matching RawEvent) plus a periodic poll as a resilience fallback, same
+  // dual pattern (socket for speed + poll for resilience) this page already
+  // uses for account/device liveness elsewhere. Scoped to this modal only —
+  // connects while step 4 is open with a pending verification, tears down
+  // on close/retry/unmount.
+  useEffect(() => {
+    if (step !== 4 || !verification || verificationStatus !== 'pending') return undefined;
+
+    let cancelled = false;
+    let socket;
+    getNgoSocketToken().then((serviceToken) => {
+      if (cancelled) return;
+      socket = io(NGO_SOCKET_ORIGIN, { auth: { serviceToken } });
+      socket.on('device-verification:verified', ({ paymentDetailId }) => {
+        if (String(paymentDetailId) !== String(savedDetailId)) return;
+        setVerificationStatus('verified');
+        setDiagnosis(null);
+      });
+    }).catch((e) => console.error('Could not start verification socket:', e.message));
+
+    const pollId = setInterval(() => {
+      checkDeviceVerification(verification.id).then((res) => {
+        if (cancelled || !res.success) return;
+        setVerificationStatus(res.status);
+        if (res.status === 'pending') setDiagnosis(res.diagnosis);
+      });
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      socket?.disconnect();
+      clearInterval(pollId);
+    };
+  }, [step, verification, verificationStatus, savedDetailId]);
+
+  // Live 5-minute countdown, purely a display concern — expiry itself is
+  // decided server-side (ngo-backend's real sweep + [Check]'s lazy-expiry
+  // check), this just re-renders the mm:ss and flips the local status once
+  // the real deadline passes so the retry button appears without waiting on
+  // the next poll tick.
+  useEffect(() => {
+    if (!verification || verificationStatus !== 'pending') return undefined;
+    const tick = () => {
+      const ms = new Date(verification.expiresAt).getTime() - Date.now();
+      setRemainingMs(Math.max(0, ms));
+      if (ms <= 0) setVerificationStatus((s) => (s === 'pending' ? 'expired' : s));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [verification, verificationStatus]);
+
+  const fmtRemaining = (ms) => {
+    const total = Math.ceil(ms / 1000);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  };
+
+  const DIAGNOSIS_TEXT = {
+    apk_not_active: 'The paired phone looks offline — check the APK is running and the phone has a real network connection.',
+    permission_not_granted: 'Notification access was never granted on this phone. Open the MaxPay app → Permissions and enable notification access.',
+    listener_disconnected: 'Notification access is granted but the listener got disconnected (some phones silently unbind it). Reopen the MaxPay app to restore it.',
+    check_upi_id: "No payment detected yet. Double-check you paid the exact amount to the UPI ID shown, and that it's the one linked to this device.",
+  };
+
+  const STEP_LABELS = { 1: 'Bank', 2: 'Account & device', 3: 'Limits', 4: 'Verify' };
 
   return (
     <>
@@ -459,9 +595,9 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
           MaxPayDesign's wizardProgress; 3 steps (not the design's 4) since
           the real flow deliberately keeps device-selection and account-info
           on one step rather than splitting them further. */}
-      <div className="relative mb-5 grid grid-cols-3">
-        <div className="absolute left-[16%] right-[16%] top-[14px] h-px" style={{ background: 'var(--cardborder)' }} />
-        {[1, 2, 3].map((s) => (
+      <div className="relative mb-5 grid grid-cols-4">
+        <div className="absolute left-[12%] right-[12%] top-[14px] h-px" style={{ background: 'var(--cardborder)' }} />
+        {[1, 2, 3, 4].map((s) => (
           <div key={s} className="relative z-[1] text-center">
             <span
               className="mx-auto flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold"
@@ -639,11 +775,77 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
         </>
       )}
 
+      {/* Feature 2 — APK Device Verification via Random Test Payment. The
+          payment detail itself is already saved by this point (step 3's
+          "Add details" already ran); this step only gates real routing
+          eligibility (device_verified_at) — closing the modal here without
+          verifying does NOT lose the detail, it just stays unverified until
+          the trader finishes from the Offers list later. */}
+      {step === 4 && (
+        <div>
+          <p className="mb-1 text-sm font-medium" style={{ color: 'var(--text)' }}>Verify this device</p>
+          <p className="mb-4 text-xs" style={{ color: 'var(--muted)' }}>
+            Pay the exact amount below from any other UPI app. The paired phone's APK should detect it automatically —
+            this confirms it can actually capture real payments before this account joins routing.
+          </p>
+
+          {startingVerification && (
+            <p className="py-6 text-center text-sm" style={{ color: 'var(--muted)' }}>Generating a verification QR…</p>
+          )}
+
+          {!startingVerification && verification && verificationStatus === 'pending' && (
+            <div className="space-y-4">
+              <div className="flex flex-col items-center gap-3 rounded-lg p-4" style={{ border: '1px solid var(--cardborder)', background: 'var(--hover)' }}>
+                <div className="rounded-md bg-white p-3">
+                  <QRCode value={verification.qrData} size={160} bgColor="#ffffff" fgColor="#111827" />
+                </div>
+                <div className="text-center">
+                  <p className="text-lg font-semibold" style={{ color: 'var(--text)' }}>₹{verification.amount}</p>
+                  <p className="text-xs" style={{ color: 'var(--muted)' }}>to {form.upi_id}</p>
+                </div>
+                <span className="rounded-full px-2.5 py-1 font-mono text-xs font-semibold" style={{ background: 'var(--cardbg)', color: remainingMs < 60000 ? '#ef4444' : 'var(--text)' }}>
+                  {fmtRemaining(remainingMs)} remaining
+                </span>
+              </div>
+
+              {diagnosis && (
+                <div className="rounded-lg p-3 text-xs" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--text)' }}>
+                  {DIAGNOSIS_TEXT[diagnosis] || 'No payment detected yet.'}
+                </div>
+              )}
+
+              <Button variant="ghost" onClick={runCheck} disabled={checking} className="w-full">
+                {checking ? 'Checking…' : 'Check now'}
+              </Button>
+            </div>
+          )}
+
+          {verificationStatus === 'verified' && (
+            <div className="flex flex-col items-center gap-2 py-6 text-center">
+              <CheckCircle2 className="h-10 w-10" style={{ color: '#22c55e' }} />
+              <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>Device verified</p>
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>This payment detail can now join routing.</p>
+            </div>
+          )}
+
+          {verificationStatus === 'expired' && (
+            <div className="space-y-3 py-4 text-center">
+              <p className="text-sm" style={{ color: 'var(--text)' }}>This QR expired with no payment detected.</p>
+              <Button onClick={() => startVerification(savedDetailId)} disabled={startingVerification}>
+                Generate new QR
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* footer nav */}
       <div className="mt-5 flex items-center justify-between">
-        <Button variant="ghost" onClick={() => (step === 1 || (step === 2 && presetBank) ? onClose() : setStep((s) => s - 1))}>
-          {step === 1 || (step === 2 && presetBank) ? 'Cancel' : 'Back'}
-        </Button>
+        {step !== 4 && (
+          <Button variant="ghost" onClick={() => (step === 1 || (step === 2 && presetBank) ? onClose() : setStep((s) => s - 1))}>
+            {step === 1 || (step === 2 && presetBank) ? 'Cancel' : 'Back'}
+          </Button>
+        )}
 
         {step === 1 && (
           <Button onClick={() => setStep(2)} disabled={!bank}>Next</Button>
@@ -655,6 +857,12 @@ function ApkWizardBody({ presetBank, onClose, onSaved }) {
 
         {step === 3 && (
           <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Add details'}</Button>
+        )}
+
+        {step === 4 && (
+          <Button onClick={onClose} className="ml-auto">
+            {verificationStatus === 'verified' ? 'Done' : 'Finish later'}
+          </Button>
         )}
       </div>
     </>

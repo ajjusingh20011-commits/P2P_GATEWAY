@@ -8,6 +8,7 @@ const Payout = require('../models/Payout');
 const CrashLog = require('../models/CrashLog');
 const Transaction = require('../models/Transaction');
 const RawEvent = require('../models/RawEvent');
+const DeviceVerification = require('../models/DeviceVerification');
 const PayoutEvidence = require('../models/PayoutEvidence');
 const { attemptSubmissionLock, clearOtherDevices } = require('../services/payoutLockService');
 const scraperEngine = require('../services/scraperEngine');
@@ -258,6 +259,78 @@ router.delete(
 );
 
 /**
+ * GET /api/apk/verify-device/:verificationId/check
+ * Auth: real trader service token, or admin.
+ *
+ * Feature 2 — APK Device Verification via Random Test Payment. The
+ * [Check]-button endpoint: reports the current DeviceVerification status,
+ * and — while still pending — a real, signal-based diagnosis of why the
+ * test payment hasn't been detected yet, instead of a bare "failed":
+ *
+ *   apk_not_active        - isOnline(lastSeen) false (apk.js's own 15s
+ *                            heartbeat-freshness window, same one /devices
+ *                            reports as `online`)
+ *   permission_not_granted - Device.notificationAccessGranted === false —
+ *                            real signal, on-device via
+ *                            MainActivity.isNotificationListenerEnabled,
+ *                            transmitted since Feature 2 (older APK builds
+ *                            report null here, which falls through to
+ *                            listener_disconnected/check_upi_id below same
+ *                            as "unknown" always has)
+ *   listener_disconnected  - device online, permission genuinely was
+ *                            granted, but Device.listenerConnected === false
+ *                            (the ColorOS-style silent-unbind case)
+ *   check_upi_id            - none of the above — no real signal exists for
+ *                            "paid to the wrong UPI", so this is the honest
+ *                            generic fallback, not a fabricated diagnosis
+ */
+router.get('/verify-device/:verificationId/check', verifyServiceOrAdmin, async (req, res, next) => {
+  try {
+    const verification = await DeviceVerification.findOne({
+      _id: req.params.verificationId,
+      ...resolveTraderFilter(req),
+    });
+    if (!verification) {
+      return res.status(404).json({ success: false, message: 'Verification not found' });
+    }
+
+    if (verification.status === 'verified') {
+      return res.json({ success: true, status: 'verified', verified_at: verification.verifiedAt });
+    }
+
+    // Lazy expiry — the real sweep (jobs/deviceVerificationExpiry.js) runs on
+    // its own cadence; a [Check] click that lands between sweep ticks should
+    // still report the true state rather than a stale "pending".
+    if (verification.status === 'expired' || verification.expiresAt <= new Date()) {
+      if (verification.status === 'pending') {
+        verification.status = 'expired';
+        await verification.save();
+      }
+      return res.json({ success: true, status: 'expired' });
+    }
+
+    const device = await Device.findOne({ deviceId: verification.deviceId });
+    let diagnosis = 'check_upi_id';
+    if (!device || !isOnline(device.lastSeen)) {
+      diagnosis = 'apk_not_active';
+    } else if (device.notificationAccessGranted === false) {
+      diagnosis = 'permission_not_granted';
+    } else if (device.listenerConnected === false) {
+      diagnosis = 'listener_disconnected';
+    }
+
+    return res.json({
+      success: true,
+      status: 'pending',
+      diagnosis,
+      expires_at: verification.expiresAt,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
  * POST /api/apk/update-device-name — no auth (the APK posts this directly,
  * right after the trader picks a name in SetDeviceNameActivity).
  * Body: { licenseKey, deviceId, deviceName }
@@ -296,7 +369,7 @@ router.post('/update-device-name', async (req, res) => {
  */
 router.post('/heartbeat', async (req, res) => {
   try {
-    const { deviceId, status, listenerConnected, appVersion } = req.body;
+    const { deviceId, status, listenerConnected, notificationAccessGranted, appVersion } = req.body;
     const token = req.headers.devicetoken || req.headers['x-device-token'];
     if (!deviceId || !token) {
       return res.status(404).json({ success: false, message: 'deviceId and devicetoken are required' });
@@ -317,6 +390,11 @@ router.post('/heartbeat', async (req, res) => {
     // registered with. Only when actually sent (older builds omit it).
     if (appVersion) {
       update.appVersion = appVersion;
+    }
+    // Feature 2 — same "only touch if actually sent" rule, same reasoning:
+    // an APK build predating this field must read as unknown (null), not false.
+    if (typeof notificationAccessGranted === 'boolean') {
+      update.notificationAccessGranted = notificationAccessGranted;
     }
 
     const device = await Device.findOneAndUpdate(
@@ -369,7 +447,18 @@ router.post('/event', async (req, res, next) => {
     device.lastSeen = new Date();
     await device.save();
 
-    const { type, sender, body, category, amount, utr, utcTimestamp } = req.body;
+    const {
+      type, sender, body, category, amount, utr, utcTimestamp,
+      // Web Login (on-device WebView) additive fields. `source` distinguishes
+      // this capture path; payerName/payerUpiId are the structured values the
+      // platform's own transaction API returned, so they don't have to be
+      // re-parsed out of free text the way SMS/notification captures are.
+      source, payerName, payerUpiId,
+    } = req.body;
+
+    // A web-login source is authoritative structured data read from the
+    // merchant dashboard's own API inside the app WebView.
+    const isWebLogin = typeof source === 'string' && source.startsWith('web_login');
 
     const rawEvent = await scraperEngine.ingestRawEvent({
       deviceId: device.deviceId,
@@ -382,6 +471,7 @@ router.post('/event', async (req, res, next) => {
       amount: amount || '',
       utr: utr || '',
       utcTimestamp: utcTimestamp || new Date().toISOString(),
+      source: source || '',
     });
 
     const io = req.app.get('io');
@@ -403,6 +493,50 @@ router.post('/event', async (req, res, next) => {
       traderId: rawEvent.traderId,
     }).catch(() => {});
 
+    // Feature 2 — APK Device Verification via Random Test Payment. Checked
+    // against THIS device specifically (deviceId), not the trader's whole
+    // UPI set the way real settlement below resolves — the entire point is
+    // confirming this one device captures payments, so a match on a
+    // different device of the same trader must not count. atomic
+    // findOneAndUpdate (pending -> verified) so two near-simultaneous
+    // deliveries of the same event can't both "win" the match.
+    let verificationMatch = null;
+    if (rawEvent.amount) {
+      try {
+        verificationMatch = await DeviceVerification.findOneAndUpdate(
+          {
+            deviceId: device.deviceId,
+            amount: String(rawEvent.amount),
+            status: 'pending',
+            expiresAt: { $gt: new Date() },
+          },
+          { status: 'verified', verifiedAt: new Date() },
+          { new: true }
+        );
+      } catch (e) {
+        console.error('DeviceVerification correlation check failed:', e.message);
+      }
+    }
+    if (verificationMatch) {
+      try {
+        const base = process.env.P2P_BACKEND_URL || 'http://localhost:4000';
+        await axios.post(
+          `${base}/api/internal/mark-device-verified`,
+          { payment_detail_id: verificationMatch.paymentDetailId },
+          { timeout: 5000, headers: internalAuthHeaders() }
+        );
+      } catch (e) {
+        console.error('mark-device-verified call failed:', e.message);
+      }
+      if (io && device.traderId != null) {
+        io.to(`trader:${device.traderId}`).emit('device-verification:verified', {
+          paymentDetailId: verificationMatch.paymentDetailId,
+          amount: verificationMatch.amount,
+        });
+      }
+      console.log(`Device verification matched: device=${device.deviceId} amount=${verificationMatch.amount} paymentDetail=${verificationMatch.paymentDetailId}`);
+    }
+
     // Payment events drive reconciliation against pending donor intents
     // (NGO's own donation ledger — unrelated to P2P order settlement).
     //
@@ -422,6 +556,11 @@ router.post('/event', async (req, res, next) => {
     // order. `settlement` carries that real result forward so `matched`/
     // `p2pOrderId` on the Transaction reflect it, instead of never being
     // set at all (see Transaction.js's `matched` field comment).
+    // One line per real decision in this flow, so a payment that fails to
+    // auto-close is diagnosable from logs alone (BUG-30) rather than by
+    // cross-referencing database timestamps by hand.
+    console.log(`event[${rawEvent._id}]: received type=${rawEvent.type} category=${rawEvent.category} trader=${rawEvent.traderId} amount=${rawEvent.amount || '(none)'} utr=${rawEvent.utr || '(none)'}`);
+
     let settlement = null;
     if (rawEvent.category === CATEGORY.PAYMENT) {
       matchingEngine.checkMatch(rawEvent, io).catch((e) => {
@@ -433,6 +572,8 @@ router.post('/event', async (req, res, next) => {
       } catch (e) {
         console.error('triggerOrderSettlementFromRawEvent failed:', e.message);
       }
+    } else {
+      console.log(`event[${rawEvent._id}]: not category PAYMENT — no match attempted`);
     }
     const settledOrderId = settlement && settlement.matched && settlement.order_id != null
       ? settlement.order_id
@@ -454,12 +595,27 @@ router.post('/event', async (req, res, next) => {
     // all removed; rows created while it was on carry that suffix and are
     // cleaned up separately.
     if (device.traderId != null) {
-      const verdict = detectRealPayment({
-        type: rawEvent.type,
-        sender: rawEvent.sender,
-        body: rawEvent.body,
-        amount: rawEvent.amount,
-      });
+      // Web Login rows are authoritative structured data from the platform's
+      // own API — they skip the text heuristic (which looks for a
+      // "received/credited" signal that structured data doesn't contain) and
+      // use the fields the app already extracted. Everything else still goes
+      // through detectRealPayment exactly as before.
+      const verdict = isWebLogin
+        ? {
+            isRealPayment: !!rawEvent.amount,
+            reason: 'web_login structured capture',
+            amount: rawEvent.amount,
+            payerName: payerName || '',
+            payerUpiId: payerUpiId || '',
+          }
+        : detectRealPayment({
+            type: rawEvent.type,
+            sender: rawEvent.sender,
+            body: rawEvent.body,
+            amount: rawEvent.amount,
+          });
+
+      console.log(`event[${rawEvent._id}]: detector verdict isRealPayment=${verdict.isRealPayment} reason="${verdict.reason || ''}" amount=${verdict.amount || '(none)'} payer="${verdict.payerName || ''}"`);
 
       if (verdict.isRealPayment) {
         // One RawEvent must never produce more than one Transaction, so the
@@ -499,7 +655,9 @@ router.post('/event', async (req, res, next) => {
             ngoId: device.ngoId || null,
             traderId: device.traderId,
             accountId: null, // no Account document for an APK-sourced capture
-            platform: rawEvent.type === RAW_EVENT_TYPE.NOTIFICATION ? 'apk-notification' : 'apk-sms',
+            platform: isWebLogin
+              ? source // e.g. "web_login_paytm"
+              : (rawEvent.type === RAW_EVENT_TYPE.NOTIFICATION ? 'apk-notification' : 'apk-sms'),
             amount: verdict.amount,
             payerName: verdict.payerName || '',
             payerUpiId: verdict.payerUpiId || '',
@@ -516,7 +674,13 @@ router.post('/event', async (req, res, next) => {
             // row as unmatched and nothing would ever revisit it.
             matched: settledOrderId != null,
             p2pOrderId: settledOrderId,
+            // Feature 2 — shown on Notifications (design decision: visible,
+            // not suppressed), tagged so the trader can tell it apart from a
+            // real customer deposit rather than it reading as unexplained
+            // noise in their transaction history.
+            isVerification: !!verificationMatch,
           });
+          console.log(`event[${rawEvent._id}]: Transaction created — amount=${verdict.amount} matched=${settledOrderId != null} p2pOrderId=${settledOrderId ?? 'null'}`);
 
           if (io) {
             io.to(`trader:${device.traderId}`).emit('new-transactions', { count: 1 });

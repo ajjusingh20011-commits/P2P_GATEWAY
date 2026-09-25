@@ -42,6 +42,16 @@ const deviceSchema = new mongoose.Schema(
     // stay distinct from `false` so the trader panel doesn't show "degraded"
     // for a device that simply hasn't said anything either way.
     listenerConnected: { type: Boolean, default: null },
+    // Distinct from listenerConnected above — that's "is the listener bound
+    // right now", this is "has the user ever granted notification access at
+    // all". Both were previously conflated on the server: listenerConnected
+    // false could mean either "never granted" or "granted, then silently
+    // unbound" (the ColorOS case), which HeartbeatService.checkListenerHealth
+    // already distinguishes on-device (MainActivity.isNotificationListenerEnabled)
+    // to decide whether a rebind is even possible, but never transmitted that
+    // distinction. Feature 2's [Check]-button diagnosis needs it as a real,
+    // separate signal. null = never reported (older APK build).
+    notificationAccessGranted: { type: Boolean, default: null },
     // FEATURE 2 — Payout evidence capture. Phase 1a (Scenario 10): a trader can
     // have up to 3 payouts in processing at once and complete ANY of them on
     // ANY of their linked devices, so this is a LIST (capped at 3), not a single

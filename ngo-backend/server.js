@@ -147,6 +147,20 @@ const PORT = process.env.PORT || 3000;
 async function start() {
   try {
     await connectDB();
+
+    // Feature 2 — APK Device Verification via Random Test Payment. Same
+    // in-process setInterval sweep pattern the gateway backend already uses
+    // for its own maintenance jobs (order-expiry, stale-claim, etc. in
+    // backend/src/server.js) — this is that pattern's first instance
+    // running natively in THIS service, since DeviceVerification is a Mongo
+    // collection that only exists here.
+    try {
+      const { startDeviceVerificationExpirySweep } = require('./src/jobs/deviceVerificationExpiry');
+      startDeviceVerificationExpirySweep();
+    } catch (err) {
+      console.warn('Could not start device-verification expiry sweep:', err.message);
+    }
+
     server.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });

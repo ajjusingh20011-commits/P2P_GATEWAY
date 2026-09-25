@@ -60,6 +60,14 @@ const transactionSchema = new mongoose.Schema(
     // ref, since Order lives in a different database/service entirely.
     // Only meaningful when matched is true.
     p2pOrderId: { type: Number, default: null },
+    // Feature 2 — APK Device Verification via Random Test Payment. Set true
+    // only for the specific Transaction created when apk.js's POST /event
+    // correlates an incoming RawEvent against a pending DeviceVerification —
+    // a real self-test payment, not a customer deposit. Deliberately still
+    // shown on the Notifications page (not suppressed) per design decision,
+    // so the trader can see the test payment actually land; the frontend
+    // tags it visually rather than letting it blend in with real captures.
+    isVerification: { type: Boolean, default: false },
     txnTime: { type: String, default: '' },
     scrapedAt: { type: Date, default: Date.now },
     rawEventId: {

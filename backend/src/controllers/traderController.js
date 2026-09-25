@@ -18,6 +18,8 @@ const rateService = require('../services/rateService');
 const { computeWindowUsage } = require('../services/usageWindows');
 const { internalAuthHeaders } = require('../services/ngoServiceAuth');
 const accountScore = require('../services/accountScore');
+const routingEngine = require('../services/routingEngine');
+const upiService = require('../services/upiService');
 
 /** Load the Trader row for the current user, or 404. */
 async function currentTrader(req, res) {
@@ -552,6 +554,105 @@ const deletePaymentDetail = asyncHandler(async (req, res) => {
   return ok(res, { deleted: true, id: Number(req.params.id) });
 });
 
+/* ------------------ POST /payment-details/:id/verify/start ---------------- */
+// Feature 2 — APK Device Verification via Random Test Payment. Mints a
+// random small amount (checked for real uniqueness against the trader's own
+// currently-active orders, not just this one detail — see the comment on
+// findUniqueVerificationAmount for why), amount-locks it the same way real
+// order creation does, then asks ngo-backend to open the correlation window
+// (DeviceVerification) that apk.js's POST /event checks against.
+const VERIFICATION_WINDOW_SECONDS = 5 * 60;
+const VERIFICATION_MIN_AMOUNT = 1;
+const VERIFICATION_MAX_AMOUNT = 50;
+const MAX_AMOUNT_ATTEMPTS = 10;
+
+function randomVerificationAmount() {
+  return Math.floor(Math.random() * (VERIFICATION_MAX_AMOUNT - VERIFICATION_MIN_AMOUNT + 1)) + VERIFICATION_MIN_AMOUNT;
+}
+
+/**
+ * Real settlement (matchingEngineV2/triggerOrderSettlementFromRawEvent)
+ * resolves EVERY UPI belonging to the trader, not just one payment detail —
+ * so the actual collision risk for a verification amount is "does this
+ * amount match any of the trader's other currently-active real orders",
+ * not just this one (brand-new, order-less) detail. Mirrors
+ * routingEngine.hasSameAmountActiveOrder's DB check, widened to trader scope
+ * per the investigation's correction.
+ */
+async function isAmountFreeForTrader(traderId, amount) {
+  const n = await db.Order.count({
+    where: { trader_id: traderId, amount_inr: amount, status: { [Op.in]: db.Order.ACTIVE_STATUSES } },
+  });
+  return n === 0;
+}
+
+const startDeviceVerification = asyncHandler(async (req, res) => {
+  const trader = await currentTrader(req, res);
+  if (!trader) return undefined;
+
+  const detail = await db.PaymentDetail.findOne({ where: { id: req.params.id, trader_id: trader.id } });
+  if (!detail) return fail(res, 404, 'Payment detail not found');
+  if (!detail.ngo_device_id) {
+    return fail(res, 422, 'This payment detail has no linked device to verify');
+  }
+
+  let amount = null;
+  let lockKey = null;
+  for (let attempt = 0; attempt < MAX_AMOUNT_ATTEMPTS; attempt += 1) {
+    const candidate = randomVerificationAmount();
+    // eslint-disable-next-line no-await-in-loop
+    const free = await isAmountFreeForTrader(trader.id, candidate);
+    if (!free) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const locked = await routingEngine.acquireAmountLock(detail.id, candidate, `verify:${detail.id}`);
+    if (!locked) continue;
+    amount = candidate;
+    lockKey = candidate;
+    break;
+  }
+  if (amount == null) {
+    return fail(res, 503, 'Could not allocate a free verification amount right now — please retry');
+  }
+
+  const base = process.env.NGO_BACKEND_URL || 'http://localhost:3000';
+  let verification;
+  try {
+    const resp = await axios.post(
+      `${base}/api/internal/device-verification`,
+      {
+        deviceId: detail.ngo_device_id,
+        traderId: trader.id,
+        paymentDetailId: detail.id,
+        amount,
+        expiresInSeconds: VERIFICATION_WINDOW_SECONDS,
+      },
+      { timeout: 5000, headers: internalAuthHeaders() }
+    );
+    verification = resp.data.verification;
+  } catch (err) {
+    await routingEngine.releaseAmountLock(detail.id, lockKey);
+    logger.error(`startDeviceVerification: ngo-backend call failed for detail ${detail.id}: ${err.message}`);
+    return fail(res, 502, 'Could not start device verification — ngo-backend unreachable');
+  }
+
+  const link = upiService.buildUpiLink({
+    upiId: detail.upi_id,
+    payeeName: detail.account_name,
+    amountInr: amount,
+    note: 'Device verification',
+  });
+
+  return created(res, {
+    verification_id: verification.id,
+    payment_detail_id: detail.id,
+    amount,
+    qr_data: link,
+    upi_link: link,
+    upi_id: detail.upi_id,
+    expires_at: verification.expiresAt,
+  });
+});
+
 /* --------------------------- GET /notifications --------------------------- */
 const notifications = asyncHandler(async (req, res) => {
   const trader = await currentTrader(req, res);
@@ -620,6 +721,7 @@ module.exports = {
   addPaymentDetail,
   updatePaymentDetail,
   deletePaymentDetail,
+  startDeviceVerification,
   notifications,
   listPayouts,
   requestPayout,

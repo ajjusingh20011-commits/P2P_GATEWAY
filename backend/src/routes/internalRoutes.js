@@ -44,7 +44,6 @@ router.get('/upi-check', asyncHandler(async (req, res) => {
 // the trader's full UPI set if the device isn't linked to any UPI. The scraper
 // sends upi_ids (it knows the exact receiving account, strictly most precise).
 // Historically the APK path sent trader_id and
-// lets matchingEngineV2 resolve the UPI list from payment_details here — it
 // used to send a list resolved from ngo-backend's Mongo Account collection,
 // which only covers Web Login accounts and so never contained an APK-linked
 // UPI (BUG-30). The scraper still sends upi_ids: it knows the exact receiving
@@ -113,6 +112,31 @@ router.post('/order-upis', asyncHandler(async (req, res) => {
     if (o.uuid) uuids[o.id] = o.uuid;
   });
   return res.json({ success: true, upis, uuids });
+}));
+
+// POST /api/internal/mark-device-verified — called by ngo-backend's apk.js
+// POST /event handler once it correlates a real RawEvent against a pending
+// DeviceVerification (see Feature 2 — APK Device Verification). Sets the
+// real MySQL-side gate routingEngine.eligibleAccountsFor() reads.
+// Body: { payment_detail_id }
+router.post('/mark-device-verified', asyncHandler(async (req, res) => {
+  const paymentDetailId = Number(req.body?.payment_detail_id);
+  if (!Number.isFinite(paymentDetailId)) {
+    return res.status(400).json({ success: false, message: 'payment_detail_id is required' });
+  }
+
+  const detail = await db.PaymentDetail.findByPk(paymentDetailId);
+  if (!detail) {
+    return res.status(404).json({ success: false, message: 'Payment detail not found' });
+  }
+
+  // Idempotent — a duplicate delivery of the same RawEvent (or a retry after
+  // a network hiccup) must not push the timestamp forward on every call.
+  if (!detail.device_verified_at) {
+    await detail.update({ device_verified_at: new Date() });
+  }
+
+  return res.json({ success: true, payment_detail_id: paymentDetailId, device_verified_at: detail.device_verified_at });
 }));
 
 // POST /api/internal/match-payout-evidence — REDESIGN: the device captures a

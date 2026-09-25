@@ -165,3 +165,19 @@ export async function getDeviceLiveness(deviceId) {
   const devices = await getDevices();
   return devices.find((d) => d.deviceId === deviceId) || null;
 }
+
+// Feature 2 — APK Device Verification via Random Test Payment. The
+// [Check]-button call: real DeviceVerification status, plus — while still
+// pending — a real, signal-based diagnosis (apk_not_active /
+// permission_not_granted / listener_disconnected / check_upi_id). Not
+// wrapped in unwrap() the same way getAccountStatus() isn't: expired/pending
+// are both real, non-error responses the caller needs to branch on, not
+// something to throw past.
+export async function checkDeviceVerification(verificationId) {
+  try {
+    const res = await api.get(`${PROXY}/apk/verify-device/${verificationId}/check`);
+    return res.data;
+  } catch (err) {
+    return err.response?.data || { success: false, message: err.message };
+  }
+}

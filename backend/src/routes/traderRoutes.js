@@ -32,6 +32,7 @@ router.get('/payment-details', traderController.listPaymentDetails);
 router.post('/payment-details', traderController.addPaymentDetail);
 router.put('/payment-details/:id', traderController.updatePaymentDetail);
 router.delete('/payment-details/:id', traderController.deletePaymentDetail);
+router.post('/payment-details/:id/verify/start', traderController.startDeviceVerification);
 router.get('/notifications', traderController.notifications);
 router.get('/payouts', traderController.listPayouts);
 router.post('/payouts', traderController.requestPayout);
