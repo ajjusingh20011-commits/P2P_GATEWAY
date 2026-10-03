@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!-- This site is hosted on Netlify. Anyone can build and deploy a site
+     like this one for free: https://netlify.new/?utm_campaign=loops&utm_source=ai-legible&utm_medium=owned&utm_content=comment&utm_id=8e7761fd-99ae-4c8a-9e0c-ded7e222d17d
+     Netlify hosting facts for this site: static/SSR served via Netlify Edge. -->
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MAX PAY — Payments that move your business forward.</title>
+<meta name="description" content="MAX PAY is payment infrastructure for Indian businesses. Accept digital payments, confirm transactions in real time and track every settlement." />
+<meta name="theme-color" content="#100E1C" />
+
+<!-- Social preview (swap the URL once the domain is live) -->
+<meta property="og:title" content="MAX PAY — Payments that move your business forward." />
+<meta property="og:description" content="Payment infrastructure for Indian businesses. Real-time confirmation, smooth settlements, simple integration." />
+<meta property="og:type" content="website" />
+
+<!-- Favicon: the MAX PAY mark -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='35 31 84 52'%3E%3Cdefs%3E%3ClinearGradient id='a' x1='39.38' y1='38' x2='69.11' y2='78' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0' stop-color='%236FE382'/%3E%3Cstop offset='.48' stop-color='%2339B54A'/%3E%3Cstop offset='1' stop-color='%231B6B33'/%3E%3C/linearGradient%3E%3ClinearGradient id='b' x1='57' y1='78' x2='113.09' y2='32' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0' stop-color='%2314562A'/%3E%3Cstop offset='.45' stop-color='%2339B54A'/%3E%3Cstop offset='1' stop-color='%237CE88E'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpolygon points='39.38 78.35 39.38 38.78 51.64 38.78 69.11 59.88 63.21 71.54 62.62 72.14 51.98 59.2 52.06 78.35 39.38 78.35' fill='url(%23a)'/%3E%3Cpath d='M57,65.5l8.85,10.72s3.83-14.64,11.91-22.89v25.02h12.77v-38.04s5.28-6.64,22.55-8.94c0,0-34.89-14.3-56.09,34.13Z' fill='url(%23b)'/%3E%3C/svg%3E" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Saira+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+html,body{margin:0;padding:0;background:#100E1C;}
+.site{
+  --ink:#100E1C; --ink2:#171525; --ink3:#1D1B2C; --line-ink:#2A2740;
+  --green:#1F7D33; --green-d:#155C26; --green-l:#5FD86F;
+  --ok:#39B54A; --ok-t:#1B6B33;
+  --mist:#F4F6F4; --paper:#FFFFFF; --line:#E2E7E2;
+  --text:#101627; --muted:#5A6470; --muted-ink:#9CA1AE;
+  font-family:'Manrope',system-ui,-apple-system,'Segoe UI',sans-serif;
+  color:var(--text); background:var(--paper);
+  -webkit-font-smoothing:antialiased; line-height:1.55;
+}
+.site *,.site *::before,.site *::after{box-sizing:border-box;}
+.site h1,.site h2,.site h3,.site h4,.site p,.site ul,.site ol,.site pre{margin:0;padding:0;}
+.site ul,.site ol{list-style:none;}
+.site a{color:inherit;text-decoration:none;}
+.site button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;}
+.site :focus-visible{outline:2px solid var(--green-l);outline-offset:3px;border-radius:4px;}
+
+.shell{width:100%;max-width:1200px;margin:0 auto;padding:0 24px;}
+.skip{position:absolute;left:-999px;top:8px;z-index:99;background:var(--ink);color:#fff;padding:10px 16px;border-radius:8px;}
+.skip:focus{left:16px;}
+
+.mono,.amt,.editor-body,.ledger-demo,.dash-demo{font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
+.amt{letter-spacing:-.02em;font-weight:600;}
+.ta-r{text-align:right;}
+.dim{color:var(--muted);}
+
+/* ---------- icons (sized by context) ---------- */
+.site svg{stroke-width:1.9;}
+.nav-caret{width:14px;height:14px;stroke-width:2.2;}
+.nav-burger svg{width:20px;height:20px;stroke-width:2;}
+.sheet-group summary svg{width:16px;height:16px;}
+.btn svg{width:16px;height:16px;stroke-width:2.4;}
+.pill svg{width:12px;height:12px;stroke-width:2.6;}
+.receipt .pill svg{width:13px;height:13px;stroke-width:2.4;}
+.strip-item svg{width:17px;height:17px;}
+.card-icon svg{width:18px;height:18px;}
+.ticks svg{width:15px;height:15px;stroke-width:2.2;}
+.editor-lang svg{width:13px;height:13px;stroke-width:2.2;}
+.dash-chip svg{width:12px;height:12px;stroke-width:2.4;}
+.dash-d svg{width:11px;height:11px;stroke-width:2.6;}
+.sec>svg{width:17px;height:17px;}
+.case>svg{width:18px;height:18px;stroke-width:1.85;}
+.case-link svg{width:13px;height:13px;stroke-width:2.4;}
+
+/* ---------- brand ---------- */
+.brand{display:inline-flex;align-items:center;gap:10px;flex:0 0 auto;}
+.brand>svg{display:block;flex:0 0 auto;stroke-width:0;}
+.brand-text{display:flex;flex-direction:column;line-height:1;}
+.brand-word{font-family:'Saira Condensed',sans-serif;font-weight:700;font-size:22px;letter-spacing:.055em;color:#fff;}
+.brand-tag{font-family:Georgia,'Times New Roman',serif;font-size:9.5px;letter-spacing:.34em;text-transform:uppercase;
+  color:var(--muted-ink);margin-top:4px;}
+
+/* ---------- type ---------- */
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--green);margin-bottom:14px;}
+.h2{font-size:clamp(28px,3.4vw,44px);line-height:1.1;letter-spacing:-.03em;font-weight:800;}
+.h2--onink{color:#fff;}
+.h3{font-size:19px;font-weight:700;letter-spacing:-.015em;margin-bottom:8px;}
+.h4{font-size:16px;font-weight:700;letter-spacing:-.01em;margin:12px 0 6px;}
+.lede{font-size:17px;color:var(--muted);margin-top:14px;max-width:60ch;}
+.lede--onink{color:var(--muted-ink);}
+.body{font-size:14.5px;color:var(--muted);line-height:1.6;}
+.ph{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--green);background:rgba(31,125,51,.07);
+  border:1px dashed rgba(31,125,51,.35);border-radius:6px;padding:2px 7px;white-space:nowrap;display:inline-block;}
+.ph--dark{color:var(--green-l);background:rgba(57,181,74,.09);border-color:rgba(57,181,74,.35);}
+
+/* ---------- buttons ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:44px;padding:0 20px;border-radius:10px;
+  font-size:14.5px;font-weight:700;letter-spacing:-.01em;
+  transition:transform .18s ease,background .22s ease,border-color .22s ease,box-shadow .22s ease;}
+.btn:active{transform:scale(.98);}
+.btn--primary{background:var(--green);color:#fff;box-shadow:0 8px 20px -12px rgba(31,125,51,.9);}
+.btn--primary:hover{background:var(--green-d);box-shadow:0 14px 28px -14px rgba(31,125,51,.95);}
+.btn--accent{background:#39B54A;color:#04170A;box-shadow:0 10px 26px -14px rgba(31,125,51,.95);}
+.btn--accent:hover{background:#5FD86F;color:#04170A;box-shadow:0 16px 32px -14px rgba(31,125,51,1);}
+.btn--outline{border:1px solid rgba(255,255,255,.22);color:#fff;}
+.btn--outline:hover{border-color:rgba(255,255,255,.45);background:rgba(255,255,255,.06);}
+.btn--ghost{color:var(--text);}
+.btn--ghost:hover{background:var(--mist);}
+/* `a` prefix: matches .site a{color:inherit}'s specificity (0,1,1) and wins on source
+   order, instead of only working by accident when the surrounding section happens to set
+   its own color:#fff (.hero, .cta, .section--ink do; .sheet does not — that's why the
+   mobile-menu "Talk to sales" button was rendering near-black). */
+a.btn--ghostInk{border:1px solid rgba(255,255,255,.2);color:#fff;}
+.btn--ghostInk:hover{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.4);}
+
+/* ---------- pills ---------- */
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;padding:4px 9px;border-radius:999px;white-space:nowrap;}
+.pill--ok{background:rgba(57,181,74,.14);color:var(--ok-t);}
+.pill--wait{background:rgba(90,100,112,.12);color:var(--muted);}
+.spin{animation:spin 1.4s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ---------- nav ---------- */
+.nav{position:fixed;top:0;left:0;right:0;z-index:60;border-bottom:1px solid transparent;
+  transition:background .3s ease,backdrop-filter .3s ease,border-color .3s ease;}
+.nav--scrolled{background:rgba(16,14,28,.78);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom-color:var(--line-ink);}
+.nav-inner{display:flex;align-items:center;gap:26px;height:78px;transition:height .3s ease;}
+.nav--scrolled .nav-inner{height:64px;}
+.nav-links{display:flex;align-items:center;gap:2px;margin-left:6px;}
+.nav-item{position:relative;}
+.nav-link{display:inline-flex;align-items:center;gap:4px;padding:9px 12px;border-radius:8px;font-size:14px;font-weight:600;
+  transition:color .18s ease,background .18s ease;}
+/* Scoped under .nav: a bare .nav-link class (specificity 0,1,0) loses to the page-wide
+   .site button{color:inherit} / .site a{color:inherit} reset (0,1,1 — class+type), which
+   inherits .site's near-black --text. Adding the .nav ancestor class (0,2,0) wins instead. */
+.nav .nav-link{color:rgba(255,255,255,.78);}
+.nav .nav-link:hover,.nav .nav-link:focus-visible{color:#fff;background:rgba(255,255,255,.07);}
+.nav-caret{opacity:.6;transition:transform .2s ease;}
+.nav-item:hover .nav-caret{transform:translateY(1px);}
+.nav-pop{position:absolute;top:calc(100% + 8px);left:0;min-width:212px;padding:8px;border-radius:14px;background:var(--ink2);
+  border:1px solid var(--line-ink);box-shadow:0 24px 50px -20px rgba(0,0,0,.75);opacity:0;visibility:hidden;transform:translateY(-6px);
+  transition:opacity .2s ease,transform .2s ease,visibility .2s;}
+.nav-item:hover .nav-pop,.nav-item:focus-within .nav-pop{opacity:1;visibility:visible;transform:translateY(0);}
+.nav-pop-link{display:block;padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:600;}
+/* Same specificity fix as .nav-link above — these are <a> tags, so .site a{color:inherit}
+   (0,1,1) was winning over the bare .nav-pop-link class (0,1,0). */
+.nav .nav-pop-link{color:rgba(255,255,255,.72);}
+.nav .nav-pop-link:hover,.nav .nav-pop-link:focus-visible{background:rgba(255,255,255,.07);color:#fff;}
+.nav-cta{display:flex;align-items:center;gap:8px;margin-left:auto;}
+.nav-link--plain{padding:9px 10px;}
+.nav-cta .btn{height:40px;padding:0 16px;}
+.nav-cta .btn--ghost{color:rgba(255,255,255,.85);}
+.nav-cta .btn--ghost:hover{background:rgba(255,255,255,.08);color:#fff;}
+.nav-burger{display:none;margin-left:auto;color:#fff;padding:8px;border-radius:9px;}
+.nav-burger:hover{background:rgba(255,255,255,.08);}
+.nav-burger .ic-close{display:none;}
+body.menu-open .nav-burger .ic-close{display:block;}
+body.menu-open .nav-burger .ic-menu{display:none;}
+body.menu-open{overflow:hidden;}
+
+.sheet{position:fixed;inset:0;z-index:55;background:var(--ink);opacity:0;visibility:hidden;transform:translateY(-8px);
+  transition:opacity .28s ease,transform .28s ease,visibility .28s;overflow-y:auto;}
+body.menu-open .sheet{opacity:1;visibility:visible;transform:none;}
+.sheet-inner{padding:104px 24px 40px;}
+.sheet-group{border-bottom:1px solid var(--line-ink);}
+.sheet-group summary{display:flex;align-items:center;justify-content:space-between;padding:18px 2px;font-size:17px;font-weight:700;
+  color:#fff;cursor:pointer;list-style:none;}
+.sheet-group summary::-webkit-details-marker{display:none;}
+.sheet-group summary svg{transition:transform .2s ease;color:var(--muted-ink);}
+.sheet-group[open] summary svg{transform:rotate(180deg);}
+.sheet-sub{padding:0 2px 16px;display:grid;gap:12px;}
+.sheet-sub a{color:var(--muted-ink);font-size:15px;font-weight:600;}
+.sheet-actions{display:grid;gap:10px;margin-top:28px;}
+.sheet-actions .btn{width:100%;height:48px;}
+
+/* ---------- hero ---------- */
+.hero{position:relative;background:var(--ink);color:#fff;padding:152px 0 96px;overflow:hidden;}
+.hero-grid-bg{position:absolute;inset:0;
+  background-image:linear-gradient(rgba(95,216,111,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(95,216,111,.06) 1px,transparent 1px);
+  background-size:64px 64px;
+  -webkit-mask-image:radial-gradient(120% 90% at 68% 8%,#000 0%,transparent 72%);
+  mask-image:radial-gradient(120% 90% at 68% 8%,#000 0%,transparent 72%);}
+.hero-aura{position:absolute;right:-8%;top:-10%;width:640px;height:640px;border-radius:50%;
+  background:radial-gradient(closest-side,rgba(57,181,74,.16),transparent 70%);}
+.hero-inner{position:relative;display:grid;grid-template-columns:1.05fr .95fr;gap:64px;align-items:center;}
+.hero-kicker{display:inline-flex;align-items:center;gap:9px;font-size:12.5px;font-weight:700;letter-spacing:.06em;
+  color:var(--muted-ink);border:1px solid var(--line-ink);border-radius:999px;padding:6px 14px;margin-bottom:26px;
+  animation:rise .6s .05s both cubic-bezier(.2,.7,.3,1);}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green-l);box-shadow:0 0 0 4px rgba(57,181,74,.16);}
+.hero-title{font-size:clamp(38px,5.2vw,64px);line-height:1.03;letter-spacing:-.045em;font-weight:800;max-width:14ch;
+  animation:rise .7s .12s both cubic-bezier(.2,.7,.3,1);}
+.hero-sub{margin-top:22px;font-size:17.5px;line-height:1.6;color:var(--muted-ink);max-width:52ch;
+  animation:rise .7s .22s both cubic-bezier(.2,.7,.3,1);}
+.hero-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px;animation:rise .7s .3s both cubic-bezier(.2,.7,.3,1);}
+.hero-actions--center{justify-content:center;}
+.hero-foot{margin-top:26px;font-size:13px;color:#71768A;animation:rise .7s .38s both cubic-bezier(.2,.7,.3,1);}
+.hero-viz{animation:rise .8s .3s both cubic-bezier(.2,.7,.3,1);}
+@keyframes rise{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:none;}}
+
+/* ---------- payment rail ---------- */
+.rail-wrap{position:relative;padding-left:8px;}
+.receipt{position:relative;background:linear-gradient(160deg,#1B1930,#100E1C);border:1px solid var(--line-ink);border-radius:16px;
+  padding:20px;margin-bottom:26px;box-shadow:0 30px 60px -30px rgba(0,0,0,.9);overflow:hidden;}
+.receipt-top{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.receipt-tag{font-size:12.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted-ink);}
+.receipt .pill--ok{background:rgba(57,181,74,.2);color:#7CE88E;}
+.receipt .pill--wait{background:rgba(255,255,255,.08);color:var(--muted-ink);}
+.receipt-amt{font-size:36px;margin-top:12px;color:#fff;letter-spacing:-.03em;}
+.receipt-meta{display:flex;justify-content:space-between;margin-top:10px;font-size:12px;color:#71768A;
+  font-family:'JetBrains Mono',monospace;}
+.receipt-stamp{position:absolute;right:16px;bottom:52px;font-size:13px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;
+  color:#7CE88E;border:2px solid #7CE88E;border-radius:6px;padding:4px 10px;transform:rotate(-8deg) scale(1.3);opacity:0;
+  transition:opacity .35s ease,transform .35s cubic-bezier(.2,.8,.3,1);}
+.receipt-stamp.is-on{opacity:.92;transform:rotate(-8deg) scale(1);}
+.rail{display:grid;}
+.rail-node{position:relative;display:flex;align-items:flex-start;gap:14px;padding-bottom:22px;}
+.rail-node:last-child{padding-bottom:0;}
+.rail-dot{position:relative;z-index:2;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;
+  border:1px solid var(--line-ink);background:var(--ink);flex:0 0 auto;transition:border-color .3s ease,box-shadow .3s ease;}
+.rail-dot-core{width:7px;height:7px;border-radius:50%;background:#3C3A52;transition:background .3s ease,transform .3s ease;}
+.rail-node.is-lit .rail-dot{border-color:rgba(57,181,74,.5);}
+.rail-node.is-lit .rail-dot-core{background:#39B54A;}
+.rail-node:nth-child(3).is-lit .rail-dot-core{background:#5FD86F;}
+.rail-node:nth-child(4).is-lit .rail-dot{border-color:rgba(57,181,74,.55);}
+.rail-node:nth-child(4).is-lit .rail-dot-core{background:#7CE88E;}
+.rail-node.is-active .rail-dot{box-shadow:0 0 0 6px rgba(57,181,74,.16);}
+.rail-node.is-active .rail-dot-core{transform:scale(1.25);}
+.rail-seg{position:absolute;left:11px;top:22px;bottom:0;width:1px;background:var(--line-ink);}
+.rail-fill{position:absolute;inset:0;background:linear-gradient(180deg,#2A8F3A,#39B54A 55%,#7CE88E);transform-origin:top;
+  transform:scaleY(0);transition:transform .5s cubic-bezier(.4,0,.2,1);}
+.rail-text{display:flex;flex-direction:column;padding-top:1px;}
+.rail-label{font-size:14.5px;font-weight:700;color:rgba(255,255,255,.5);transition:color .3s ease;}
+.rail-node.is-lit .rail-label{color:#fff;}
+.rail-note{font-size:12.5px;color:#71768A;}
+.rail-flash{margin-top:22px;display:inline-flex;gap:10px;font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--green-l);opacity:0;transform:translateY(4px);transition:opacity .4s ease,transform .4s ease;}
+.rail-flash.is-on{opacity:1;transform:none;}
+.rail-flash span{color:#3C3A52;}
+
+/* ---------- strip ---------- */
+.strip{background:var(--ink2);border-top:1px solid var(--line-ink);border-bottom:1px solid var(--line-ink);}
+.strip-inner{display:flex;flex-wrap:wrap;gap:8px 36px;justify-content:space-between;padding:20px 24px;}
+.strip-item{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:600;color:var(--muted-ink);transition:color .2s ease;}
+.strip-item svg{color:var(--green-l);opacity:.85;transition:opacity .2s ease,transform .2s ease;}
+.strip-item:hover{color:#fff;}
+.strip-item:hover svg{opacity:1;transform:translateY(-1px);}
+
+/* ---------- sections ---------- */
+.section{padding:104px 0;}
+.section--tint{background:var(--mist);}
+.section--ink{background:var(--ink);color:#fff;}
+.head{max-width:64ch;margin-bottom:52px;}
+.head--center{margin-left:auto;margin-right:auto;text-align:center;}
+.head--center .lede{margin-left:auto;margin-right:auto;}
+
+[data-reveal]{opacity:0;transform:translateY(18px);
+  transition:opacity .55s cubic-bezier(.2,.7,.3,1),transform .55s cubic-bezier(.2,.7,.3,1);}
+[data-reveal].is-in{opacity:1;transform:none;}
+
+/* ---------- feature cards ---------- */
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;}
+.card{position:relative;background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:24px;overflow:hidden;
+  transition:opacity .55s,transform .55s,border-color .25s ease,box-shadow .25s ease;}
+.card:hover{border-color:#C3D1C5;box-shadow:0 22px 44px -28px rgba(16,26,20,.4);transform:translateY(-3px);}
+.card-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:rgba(31,125,51,.08);color:var(--green);
+  margin-bottom:18px;transition:background .25s ease;}
+.card:hover .card-icon{background:rgba(31,125,51,.14);}
+.viz{margin-top:20px;height:44px;display:flex;align-items:flex-end;gap:5px;}
+.viz--pulse{align-items:center;}
+.viz--pulse span{height:8px;border-radius:999px;background:rgba(31,125,51,.14);}
+.viz--pulse span:nth-child(1){width:58%;}
+.viz--pulse span:nth-child(2){width:34%;}
+.viz--pulse span:nth-child(3){width:12px;background:var(--green-l);animation:blink 1.8s ease-in-out infinite;}
+@keyframes blink{0%,100%{opacity:.35;}50%{opacity:1;}}
+.viz--bars span{flex:1;background:rgba(31,125,51,.14);border-radius:4px 4px 0 0;transition:background .3s ease;}
+.card:hover .viz--bars span{background:rgba(31,125,51,.28);}
+.card:hover .viz--bars span:last-child{background:var(--green-l);}
+.viz--code{flex-direction:column;align-items:stretch;gap:7px;justify-content:center;}
+.viz--code span{height:7px;border-radius:999px;background:rgba(31,125,51,.14);}
+.viz--code .l1{width:78%;} .viz--code .l2{width:52%;} .viz--code .l3{width:64%;background:rgba(57,181,74,.55);}
+.viz--keys{align-items:center;gap:8px;}
+.viz--keys span{width:26px;height:26px;border-radius:8px;border:1px solid var(--line);background:var(--mist);
+  transition:transform .25s ease,border-color .25s ease;}
+.card:hover .viz--keys span:nth-child(2){transform:translateY(-3px);}
+.card:hover .viz--keys span:nth-child(3){transform:translateY(-5px);border-color:rgba(57,181,74,.7);}
+
+/* ---------- split ---------- */
+.split{display:grid;grid-template-columns:1fr 1.05fr;gap:64px;align-items:center;}
+.split--wide{grid-template-columns:1fr 1.15fr;}
+.ticks{margin-top:26px;display:grid;gap:13px;}
+.ticks li{display:flex;align-items:center;gap:11px;font-size:14.5px;font-weight:600;color:var(--text);}
+.ticks svg{color:var(--green);flex:0 0 auto;}
+
+/* ---------- ledger ---------- */
+.ledger{background:var(--paper);border:1px solid var(--line);border-radius:18px;overflow:hidden;
+  box-shadow:0 32px 60px -40px rgba(16,26,20,.45);}
+.ledger-bar{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line);}
+.ledger-live{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:700;}
+.blip{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:blip 1.8s ease-in-out infinite;}
+@keyframes blip{0%,100%{box-shadow:0 0 0 0 rgba(57,181,74,.5);}50%{box-shadow:0 0 0 6px rgba(57,181,74,0);}}
+.ledger-demo,.dash-demo{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  border:1px solid var(--line);border-radius:6px;padding:3px 8px;}
+.ledger-head,.ledger-row{display:grid;grid-template-columns:1.5fr .9fr .9fr 1fr;gap:12px;align-items:center;padding:12px 18px;}
+.ledger-head{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  background:var(--mist);border-bottom:1px solid var(--line);}
+.ledger-row{border-bottom:1px solid var(--line);font-size:13.5px;}
+.ledger-row:last-child{border-bottom:0;}
+.ledger-row.is-new{animation:slot .5s cubic-bezier(.2,.8,.3,1) both;}
+@keyframes slot{from{opacity:0;transform:translateY(-10px);background:rgba(57,181,74,.14);}to{opacity:1;transform:none;background:transparent;}}
+.ledger-row .mono{font-size:12px;display:flex;flex-direction:column;}
+.ledger-row em{font-style:normal;font-size:11px;color:#8C919F;}
+.method{font-size:13px;font-weight:600;color:var(--muted);}
+
+/* ---------- flow + settlement ---------- */
+.flow{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:10px;margin-bottom:36px;}
+.flow-step{display:inline-flex;align-items:center;gap:9px;font-size:13.5px;font-weight:700;background:var(--paper);
+  border:1px solid var(--line);border-radius:999px;padding:9px 16px;}
+.flow-dot{width:7px;height:7px;border-radius:50%;background:var(--green);}
+.flow-arrow{position:relative;width:44px;height:1px;background:var(--line);overflow:hidden;}
+.flow-arrow i{position:absolute;top:0;left:-40%;width:40%;height:100%;
+  background:linear-gradient(90deg,transparent,var(--green-l),transparent);animation:slide 2.4s linear infinite;}
+@keyframes slide{to{left:110%;}}
+.settle-card{display:grid;grid-template-columns:1fr auto;gap:20px 32px;align-items:center;background:var(--paper);
+  border:1px solid var(--line);border-radius:20px;padding:30px;max-width:760px;margin:0 auto;
+  box-shadow:0 30px 60px -40px rgba(16,26,20,.35);}
+.settle-label{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);}
+.settle-amt{font-size:38px;letter-spacing:-.035em;margin:6px 0 4px;}
+.settle-sub{font-size:13px;color:var(--muted);}
+.settle-r{display:flex;align-items:center;gap:12px;}
+.settle-arrow{color:var(--muted);font-size:15px;}
+.settle-note{grid-column:1/-1;border-top:1px solid var(--line);padding-top:18px;font-size:13px;color:var(--muted);}
+
+/* ---------- editor ---------- */
+.editor{background:#12101F;border:1px solid var(--line-ink);border-radius:18px;overflow:hidden;
+  box-shadow:0 40px 80px -40px rgba(0,0,0,.9);}
+.editor-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line-ink);}
+.editor-tabs{display:flex;gap:4px;}
+.editor-tabs button{font-size:12.5px;font-weight:700;color:var(--muted-ink);padding:6px 12px;border-radius:8px;
+  transition:background .2s,color .2s;}
+.editor-tabs button:hover{color:#fff;}
+.editor-tabs button.is-on{background:rgba(57,181,74,.14);color:var(--green-l);}
+.editor-lang{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:#71768A;}
+.editor-body{padding:22px;font-size:13px;line-height:1.85;color:#D2D5DE;overflow-x:auto;white-space:pre;}
+.editor-pane{display:none;}
+.editor-pane.is-on{display:block;}
+.ln{color:var(--green-l);font-weight:600;} .lp{color:#fff;} .lc{color:#71768A;}
+.lk{color:#7CC4FF;} .lstr{color:#FFC98A;} .lnum{color:#FF9E86;}
+.code-disclaimer{margin-top:22px;font-size:12.5px;color:#71768A;}
+
+/* ---------- dashboard ---------- */
+.dash-stage{perspective:1400px;}
+.dash{background:var(--paper);border:1px solid var(--line);border-radius:20px;overflow:hidden;
+  box-shadow:0 50px 90px -50px rgba(16,26,20,.5);transition:transform .12s linear;will-change:transform;}
+.dash-top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:16px 20px;
+  border-bottom:1px solid var(--line);}
+.dash-title{display:inline-flex;align-items:center;gap:9px;font-size:14px;font-weight:700;}
+.dash-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.dash-chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);
+  border:1px solid var(--line);border-radius:8px;padding:6px 10px;}
+.dash-stats{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line);}
+.dash-stat{padding:20px;border-right:1px solid var(--line);display:grid;gap:6px;}
+.dash-stat:last-child{border-right:0;}
+.dash-k{font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);}
+.dash-v{font-size:24px;letter-spacing:-.03em;}
+.dash-d{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:var(--ok-t);}
+.dash-body{display:grid;grid-template-columns:.85fr 1.15fr;}
+.dash-chart{padding:20px;border-right:1px solid var(--line);}
+.dash-sub{font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:14px;}
+.dash-chart svg{width:100%;height:110px;display:block;stroke-width:0;}
+.chart-line{stroke-dasharray:600;stroke-dashoffset:600;}
+.is-in .chart-line{animation:draw 1.5s .2s cubic-bezier(.4,0,.2,1) forwards;}
+@keyframes draw{to{stroke-dashoffset:0;}}
+.chart-area{opacity:0;}
+.is-in .chart-area{animation:fade .8s .9s forwards;}
+@keyframes fade{to{opacity:1;}}
+.dash-axis{display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:var(--muted);}
+.dash-table{padding:20px;}
+.dash-row{display:grid;grid-template-columns:1.4fr .9fr .9fr .9fr .5fr;gap:12px;align-items:center;padding:11px 0;
+  border-bottom:1px solid var(--line);font-size:13px;}
+.dash-row:last-child{border-bottom:0;}
+
+/* ---------- security ---------- */
+.sec-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:18px;}
+.sec{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:22px;
+  transition:opacity .55s,transform .55s,border-color .25s ease,background .25s ease;}
+.sec:hover{border-color:#C3D1C5;background:#FCFDFC;}
+.sec>svg{color:var(--green);}
+.compliance{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:34px;padding:22px;border:1px dashed var(--line);
+  border-radius:16px;background:var(--mist);}
+.compliance-note{width:100%;font-size:12.5px;color:var(--muted);margin-top:4px;}
+
+/* ---------- use cases ---------- */
+.case-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;}
+.case{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:22px;
+  transition:opacity .55s,transform .55s,border-color .25s ease,box-shadow .25s ease;}
+.case:hover{border-color:#C3D1C5;box-shadow:0 20px 40px -30px rgba(16,26,20,.4);transform:translateY(-2px);}
+.case>svg{color:var(--green);}
+.case-link{display:inline-flex;align-items:center;gap:6px;margin-top:14px;font-size:13px;font-weight:700;color:var(--green);
+  opacity:.7;transition:opacity .2s ease,gap .2s ease;}
+.case:hover .case-link{opacity:1;gap:9px;}
+
+/* ---------- CTA ---------- */
+.cta{position:relative;background:var(--ink);color:#fff;padding:112px 0;overflow:hidden;text-align:center;}
+.cta-glow{position:absolute;left:50%;top:42%;width:900px;height:500px;transform:translate(-50%,-50%);
+  background:radial-gradient(closest-side,rgba(31,125,51,.22),transparent 70%);animation:breathe 7s ease-in-out infinite;}
+@keyframes breathe{0%,100%{opacity:.7;transform:translate(-50%,-50%) scale(1);}50%{opacity:1;transform:translate(-50%,-50%) scale(1.06);}}
+.cta-rails{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-around;padding:60px 0;}
+.cta-rails i{position:relative;display:block;height:1px;background:rgba(95,216,111,.12);overflow:hidden;}
+.cta-rails i::after{content:"";position:absolute;top:0;left:-30%;width:30%;height:100%;
+  background:linear-gradient(90deg,transparent,rgba(57,181,74,.75),transparent);animation:slide 5s linear infinite;}
+.cta-rails i:nth-child(2)::after{animation-delay:1.6s;}
+.cta-rails i:nth-child(3)::after{animation-delay:3.2s;}
+.cta-inner{position:relative;}
+.cta-mark{display:flex;justify-content:center;margin-bottom:22px;}
+.cta-title{font-size:clamp(32px,4.4vw,54px);line-height:1.05;letter-spacing:-.04em;font-weight:800;}
+.cta-sub{margin:20px auto 0;max-width:56ch;font-size:17px;color:var(--muted-ink);}
+.cta-foot{margin-top:28px;font-size:12.5px;color:#71768A;}
+
+/* ---------- footer ---------- */
+.footer{background:var(--ink2);color:#fff;padding:72px 0 32px;border-top:1px solid var(--line-ink);}
+.foot-top{display:grid;grid-template-columns:1fr 2.4fr;gap:52px;padding-bottom:48px;border-bottom:1px solid var(--line-ink);}
+.foot-brand p{margin-top:16px;font-size:13.5px;color:var(--muted-ink);max-width:30ch;}
+.foot-addr{font-size:12.5px;}
+.foot-cols{display:grid;grid-template-columns:repeat(6,1fr);gap:24px;}
+.foot-col h3{font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#fff;margin-bottom:14px;}
+.foot-col li{margin-bottom:9px;}
+.foot-col a{font-size:13px;color:var(--muted-ink);transition:color .18s ease;}
+.foot-col a:hover{color:var(--green-l);}
+.foot-bottom{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-top:24px;font-size:12.5px;color:#71768A;}
+
+/* ---------- responsive ---------- */
+@media (max-width:1180px){
+  .foot-cols{grid-template-columns:repeat(3,1fr);}
+  .sec-grid{grid-template-columns:repeat(3,1fr);}
+}
+@media (max-width:1024px){
+  .nav-links,.nav-cta{display:none;}
+  .nav-burger{display:inline-flex;}
+  .hero{padding:126px 0 76px;}
+  .hero-inner{grid-template-columns:1fr;gap:52px;}
+  .hero-title{max-width:18ch;}
+  .split,.split--wide{grid-template-columns:1fr;gap:40px;}
+  .cards,.case-grid{grid-template-columns:repeat(2,1fr);}
+  .dash-body{grid-template-columns:1fr;}
+  .dash-chart{border-right:0;border-bottom:1px solid var(--line);}
+  .section{padding:80px 0;}
+}
+@media (max-width:768px){
+  .shell{padding:0 18px;}
+  .strip-inner{gap:14px 24px;justify-content:flex-start;}
+  .sec-grid{grid-template-columns:repeat(2,1fr);}
+  .dash-stats{grid-template-columns:repeat(2,1fr);}
+  .dash-stat:nth-child(2){border-right:0;}
+  .dash-stat:nth-child(1),.dash-stat:nth-child(2){border-bottom:1px solid var(--line);}
+  .dash-row{grid-template-columns:1.3fr .9fr .9fr;}
+  .dash-row span:nth-child(4),.dash-row span:nth-child(5){display:none;}
+  .settle-card{grid-template-columns:1fr;}
+  .flow{flex-direction:column;}
+  .flow-arrow{width:1px;height:22px;}
+  .flow-arrow i{left:0;top:-40%;width:100%;height:40%;
+    background:linear-gradient(180deg,transparent,var(--green-l),transparent);animation:slideY 2.4s linear infinite;}
+  @keyframes slideY{to{top:110%;}}
+}
+@media (max-width:600px){
+  .cards,.case-grid,.sec-grid{grid-template-columns:1fr;}
+  .hero{padding:112px 0 64px;}
+  .hero-actions .btn{flex:1 1 100%;}
+  .ledger-head span:nth-child(2),.ledger-row .method{display:none;}
+  .ledger-head,.ledger-row{grid-template-columns:1.4fr .9fr 1fr;}
+  .foot-top{grid-template-columns:1fr;gap:36px;}
+  .foot-cols{grid-template-columns:repeat(2,1fr);}
+  .receipt-amt,.settle-amt{font-size:30px;}
+  .section{padding:64px 0;}
+  .compliance{flex-direction:column;align-items:flex-start;}
+}
+@media (max-width:380px){
+  .brand-word{font-size:19px;}
+  .strip-inner{gap:12px 18px;}
+}
+
+@media (prefers-reduced-motion: reduce){
+  .site *,.site *::before,.site *::after{
+    animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important;}
+  [data-reveal]{opacity:1 !important;transform:none !important;}
+  .chart-line{stroke-dashoffset:0;}
+  .chart-area{opacity:1;}
+}
+</style>
+</head>
+
+<body>
+<div class="site" id="top">
+<a href="#main" class="skip">Skip to content</a>
+
+<!-- =================== NAV =================== -->
+<header class="nav" id="nav">
+  <div class="shell nav-inner">
+    <a href="#top" class="brand" aria-label="MAX PAY home">
+      <svg width="41" height="26" viewBox="35 31 84 52" role="img" aria-label="MAX PAY">
+        <defs>
+          <linearGradient id="mkA1" x1="39.38" y1="38" x2="69.11" y2="78" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#6FE382"/><stop offset=".48" stop-color="#39B54A"/><stop offset="1" stop-color="#1B6B33"/>
+          </linearGradient>
+          <linearGradient id="mkB1" x1="57" y1="78" x2="113.09" y2="32" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#14562A"/><stop offset=".45" stop-color="#39B54A"/><stop offset="1" stop-color="#7CE88E"/>
+          </linearGradient>
+        </defs>
+        <polygon points="39.38 78.35 39.38 38.78 51.64 38.78 69.11 59.88 63.21 71.54 62.62 72.14 51.98 59.2 52.06 78.35 39.38 78.35" fill="url(#mkA1)"/>
+        <path d="M57,65.5l8.85,10.72s3.83-14.64,11.91-22.89v25.02h12.77v-38.04s5.28-6.64,22.55-8.94c0,0-34.89-14.3-56.09,34.13Z" fill="url(#mkB1)"/>
+      </svg>
+      <span class="brand-text"><span class="brand-word">MAX PAY</span></span>
+    </a>
+
+    <nav class="nav-links" aria-label="Primary">
+      <div class="nav-item"><button class="nav-link">Products <svg class="nav-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div class="nav-pop"><a class="nav-pop-link" href="#products">Payment Gateway</a><a class="nav-pop-link" href="#products">Payment Links</a><a class="nav-pop-link" href="#products">Settlements</a><a class="nav-pop-link" href="#products">Refunds</a></div></div>
+      <div class="nav-item"><button class="nav-link">Solutions <svg class="nav-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div class="nav-pop"><a class="nav-pop-link" href="#solutions">E-commerce</a><a class="nav-pop-link" href="#solutions">SaaS</a><a class="nav-pop-link" href="#solutions">Retail</a><a class="nav-pop-link" href="#solutions">Marketplaces</a></div></div>
+      <div class="nav-item"><button class="nav-link">Developers <svg class="nav-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div class="nav-pop"><a class="nav-pop-link" href="#developers">Documentation</a><a class="nav-pop-link" href="#developers">API Reference</a><a class="nav-pop-link" href="#developers">Sandbox</a><a class="nav-pop-link" href="#developers">Status</a></div></div>
+      <div class="nav-item"><button class="nav-link">Resources <svg class="nav-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div class="nav-pop"><a class="nav-pop-link" href="#">Guides</a><a class="nav-pop-link" href="#">Help Centre</a><a class="nav-pop-link" href="#">Blog</a><a class="nav-pop-link" href="#">Integration Partners</a></div></div>
+      <div class="nav-item"><button class="nav-link">Company <svg class="nav-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div class="nav-pop"><a class="nav-pop-link" href="#">About</a><a class="nav-pop-link" href="#">Careers</a><a class="nav-pop-link" href="#">Press</a><a class="nav-pop-link" href="#contact">Contact</a></div></div>
+    </nav>
+
+    <div class="nav-cta">
+      <a href="https://merchant.adminmaxedge.com/login" class="nav-link nav-link--plain">Login</a>
+      <a href="https://t.me/maxai11" target="_blank" rel="noopener noreferrer" class="btn btn--ghost">Talk to sales</a>
+      <a href="https://t.me/maxai11" target="_blank" rel="noopener noreferrer" class="btn btn--primary">Get started</a>
+    </div>
+
+    <button class="nav-burger" id="burger" aria-label="Open menu" aria-expanded="false" aria-controls="sheet">
+      <svg class="ic-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <svg class="ic-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="sheet" id="sheet" role="dialog" aria-label="Menu" aria-modal="true">
+  <div class="sheet-inner">
+    <details class="sheet-group"><summary>Products <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></summary>
+      <div class="sheet-sub"><a href="#products">Payment Gateway</a><a href="#products">Payment Links</a><a href="#products">Settlements</a><a href="#products">Refunds</a></div></details>
+    <details class="sheet-group"><summary>Solutions <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></summary>
+      <div class="sheet-sub"><a href="#solutions">E-commerce</a><a href="#solutions">SaaS</a><a href="#solutions">Retail</a><a href="#solutions">Marketplaces</a></div></details>
+    <details class="sheet-group"><summary>Developers <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></summary>
+      <div class="sheet-sub"><a href="#developers">Documentation</a><a href="#developers">API Reference</a><a href="#developers">Sandbox</a><a href="#developers">Status</a></div></details>
+    <details class="sheet-group"><summary>Resources <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></summary>
+      <div class="sheet-sub"><a href="#">Guides</a><a href="#">Help Centre</a><a href="#">Blog</a><a href="#">Integration Partners</a></div></details>
+    <details class="sheet-group"><summary>Company <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></summary>
+      <div class="sheet-sub"><a href="#">About</a><a href="#">Careers</a><a href="#">Press</a><a href="#contact">Contact</a></div></details>
+    <div class="sheet-actions">
+      <a href="https://t.me/maxai11" target="_blank" rel="noopener noreferrer" class="btn btn--ghostInk">Talk to sales</a>
+      <a href="https://t.me/maxai11" target="_blank" rel="noopener noreferrer" class="btn btn--primary">Get started</a>
+    </div>
+  </div>
+</div>
+
+<main id="main">
+
+<!-- =================== HERO =================== -->
+<section class="hero">
+  <div class="hero-grid-bg" aria-hidden="true"></div>
+  <div class="hero-aura" aria-hidden="true"></div>
+  <div class="shell hero-inner">
+    <div class="hero-copy">
+      <p class="hero-kicker"><span class="dot"></span>Built for modern Indian businesses</p>
+      <h1 class="hero-title">Payments that move your business forward.</h1>
+      <p class="hero-sub">Accept digital payments, watch every transaction confirm in real time, and follow the money through to settlement — on payment infrastructure your developers can integrate in a day.</p>
+      <div class="hero-actions">
+        <a href="https://t.me/maxai11" target="_blank" rel="noopener noreferrer" class="btn btn--accent">Get started <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></a>
+        <a href="https://t.me/maxai11" target="_blank" rel="noopener noreferrer" class="btn btn--outline">Talk to sales</a>
+      </div>
+      <p class="hero-foot">UPI · Cards · Net banking · Wallets — <span class="ph ph--dark">[PAYMENT METHODS — CONFIRM WITH OPS]</span></p>
+    </div>
+
+    <div class="hero-viz">
+      <div class="rail-wrap" aria-hidden="true">
+        <div class="receipt">
+          <div class="receipt-top">
+            <span class="receipt-tag">Payment received</span>
+            <span class="pill pill--wait" id="railPill">
+              <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+              <span id="railPillText">Processing</span>
+            </span>
+          </div>
+          <div class="receipt-amt"><span class="amt">₹2,499.00</span></div>
+          <div class="receipt-meta"><span>UPI · demo</span><span>ORDER_1024</span></div>
+          <div class="receipt-stamp" id="railStamp">Confirmed</div>
+        </div>
+
+        <ol class="rail" id="rail">
+          <li class="rail-node"><span class="rail-dot"><span class="rail-dot-core"></span></span>
+            <div class="rail-text"><span class="rail-label">Merchant</span><span class="rail-note">Order placed</span></div>
+            <span class="rail-seg"><span class="rail-fill"></span></span></li>
+          <li class="rail-node"><span class="rail-dot"><span class="rail-dot-core"></span></span>
+            <div class="rail-text"><span class="rail-label">Payment request</span><span class="rail-note">Sent to MAX PAY</span></div>
+            <span class="rail-seg"><span class="rail-fill"></span></span></li>
+          <li class="rail-node"><span class="rail-dot"><span class="rail-dot-core"></span></span>
+            <div class="rail-text"><span class="rail-label">Gateway</span><span class="rail-note">Processing</span></div>
+            <span class="rail-seg"><span class="rail-fill"></span></span></li>
+          <li class="rail-node"><span class="rail-dot"><span class="rail-dot-core"></span></span>
+            <div class="rail-text"><span class="rail-label">Settlement</span><span class="rail-note">Queued for payout</span></div></li>
+        </ol>
+
+        <div class="rail-flash" id="railFlash">Fast <span>→</span> Confirmed <span>→</span> Settled</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =================== TRUST STRIP =================== -->
+<section class="strip" aria-label="Platform highlights">
+  <div class="shell strip-inner">
+    <div class="strip-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg><span>Real-time confirmation</span></div>
+    <div class="strip-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg><span>Smooth settlements</span></div>
+    <div class="strip-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16"/></svg><span>Easy integration</span></div>
+    <div class="strip-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span>Merchant dashboard</span></div>
+    <div class="strip-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1 1 0 0 1 1.5 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1Z"/><path d="m9 12 2 2 4-4"/></svg><span>Secure infrastructure</span></div>
+  </div>
+</section>
+
+<!-- =================== BUILT FOR MERCHANTS =================== -->
+<section class="section" id="products">
+  <div class="shell">
+    <div class="head" data-reveal>
+      <p class="eyebrow">Built for merchants</p>
+      <h2 class="h2">Everything you need to simplify payments.</h2>
+      <p class="lede">The parts of a payment business that usually take a team to manage — status, reconciliation, payouts, access — handled in one place.</p>
+    </div>
+    <div class="cards">
+      <article class="card" data-reveal>
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></span>
+        <h3 class="h3">Real-time visibility</h3>
+        <p class="body">See payment status the moment it changes. No refreshing, no guessing which order actually went through.</p>
+        <div class="viz viz--pulse" aria-hidden="true"><span></span><span></span><span></span></div>
+      </article>
+      <article class="card" data-reveal style="transition-delay:70ms">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg></span>
+        <h3 class="h3">Hassle-free settlements</h3>
+        <p class="body">Track each payout from capture to bank credit, with the underlying transactions attached to every settlement.</p>
+        <div class="viz viz--bars" aria-hidden="true"><span style="height:38%"></span><span style="height:62%"></span><span style="height:46%"></span><span style="height:84%"></span><span style="height:58%"></span><span style="height:92%"></span></div>
+      </article>
+      <article class="card" data-reveal style="transition-delay:140ms">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16"/></svg></span>
+        <h3 class="h3">Simple integration</h3>
+        <p class="body">Clear REST APIs, readable errors and a sandbox that behaves like production. Docs written for engineers in a hurry.</p>
+        <div class="viz viz--code" aria-hidden="true"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+      </article>
+      <article class="card" data-reveal style="transition-delay:210ms">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 5l3 3M15 7l3 3"/></svg></span>
+        <h3 class="h3">Merchant control</h3>
+        <p class="body">Role-based access, refund controls and exportable records, so finance and support work from the same source of truth.</p>
+        <div class="viz viz--keys" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- =================== REAL-TIME TRANSACTIONS =================== -->
+<section class="section section--tint">
+  <div class="shell split">
+    <div class="split-copy" data-reveal>
+      <p class="eyebrow">Real-time transactions</p>
+      <h2 class="h2">Know what's happening with every payment.</h2>
+      <p class="lede">Get clear, real-time visibility into your transaction activity so your team can act with confidence — ship the order, answer the customer, close the day.</p>
+      <ul class="ticks">
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>Status updates as the payment moves</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>Search by order, transaction or customer reference</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h6M9 13h6M9 17h6"/></svg>Export records for finance and reconciliation</li>
+      </ul>
+    </div>
+    <div class="split-viz" data-reveal>
+      <div class="ledger" role="img" aria-label="Demo transaction feed showing payments confirming in real time">
+        <div class="ledger-bar">
+          <span class="ledger-live"><span class="blip"></span>Live feed</span>
+          <span class="ledger-demo">Demo data</span>
+        </div>
+        <div class="ledger-head"><span>Transaction</span><span>Method</span><span class="ta-r">Amount</span><span class="ta-r">Status</span></div>
+        <ul class="ledger-rows" id="ledgerRows"></ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =================== SETTLEMENT =================== -->
+<section class="section">
+  <div class="shell">
+    <div class="head head--center" data-reveal>
+      <p class="eyebrow">Settlements</p>
+      <h2 class="h2">From payment to settlement, without the hassle.</h2>
+      <p class="lede">Every payout links back to the transactions inside it, so the number in your bank account is never a number you have to reverse-engineer.</p>
+    </div>
+    <div class="flow" data-reveal>
+      <div class="flow-step"><span class="flow-dot"></span>Customer payment</div>
+      <span class="flow-arrow" aria-hidden="true"><i></i></span>
+      <div class="flow-step"><span class="flow-dot"></span>Processing</div>
+      <span class="flow-arrow" aria-hidden="true"><i></i></span>
+      <div class="flow-step"><span class="flow-dot"></span>Confirmation</div>
+      <span class="flow-arrow" aria-hidden="true"><i></i></span>
+      <div class="flow-step"><span class="flow-dot"></span>Settlement</div>
+    </div>
+    <div class="settle-card" data-reveal>
+      <div class="settle-l">
+        <span class="settle-label">Settlement</span>
+        <div class="settle-amt"><span class="amt">₹84,250</span></div>
+        <span class="settle-sub">42 transactions · demo batch</span>
+      </div>
+      <div class="settle-r">
+        <span class="pill pill--wait"><svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>Processing</span>
+        <span class="settle-arrow" aria-hidden="true">→</span>
+        <span class="pill pill--ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>Settled</span>
+      </div>
+      <p class="settle-note">Settlement schedule: <span class="ph">[SETTLEMENT CYCLE — CONFIRM WITH OPS]</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- =================== DEVELOPERS =================== -->
+<section class="section section--ink" id="developers">
+  <div class="shell split split--wide">
+    <div class="split-copy" data-reveal>
+      <p class="eyebrow">Developers</p>
+      <h2 class="h2 h2--onink">Integration that developers won't hate.</h2>
+      <p class="lede lede--onink">One endpoint to create a payment, one webhook to know it succeeded. Test keys, a sandbox that mirrors production, and errors that say what went wrong.</p>
+      <div class="hero-actions">
+        <a href="#" class="btn btn--accent">View documentation</a>
+        <a href="#start" class="btn btn--ghostInk">Start integrating</a>
+      </div>
+      <p class="code-disclaimer">Illustrative example only. Endpoint names and payloads are placeholders — see <span class="ph ph--dark">[API DOCS URL]</span> for the live reference.</p>
+    </div>
+    <div class="split-viz" data-reveal>
+      <div class="editor">
+        <div class="editor-bar">
+          <div class="editor-tabs">
+            <button class="is-on" data-tab="request">Request</button>
+            <button data-tab="response">Response</button>
+          </div>
+          <span class="editor-lang"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6M12 19h8"/></svg>cURL / JSON</span>
+        </div>
+        <pre class="editor-body"><code class="editor-pane is-on" data-pane="request"><span class="ln">POST</span> <span class="lp">/v1/payments</span>
+<span class="lc">Authorization: Bearer sk_test_…</span>
+
+{
+  <span class="lk">"amount"</span>: <span class="lnum">2499</span>,
+  <span class="lk">"currency"</span>: <span class="lstr">"INR"</span>,
+  <span class="lk">"order_id"</span>: <span class="lstr">"ORDER_1024"</span>,
+  <span class="lk">"method"</span>: <span class="lstr">"upi"</span>
+}</code><code class="editor-pane" data-pane="response"><span class="lc">200 OK</span>
+
+{
+  <span class="lk">"status"</span>: <span class="lstr">"success"</span>,
+  <span class="lk">"payment_id"</span>: <span class="lstr">"pay_demo_8fc21a"</span>,
+  <span class="lk">"amount"</span>: <span class="lnum">2499</span>,
+  <span class="lk">"captured_at"</span>: <span class="lstr">"2026-08-09T11:04:22Z"</span>
+}</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =================== DASHBOARD =================== -->
+<section class="section section--tint" id="dashboard">
+  <div class="shell">
+    <div class="head head--center" data-reveal>
+      <p class="eyebrow">Merchant dashboard</p>
+      <h2 class="h2">One screen for the whole payment day.</h2>
+      <p class="lede">Transactions, settlements and trends together — filterable, searchable and shareable with your finance team.</p>
+    </div>
+    <div class="dash-stage" data-reveal id="dashStage">
+      <div class="dash" id="dash" role="img" aria-label="Illustrative MAX PAY merchant dashboard with demo transaction and settlement figures">
+        <div class="dash-top">
+          <div class="dash-title">
+            <svg width="28" height="18" viewBox="35 31 84 52" aria-hidden="true">
+              <defs>
+                <linearGradient id="mkA2" x1="39.38" y1="38" x2="69.11" y2="78" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stop-color="#6FE382"/><stop offset=".48" stop-color="#39B54A"/><stop offset="1" stop-color="#1B6B33"/>
+                </linearGradient>
+                <linearGradient id="mkB2" x1="57" y1="78" x2="113.09" y2="32" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stop-color="#14562A"/><stop offset=".45" stop-color="#39B54A"/><stop offset="1" stop-color="#7CE88E"/>
+                </linearGradient>
+              </defs>
+              <polygon points="39.38 78.35 39.38 38.78 51.64 38.78 69.11 59.88 63.21 71.54 62.62 72.14 51.98 59.2 52.06 78.35 39.38 78.35" fill="url(#mkA2)"/>
+              <path d="M57,65.5l8.85,10.72s3.83-14.64,11.91-22.89v25.02h12.77v-38.04s5.28-6.64,22.55-8.94c0,0-34.89-14.3-56.09,34.13Z" fill="url(#mkB2)"/>
+            </svg>
+            Overview
+          </div>
+          <div class="dash-tools">
+            <span class="dash-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>Search transactions</span>
+            <span class="dash-chip">Last 7 days <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+            <span class="dash-demo">Demo data</span>
+          </div>
+        </div>
+
+        <div class="dash-stats">
+          <div class="dash-stat"><span class="dash-k">Total transactions</span><span class="dash-v amt">18,402</span><span class="dash-d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>+6.2%</span></div>
+          <div class="dash-stat"><span class="dash-k">Successful payments</span><span class="dash-v amt">17,918</span><span class="dash-d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>+5.8%</span></div>
+          <div class="dash-stat"><span class="dash-k">Pending</span><span class="dash-v amt">126</span><span class="dash-d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>−12%</span></div>
+          <div class="dash-stat"><span class="dash-k">Settled this week</span><span class="dash-v amt">₹42,86,500</span><span class="dash-d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>+9.1%</span></div>
+        </div>
+
+        <div class="dash-body">
+          <div class="dash-chart">
+            <div class="dash-sub">Payment volume</div>
+            <svg viewBox="0 0 320 110" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <linearGradient id="dashFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#1F7D33" stop-opacity="0.26"/>
+                  <stop offset="100%" stop-color="#1F7D33" stop-opacity="0"/>
+                </linearGradient>
+                <linearGradient id="dashLine" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stop-color="#1F7D33"/><stop offset="100%" stop-color="#5FD86F"/>
+                </linearGradient>
+              </defs>
+              <path class="chart-area" d="M0,88 L40,74 L80,80 L120,52 L160,60 L200,36 L240,44 L280,22 L320,30 L320,110 L0,110 Z" fill="url(#dashFill)"/>
+              <path class="chart-line" d="M0,88 L40,74 L80,80 L120,52 L160,60 L200,36 L240,44 L280,22 L320,30" fill="none" stroke="url(#dashLine)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <div class="dash-axis"><span>Mon</span><span>Wed</span><span>Fri</span><span>Sun</span></div>
+          </div>
+          <div class="dash-table">
+            <div class="dash-sub">Recent transactions</div>
+            <div class="dash-row"><span class="mono dim">pay_demo_8fc21a</span><span class="method">UPI</span><span class="ta-r amt">₹2,499.00</span><span class="ta-r"><span class="pill pill--ok">Confirmed</span></span><span class="ta-r mono dim">11:04</span></div>
+            <div class="dash-row"><span class="mono dim">pay_demo_51b7e0</span><span class="method">Card</span><span class="ta-r amt">₹12,499.00</span><span class="ta-r"><span class="pill pill--ok">Confirmed</span></span><span class="ta-r mono dim">10:52</span></div>
+            <div class="dash-row"><span class="mono dim">pay_demo_a2d904</span><span class="method">Net banking</span><span class="ta-r amt">₹3,200.00</span><span class="ta-r"><span class="pill pill--wait">Pending</span></span><span class="ta-r mono dim">10:41</span></div>
+            <div class="dash-row"><span class="mono dim">pay_demo_6cc318</span><span class="method">UPI</span><span class="ta-r amt">₹4,850.00</span><span class="ta-r"><span class="pill pill--ok">Confirmed</span></span><span class="ta-r mono dim">10:33</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =================== SECURITY =================== -->
+<section class="section" id="security">
+  <div class="shell">
+    <div class="head" data-reveal>
+      <p class="eyebrow">Security</p>
+      <h2 class="h2">Payments built with security in mind.</h2>
+      <p class="lede">Safe and secure is the promise in our name, so we describe our security work plainly — and make no claims we can't stand behind.</p>
+    </div>
+    <div class="sec-grid">
+      <div class="sec" data-reveal><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><h3 class="h4">Secure payment processing</h3><p class="body">Payment data is handled over encrypted channels and kept out of your application wherever possible.</p></div>
+      <div class="sec" data-reveal style="transition-delay:60ms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 5l3 3M15 7l3 3"/></svg><h3 class="h4">Controlled access</h3><p class="body">Scoped API keys and role-based dashboard permissions, so people only reach what their job needs.</p></div>
+      <div class="sec" data-reveal style="transition-delay:120ms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg><h3 class="h4">Transaction monitoring</h3><p class="body">Continuous monitoring of payment activity with alerting on unusual patterns.</p></div>
+      <div class="sec" data-reveal style="transition-delay:180ms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/></svg><h3 class="h4">Reliable infrastructure</h3><p class="body">Redundant systems and routine recovery testing to keep payment flows available.</p></div>
+      <div class="sec" data-reveal style="transition-delay:240ms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1 1 0 0 1 1.5 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1Z"/><path d="m9 12 2 2 4-4"/></svg><h3 class="h4">Data protection practices</h3><p class="body">Least-privilege internal access, audit trails and documented handling procedures.</p></div>
+    </div>
+    <div class="compliance" data-reveal>
+      <span class="ph">[RBI AUTHORIZATION — IF APPLICABLE]</span>
+      <span class="ph">[PCI CERTIFICATION — IF APPLICABLE]</span>
+      <span class="ph">[ISO CERTIFICATION — IF APPLICABLE]</span>
+      <span class="ph">[BANKING PARTNER — IF APPLICABLE]</span>
+      <p class="compliance-note">Replace these placeholders only with credentials MAX PAY actually holds.</p>
+    </div>
+  </div>
+</section>
+
+<!-- =================== USE CASES =================== -->
+<section class="section section--tint" id="solutions">
+  <div class="shell">
+    <div class="head head--center" data-reveal>
+      <p class="eyebrow">Solutions</p>
+      <h2 class="h2">Built for businesses of every size.</h2>
+    </div>
+    <div class="case-grid">
+      <article class="case" data-reveal><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18M16 10a4 4 0 0 1-8 0"/></svg><h3 class="h4">E-commerce</h3><p class="body">Confirm orders the second payment clears, so dispatch never waits on a bank statement.</p><span class="case-link">Learn more <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></span></article>
+      <article class="case" data-reveal style="transition-delay:60ms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 0-9h-1.2A7 7 0 1 0 4 16.7"/></svg><h3 class="h4">SaaS</h3><p class="body">Collect recurring payments and match every renewal to the right account automatically.</p><span class="case-link">Learn more <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></span></article>
+      <article class="case" data-reveal style="transition-delay:120ms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m2 7 2-4h16l2 4"/><path d="M2 7a3 3 0 0 0 5 2 3 3 0 0 0 5 0 3 3 0 0 0 5 0 3 3 0 0 0 5-2"/><path d="M4 10v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V10"/></svg><h3 class="h4">Retail</h3><p class="body">Take UPI and card payments across counters and keep one settlement view for all outlets.</p><span class="case-link">Learn more <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></span></article>
+      <article class="case" data-reveal style="transition-delay:180ms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M22 9 12 4 2 9l10 5 10-5Z"/><path d="M6 11.5V16c0 1.5 3 3 6 3s6-1.5 6-3v-4.5"/></svg><h3 class="h4">Education</h3><p class="body">Handle fee cycles with clear records per student, term and instalment.</p><span class="case-link">Learn more <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></span></article>
+      <article class="case" data-reveal><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5a2.1 2.1 0 0 0-3-3L13 8 4.8 6.2a.5.5 0 0 0-.5.8l3.2 4.2-2 2H3l-1 1 3 1.5L6.5 19 8 18v-2.5l2-2 4.2 3.2a.5.5 0 0 0 .8-.5Z"/></svg><h3 class="h4">Travel</h3><p class="body">Manage high-value bookings, part payments and refunds without manual reconciliation.</p><span class="case-link">Learn more <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></span></article>
+      <article class="case" data-reveal style="transition-delay:60ms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7Z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg><h3 class="h4">Marketplaces</h3><p class="body">Split incoming payments across sellers and track each payout to its source orders.</p><span class="case-link">Learn more <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></span></article>
+      <article class="case" data-reveal style="transition-delay:120ms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20Z"/></svg><h3 class="h4">Digital services</h3><p class="body">Charge for downloads, subscriptions and credits with instant confirmation to the buyer.</p><span class="case-link">Learn more <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></span></article>
+      <article class="case" data-reveal style="transition-delay:180ms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2a2.1 2.1 0 0 0-3-3Z"/><path d="M12 15 9 12a11 11 0 0 1 8-9 11 11 0 0 1-2 10Z"/><path d="M9 12H5s.5-2.2 1.5-3 4.5 0 4.5 0M12 15v4s2.2-.5 3-1.5 0-4.5 0-4.5"/></svg><h3 class="h4">Startups</h3><p class="body">Go live fast on test keys, then switch to production without rewriting the integration.</p><span class="case-link">Learn more <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></span></article>
+    </div>
+  </div>
+</section>
+
+<!-- =================== CTA =================== -->
+<section class="cta" id="start">
+  <div class="cta-glow" aria-hidden="true"></div>
+  <div class="cta-rails" aria-hidden="true"><i></i><i></i><i></i></div>
+  <div class="shell cta-inner" data-reveal>
+    <div class="cta-mark">
+      <svg width="66" height="42" viewBox="35 31 84 52" aria-hidden="true">
+        <defs>
+          <linearGradient id="mkA3" x1="39.38" y1="38" x2="69.11" y2="78" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#6FE382"/><stop offset=".48" stop-color="#39B54A"/><stop offset="1" stop-color="#1B6B33"/>
+          </linearGradient>
+          <linearGradient id="mkB3" x1="57" y1="78" x2="113.09" y2="32" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#14562A"/><stop offset=".45" stop-color="#39B54A"/><stop offset="1" stop-color="#7CE88E"/>
+          </linearGradient>
+        </defs>
+        <polygon points="39.38 78.35 39.38 38.78 51.64 38.78 69.11 59.88 63.21 71.54 62.62 72.14 51.98 59.2 52.06 78.35 39.38 78.35" fill="url(#mkA3)"/>
+        <path d="M57,65.5l8.85,10.72s3.83-14.64,11.91-22.89v25.02h12.77v-38.04s5.28-6.64,22.55-8.94c0,0-34.89-14.3-56.09,34.13Z" fill="url(#mkB3)"/>
+      </svg>
+    </div>
+    <h2 class="cta-title">Ready to simplify your payments?</h2>
+    <p class="cta-sub">Give your customers a smoother payment experience and give your team better control over transactions and settlements.</p>
+    <div class="hero-actions hero-actions--center">
+      <a href="https://t.me/maxai11" target="_blank" rel="noopener noreferrer" class="btn btn--accent">Get started <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></a>
+      <a href="https://t.me/maxai11" target="_blank" rel="noopener noreferrer" class="btn btn--ghostInk">Talk to sales</a>
+    </div>
+    <p class="cta-foot">Onboarding requirements and pricing: <span class="ph ph--dark">[COMMERCIAL TERMS]</span></p>
+  </div>
+</section>
+
+</main>
+
+<!-- =================== FOOTER =================== -->
+<footer class="footer" id="contact">
+  <div class="shell">
+    <div class="foot-top">
+      <div class="foot-brand">
+        <a href="#top" class="brand" aria-label="MAX PAY home">
+          <svg width="53" height="34" viewBox="35 31 84 52" aria-hidden="true">
+            <defs>
+              <linearGradient id="mkA4" x1="39.38" y1="38" x2="69.11" y2="78" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#6FE382"/><stop offset=".48" stop-color="#39B54A"/><stop offset="1" stop-color="#1B6B33"/>
+              </linearGradient>
+              <linearGradient id="mkB4" x1="57" y1="78" x2="113.09" y2="32" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#14562A"/><stop offset=".45" stop-color="#39B54A"/><stop offset="1" stop-color="#7CE88E"/>
+              </linearGradient>
+            </defs>
+            <polygon points="39.38 78.35 39.38 38.78 51.64 38.78 69.11 59.88 63.21 71.54 62.62 72.14 51.98 59.2 52.06 78.35 39.38 78.35" fill="url(#mkA4)"/>
+            <path d="M57,65.5l8.85,10.72s3.83-14.64,11.91-22.89v25.02h12.77v-38.04s5.28-6.64,22.55-8.94c0,0-34.89-14.3-56.09,34.13Z" fill="url(#mkB4)"/>
+          </svg>
+          <span class="brand-text"><span class="brand-word">MAX PAY</span><span class="brand-tag">Safe &amp; Secure</span></span>
+        </a>
+        <p>Payment infrastructure for Indian businesses.</p>
+        <p class="foot-addr"><span class="ph ph--dark">[REGISTERED ADDRESS]</span></p>
+        <p class="foot-addr"><span class="ph ph--dark">[SUPPORT EMAIL]</span> · <span class="ph ph--dark">[SUPPORT PHONE]</span></p>
+      </div>
+      <nav class="foot-cols" aria-label="Footer">
+        <div class="foot-col"><h3>Products</h3><ul><li><a href="#products">Payment Gateway</a></li><li><a href="#products">Payment Links</a></li><li><a href="#products">Settlements</a></li><li><a href="#products">Refunds</a></li><li><a href="#products">Payouts</a></li></ul></div>
+        <div class="foot-col"><h3>Solutions</h3><ul><li><a href="#solutions">E-commerce</a></li><li><a href="#solutions">SaaS</a></li><li><a href="#solutions">Retail</a></li><li><a href="#solutions">Marketplaces</a></li><li><a href="#solutions">Startups</a></li></ul></div>
+        <div class="foot-col"><h3>Developers</h3><ul><li><a href="#developers">Documentation</a></li><li><a href="#developers">API Reference</a></li><li><a href="#developers">Sandbox</a></li><li><a href="#developers">Webhooks</a></li><li><a href="#developers">Status</a></li></ul></div>
+        <div class="foot-col"><h3>Resources</h3><ul><li><a href="#">Guides</a></li><li><a href="#">Help Centre</a></li><li><a href="#">Blog</a></li><li><a href="#">Integration Partners</a></li></ul></div>
+        <div class="foot-col"><h3>Company</h3><ul><li><a href="#">About</a></li><li><a href="#">Careers</a></li><li><a href="#">Press</a></li><li><a href="#contact">Contact</a></li></ul></div>
+        <div class="foot-col"><h3>Legal</h3><ul><li><a href="#">Privacy Policy</a></li><li><a href="#">Terms &amp; Conditions</a></li><li><a href="#">Refund Policy</a></li><li><a href="#">Grievance Redressal</a></li></ul></div>
+      </nav>
+    </div>
+    <div class="foot-bottom">
+      <p>© <span id="year">2026</span> MAX PAY. All rights reserved.</p>
+      <p class="foot-note">All figures, transactions and code samples shown on this site are illustrative demo data.</p>
+    </div>
+  </div>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* year */
+  document.getElementById("year").textContent = new Date().getFullYear();
+
+  /* navbar scroll state */
+  var nav = document.getElementById("nav"), raf1 = 0;
+  function onScrollNav(){
+    cancelAnimationFrame(raf1);
+    raf1 = requestAnimationFrame(function(){
+      nav.classList.toggle("nav--scrolled", window.scrollY > 24);
+    });
+  }
+  window.addEventListener("scroll", onScrollNav, {passive:true});
+  onScrollNav();
+
+  /* mobile menu */
+  var burger = document.getElementById("burger");
+  function setMenu(open){
+    document.body.classList.toggle("menu-open", open);
+    burger.setAttribute("aria-expanded", open ? "true" : "false");
+    burger.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+  }
+  burger.addEventListener("click", function(){
+    setMenu(!document.body.classList.contains("menu-open"));
+  });
+  document.querySelectorAll("#sheet a").forEach(function(a){
+    a.addEventListener("click", function(){ setMenu(false); });
+  });
+  document.addEventListener("keydown", function(e){
+    if (e.key === "Escape") setMenu(false);
+  });
+
+  /* scroll reveal */
+  var reveals = document.querySelectorAll("[data-reveal]");
+  if (reduced || !("IntersectionObserver" in window)) {
+    reveals.forEach(function(n){ n.classList.add("is-in"); });
+  } else {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting){ e.target.classList.add("is-in"); io.unobserve(e.target); }
+      });
+    }, {rootMargin:"0px 0px -12% 0px", threshold:0.12});
+    reveals.forEach(function(n){ io.observe(n); });
+  }
+
+  /* hero payment rail */
+  var nodes = document.querySelectorAll("#rail .rail-node"),
+      fills = document.querySelectorAll("#rail .rail-fill"),
+      pill  = document.getElementById("railPill"),
+      pillT = document.getElementById("railPillText"),
+      pillI = pill.querySelector("svg"),
+      stamp = document.getElementById("railStamp"),
+      flash = document.getElementById("railFlash"),
+      stage = 0;
+
+  var TICK = '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>';
+  var SPINNER = '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>';
+
+  function renderRail(){
+    nodes.forEach(function(n,i){
+      n.classList.toggle("is-lit", stage >= i);
+      n.classList.toggle("is-active", stage === i);
+    });
+    fills.forEach(function(f,i){
+      f.style.transform = "scaleY(" + (stage > i ? 1 : 0) + ")";
+    });
+    var confirmed = stage >= 3;
+    pill.className = "pill " + (confirmed ? "pill--ok" : "pill--wait");
+    pillT.textContent = confirmed ? "Successful" : "Processing";
+    pillI.innerHTML = confirmed ? TICK : SPINNER;
+    pillI.classList.toggle("spin", !confirmed);
+    stamp.classList.toggle("is-on", confirmed);
+    flash.classList.toggle("is-on", stage === 4);
+  }
+  if (reduced){ stage = 4; renderRail(); }
+  else { renderRail(); setInterval(function(){ stage = (stage + 1) % 5; renderRail(); }, 1500); }
+
+  /* live transaction feed */
+  var POOL = [
+    {amt:"₹4,850",  method:"UPI",         id:"txn_9f2c41"},
+    {amt:"₹12,499", method:"Card",        id:"txn_7b0aa3"},
+    {amt:"₹899",    method:"UPI",         id:"txn_2ed518"},
+    {amt:"₹3,200",  method:"Net banking", id:"txn_c41b70"},
+    {amt:"₹24,000", method:"Card",        id:"txn_58de9a"},
+    {amt:"₹1,150",  method:"Wallet",      id:"txn_ab3f26"}
+  ];
+  var list = document.getElementById("ledgerRows"), pos = 0;
+
+  function clock(offset){
+    return new Date(Date.now() - offset*1000)
+      .toLocaleTimeString("en-IN", {hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false});
+  }
+  function rowHTML(r, time, fresh){
+    return '<li class="ledger-row' + (fresh ? " is-new" : "") + '">' +
+      '<span class="mono dim">' + r.id + '<em>' + time + '</em></span>' +
+      '<span class="method">' + r.method + '</span>' +
+      '<span class="ta-r"><span class="amt">' + r.amt + '</span></span>' +
+      '<span class="ta-r"><span class="pill pill--ok">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">' + TICK + '</svg>' +
+        'Confirmed</span></span></li>';
+  }
+  list.innerHTML = POOL.slice(0,4).map(function(r,i){ return rowHTML(r, clock(i*37), false); }).join("");
+  pos = 4;
+
+  if (!reduced) {
+    setInterval(function(){
+      var r = POOL[pos % POOL.length];
+      pos++;
+      list.insertAdjacentHTML("afterbegin", rowHTML(r, clock(0), true));
+      while (list.children.length > 4) list.removeChild(list.lastElementChild);
+    }, 3200);
+  }
+
+  /* developer tabs */
+  document.querySelectorAll(".editor-tabs button").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var name = btn.getAttribute("data-tab");
+      document.querySelectorAll(".editor-tabs button").forEach(function(b){
+        b.classList.toggle("is-on", b === btn);
+      });
+      document.querySelectorAll(".editor-pane").forEach(function(p){
+        p.classList.toggle("is-on", p.getAttribute("data-pane") === name);
+      });
+    });
+  });
+
+  /* dashboard parallax */
+  if (!reduced) {
+    var stageEl = document.getElementById("dashStage"), dash = document.getElementById("dash"), raf2 = 0;
+    function onScrollDash(){
+      cancelAnimationFrame(raf2);
+      raf2 = requestAnimationFrame(function(){
+        var r = stageEl.getBoundingClientRect();
+        var p = 1 - Math.min(Math.max((r.top + r.height/2) / window.innerHeight, 0), 2) / 2;
+        dash.style.transform = "translateY(" + (p * 22 - 11) + "px)";
+      });
+    }
+    window.addEventListener("scroll", onScrollDash, {passive:true});
+    onScrollDash();
+  }
+})();
+</script>
+</body>
+</html>
