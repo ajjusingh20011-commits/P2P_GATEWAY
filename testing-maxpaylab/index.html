@@ -1,12 +1,191 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>Testing</title>
-  <meta name="robots" content="noindex, nofollow">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UPI Link Tester</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #fafafa; color: #1a1a1a; margin: 0; padding: 16px;
+    max-width: 480px; margin-inline: auto;
+  }
+  h1 { font-size: 20px; margin: 8px 0 4px; }
+  p.warn {
+    background: #fff3cd; border: 1px solid #ffe08a; color: #7a5b00;
+    padding: 10px 12px; border-radius: 8px; font-size: 13px; margin: 12px 0 16px;
+  }
+  .card {
+    background: #fff; border: 1px solid #e2e2e2; border-radius: 12px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
+  label:first-child { margin-top: 0; }
+  input, select {
+    width: 100%; box-sizing: border-box; padding: 10px 12px; font-size: 15px;
+    border: 1px solid #ccc; border-radius: 8px; background: #fff; color: #111;
+  }
+  .row { display: flex; gap: 8px; }
+  .row > div { flex: 1; }
+  .checks { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
+  .checks label { display: flex; align-items: center; gap: 6px; font-weight: 400; font-size: 13px; margin: 0; }
+  .checks input[type=checkbox] { width: auto; }
+  code#preview {
+    display: block; font-size: 12px; background: #f2f2f2; padding: 10px 12px;
+    border-radius: 6px; word-break: break-all; margin: 12px 0; color: #444; min-height: 20px;
+    user-select: all; -webkit-user-select: all;
+  }
+  .btn {
+    display: block; width: 100%; text-align: center; text-decoration: none; font-weight: 600;
+    padding: 13px; border-radius: 8px; background: #7c3aed; color: #fff; font-size: 16px;
+    border: none; cursor: pointer; box-sizing: border-box;
+  }
+  .btn:active { opacity: 0.8; }
+  .btn.secondary { background: #444; margin-top: 8px; }
+  footer { font-size: 12px; color: #888; margin-top: 16px; text-align: center; }
+</style>
 </head>
 <body>
-  <h1>It works</h1>
-  <p>testing.maxpaylab.com — isolated static test page.</p>
+  <h1>UPI Link Tester</h1>
+  <p class="warn">⚠ This opens REAL payment links. Double-check the amount before tapping "Open Link" — it can move real money.</p>
+
+  <div class="card">
+    <label>App / scheme</label>
+    <select id="scheme">
+      <option value="upi://pay">Standard (upi://) — works with any UPI app</option>
+      <option value="paytmmp://pay">Paytm (paytmmp://)</option>
+      <option value="tez://upi/pay">Google Pay (tez://)</option>
+      <option value="phonepe://pay">PhonePe (phonepe://)</option>
+    </select>
+
+    <label>UPI ID (pa)</label>
+    <input id="pa" type="text" placeholder="e.g. 7771015975@okbizaxis">
+
+    <label>Payee name (pn) — optional</label>
+    <input id="pn" type="text" placeholder="e.g. Sunny">
+
+    <div class="row">
+      <div>
+        <label>Amount (am) — optional</label>
+        <input id="am" type="text" placeholder="e.g. 100">
+      </div>
+      <div>
+        <label>Currency (cu) — optional</label>
+        <input id="cu" type="text" placeholder="INR">
+      </div>
+    </div>
+
+    <label>Note (tn) — optional</label>
+    <input id="tn" type="text" placeholder="e.g. Payment">
+
+    <label>Reference (tr) — optional</label>
+    <input id="tr" type="text" placeholder="e.g. PG20260928">
+
+    <div class="checks">
+      <label><input type="checkbox" id="inc_pn" checked> include pn</label>
+      <label><input type="checkbox" id="inc_am" checked> include am</label>
+      <label><input type="checkbox" id="inc_cu" checked> include cu</label>
+      <label><input type="checkbox" id="inc_tn"> include tn</label>
+      <label><input type="checkbox" id="inc_tr"> include tr</label>
+    </div>
+
+    <label>Generated link:</label>
+    <code id="preview">—</code>
+
+    <button class="btn" onclick="openLink()">Open Link Now</button>
+    <button class="btn secondary" onclick="copyLink()">Copy Link</button>
+  </div>
+
+  <footer>Fields are saved on this phone automatically — edit and reopen anytime, no new file needed.</footer>
+
+<script>
+  const ids = ['scheme','pa','pn','am','cu','tn','tr','inc_pn','inc_am','inc_cu','inc_tn','inc_tr'];
+
+  function save() {
+    const data = {};
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      data[id] = el.type === 'checkbox' ? el.checked : el.value;
+    });
+    try { localStorage.setItem('upiTester', JSON.stringify(data)); } catch (e) {}
+  }
+
+  function load() {
+    let data = {};
+    try { data = JSON.parse(localStorage.getItem('upiTester') || '{}'); } catch (e) {}
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (data[id] === undefined) return;
+      if (el.type === 'checkbox') el.checked = data[id];
+      else el.value = data[id];
+    });
+  }
+
+  function buildLink() {
+    const scheme = document.getElementById('scheme').value;
+    const pa = document.getElementById('pa').value.trim();
+    const params = [];
+    if (pa) params.push('pa=' + encodeURIComponent(pa));
+    if (document.getElementById('inc_pn').checked && document.getElementById('pn').value.trim())
+      params.push('pn=' + encodeURIComponent(document.getElementById('pn').value.trim()));
+    if (document.getElementById('inc_am').checked && document.getElementById('am').value.trim())
+      params.push('am=' + encodeURIComponent(document.getElementById('am').value.trim()));
+    if (document.getElementById('inc_cu').checked && document.getElementById('cu').value.trim())
+      params.push('cu=' + encodeURIComponent(document.getElementById('cu').value.trim()));
+    if (document.getElementById('inc_tn').checked && document.getElementById('tn').value.trim())
+      params.push('tn=' + encodeURIComponent(document.getElementById('tn').value.trim()));
+    if (document.getElementById('inc_tr').checked && document.getElementById('tr').value.trim())
+      params.push('tr=' + encodeURIComponent(document.getElementById('tr').value.trim()));
+    return scheme + '?' + params.join('&');
+  }
+
+  function refreshPreview() {
+    save();
+    document.getElementById('preview').textContent = buildLink();
+  }
+
+  function openLink() {
+    const link = buildLink();
+    window.location.href = link;
+  }
+
+  function copyLink() {
+    const link = buildLink();
+
+    function fallbackCopy() {
+      const ta = document.createElement('textarea');
+      ta.value = link;
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, link.length);
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      return ok;
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(
+        () => alert('Copied:\n' + link),
+        () => {
+          const ok = fallbackCopy();
+          alert((ok ? 'Copied:\n' : 'Could not auto-copy. Long-press the link above to copy manually:\n') + link);
+        }
+      );
+    } else {
+      const ok = fallbackCopy();
+      alert((ok ? 'Copied:\n' : 'Could not auto-copy. Long-press the link above to copy manually:\n') + link);
+    }
+  }
+
+  ids.forEach(id => document.getElementById(id).addEventListener('input', refreshPreview));
+  load();
+  refreshPreview();
+</script>
 </body>
 </html>
