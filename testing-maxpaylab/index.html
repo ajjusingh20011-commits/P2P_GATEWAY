@@ -9,9 +9,10 @@
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: #fafafa; color: #1a1a1a; margin: 0; padding: 16px;
-    max-width: 480px; margin-inline: auto;
+    max-width: 520px; margin-inline: auto;
   }
   h1 { font-size: 20px; margin: 8px 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
   p.warn {
     background: #fff3cd; border: 1px solid #ffe08a; color: #7a5b00;
     padding: 10px 12px; border-radius: 8px; font-size: 13px; margin: 12px 0 16px;
@@ -22,10 +23,12 @@
   }
   label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
   label:first-child { margin-top: 0; }
-  input, select {
+  input, select, textarea {
     width: 100%; box-sizing: border-box; padding: 10px 12px; font-size: 15px;
     border: 1px solid #ccc; border-radius: 8px; background: #fff; color: #111;
+    font-family: inherit;
   }
+  textarea { resize: vertical; min-height: 60px; font-size: 13px; }
   .row { display: flex; gap: 8px; }
   .row > div { flex: 1; }
   .checks { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
@@ -39,24 +42,50 @@
   .btn {
     display: block; width: 100%; text-align: center; text-decoration: none; font-weight: 600;
     padding: 13px; border-radius: 8px; background: #7c3aed; color: #fff; font-size: 16px;
-    border: none; cursor: pointer; box-sizing: border-box;
+    border: none; cursor: pointer; box-sizing: border-box; margin-top: 8px;
   }
   .btn:active { opacity: 0.8; }
-  .btn.secondary { background: #444; margin-top: 8px; }
+  .btn.secondary { background: #444; }
+  .btn.green { background: #1a8a4a; }
+  .btn.small { padding: 8px; font-size: 13px; width: auto; display: inline-block; margin: 4px 4px 0 0; }
+  .btn.danger { background: #b3261e; }
+  hr { border: none; border-top: 1px solid #e2e2e2; margin: 20px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #eee; vertical-align: top; }
+  th { font-size: 11px; color: #888; text-transform: uppercase; }
+  td.link { word-break: break-all; max-width: 160px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .tag.pass { background: #d4f4dd; color: #1a7a3a; }
+  .tag.fail { background: #fde0de; color: #b3261e; }
+  .tag.untested { background: #eee; color: #777; }
   footer { font-size: 12px; color: #888; margin-top: 16px; text-align: center; }
+  .empty { font-size: 13px; color: #999; text-align: center; padding: 12px 0; }
 </style>
 </head>
 <body>
   <h1>UPI Link Tester</h1>
-  <p class="warn">⚠ This opens REAL payment links. Double-check the amount before tapping "Open Link" — it can move real money.</p>
+  <p class="warn">⚠ These open REAL payment links. Double-check the amount before tapping "Open Link" — it can move real money.</p>
 
+  <!-- PASTE & TEST -->
   <div class="card">
+    <h2>Paste &amp; test any link</h2>
+    <label>Paste a full link here (from chat, any format — intent://, upi://, phonepe://, etc.)</label>
+    <textarea id="pasteLink" placeholder="paste link here..."></textarea>
+    <button class="btn green" onclick="openPasted()">Open Pasted Link Now</button>
+  </div>
+
+  <!-- BUILDER -->
+  <div class="card">
+    <h2>Or build a link</h2>
     <label>App / scheme</label>
     <select id="scheme">
-      <option value="upi://pay">Standard (upi://) — works with any UPI app</option>
+      <option value="upi://pay">Standard (upi://)</option>
       <option value="paytmmp://pay">Paytm (paytmmp://)</option>
       <option value="tez://upi/pay">Google Pay (tez://)</option>
       <option value="phonepe://pay">PhonePe (phonepe://)</option>
+      <option value="intent_gpay">Android intent:// — Google Pay</option>
+      <option value="intent_phonepe">Android intent:// — PhonePe</option>
+      <option value="intent_paytm">Android intent:// — Paytm</option>
     </select>
 
     <label>UPI ID (pa)</label>
@@ -97,10 +126,56 @@
     <button class="btn secondary" onclick="copyLink()">Copy Link</button>
   </div>
 
-  <footer>Fields are saved on this phone automatically — edit and reopen anytime, no new file needed.</footer>
+  <!-- TEST LOG -->
+  <div class="card">
+    <h2>Record this test's result</h2>
+    <label>Which link was tested?</label>
+    <textarea id="logLink" placeholder="auto-filled from the last link opened, or paste manually"></textarea>
+    <div class="row">
+      <div>
+        <label>App used</label>
+        <select id="logApp">
+          <option>Paytm</option>
+          <option>GPay</option>
+          <option>PhonePe</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div>
+        <label>Result</label>
+        <select id="logResult">
+          <option value="pass">✅ Success</option>
+          <option value="fail">❌ Failed</option>
+        </select>
+      </div>
+    </div>
+    <label>Exact error text / notes</label>
+    <input id="logNotes" type="text" placeholder="e.g. Payment failed as per UPI risk policy">
+    <button class="btn" onclick="addLog()">Save to Test Log</button>
+  </div>
+
+  <div class="card">
+    <h2>Test Log (<span id="logCount">0</span> entries)</h2>
+    <div id="logEmpty" class="empty">No tests logged yet.</div>
+    <table id="logTable" style="display:none">
+      <thead>
+        <tr><th>When</th><th>Link</th><th>App</th><th>Result</th><th>Notes</th><th></th></tr>
+      </thead>
+      <tbody id="logBody"></tbody>
+    </table>
+    <button class="btn secondary small" onclick="exportLog()">Copy Full Log (for chat)</button>
+    <button class="btn danger small" onclick="clearLog()">Clear Log</button>
+  </div>
+
+  <footer>Everything (fields + test log) is saved on this phone automatically.</footer>
 
 <script>
   const ids = ['scheme','pa','pn','am','cu','tn','tr','inc_pn','inc_am','inc_cu','inc_tn','inc_tr'];
+  const INTENT_PACKAGES = {
+    intent_gpay: 'com.google.android.apps.nbu.paisa.user',
+    intent_phonepe: 'com.phonepe.app',
+    intent_paytm: 'net.one97.paytm'
+  };
 
   function save() {
     const data = {};
@@ -122,8 +197,7 @@
     });
   }
 
-  function buildLink() {
-    const scheme = document.getElementById('scheme').value;
+  function buildParams() {
     const pa = document.getElementById('pa').value.trim();
     const params = [];
     if (pa) params.push('pa=' + encodeURIComponent(pa));
@@ -137,7 +211,19 @@
       params.push('tn=' + encodeURIComponent(document.getElementById('tn').value.trim()));
     if (document.getElementById('inc_tr').checked && document.getElementById('tr').value.trim())
       params.push('tr=' + encodeURIComponent(document.getElementById('tr').value.trim()));
-    return scheme + '?' + params.join('&');
+    return params;
+  }
+
+  function buildLink() {
+    const scheme = document.getElementById('scheme').value;
+    const params = buildParams();
+    const qs = params.join('&');
+
+    if (scheme.startsWith('intent_')) {
+      const pkg = INTENT_PACKAGES[scheme];
+      return 'intent://pay?' + qs + '#Intent;scheme=upi;package=' + pkg + ';end';
+    }
+    return scheme + '?' + qs;
   }
 
   function refreshPreview() {
@@ -147,45 +233,125 @@
 
   function openLink() {
     const link = buildLink();
+    document.getElementById('logLink').value = link;
     window.location.href = link;
+  }
+
+  function openPasted() {
+    const link = document.getElementById('pasteLink').value.trim();
+    if (!link) { alert('Paste a link first.'); return; }
+    document.getElementById('logLink').value = link;
+    window.location.href = link;
+  }
+
+  function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
   }
 
   function copyLink() {
     const link = buildLink();
-
-    function fallbackCopy() {
-      const ta = document.createElement('textarea');
-      ta.value = link;
-      ta.style.position = 'fixed';
-      ta.style.top = '-1000px';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      ta.setSelectionRange(0, link.length);
-      let ok = false;
-      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-      document.body.removeChild(ta);
-      return ok;
-    }
-
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(link).then(
         () => alert('Copied:\n' + link),
-        () => {
-          const ok = fallbackCopy();
-          alert((ok ? 'Copied:\n' : 'Could not auto-copy. Long-press the link above to copy manually:\n') + link);
-        }
+        () => { const ok = fallbackCopy(link); alert((ok ? 'Copied:\n' : 'Could not auto-copy, long-press the link to copy:\n') + link); }
       );
     } else {
-      const ok = fallbackCopy();
-      alert((ok ? 'Copied:\n' : 'Could not auto-copy. Long-press the link above to copy manually:\n') + link);
+      const ok = fallbackCopy(link);
+      alert((ok ? 'Copied:\n' : 'Could not auto-copy, long-press the link to copy:\n') + link);
+    }
+  }
+
+  // ---- TEST LOG ----
+  function loadLog() {
+    try { return JSON.parse(localStorage.getItem('upiTestLog') || '[]'); } catch (e) { return []; }
+  }
+  function saveLog(log) {
+    try { localStorage.setItem('upiTestLog', JSON.stringify(log)); } catch (e) {}
+  }
+  function renderLog() {
+    const log = loadLog();
+    document.getElementById('logCount').textContent = log.length;
+    const empty = document.getElementById('logEmpty');
+    const table = document.getElementById('logTable');
+    const body = document.getElementById('logBody');
+    if (!log.length) { empty.style.display = 'block'; table.style.display = 'none'; return; }
+    empty.style.display = 'none';
+    table.style.display = 'table';
+    body.innerHTML = log.slice().reverse().map((e, i) => {
+      const realIdx = log.length - 1 - i;
+      return '<tr>' +
+        '<td>' + e.when + '</td>' +
+        '<td class="link">' + escapeHtml(e.link) + '</td>' +
+        '<td>' + escapeHtml(e.app) + '</td>' +
+        '<td><span class="tag ' + (e.result === 'pass' ? 'pass' : 'fail') + '">' + (e.result === 'pass' ? 'PASS' : 'FAIL') + '</span></td>' +
+        '<td>' + escapeHtml(e.notes || '') + '</td>' +
+        '<td><button class="btn danger small" onclick="deleteLog(' + realIdx + ')">x</button></td>' +
+        '</tr>';
+    }).join('');
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function addLog() {
+    const link = document.getElementById('logLink').value.trim();
+    if (!link) { alert('No link to log — open or paste a link first.'); return; }
+    const entry = {
+      when: new Date().toLocaleString(),
+      link: link,
+      app: document.getElementById('logApp').value,
+      result: document.getElementById('logResult').value,
+      notes: document.getElementById('logNotes').value.trim()
+    };
+    const log = loadLog();
+    log.push(entry);
+    saveLog(log);
+    document.getElementById('logNotes').value = '';
+    renderLog();
+  }
+  function deleteLog(idx) {
+    const log = loadLog();
+    log.splice(idx, 1);
+    saveLog(log);
+    renderLog();
+  }
+  function clearLog() {
+    if (!confirm('Clear the entire test log?')) return;
+    saveLog([]);
+    renderLog();
+  }
+  function exportLog() {
+    const log = loadLog();
+    if (!log.length) { alert('Log is empty.'); return; }
+    const text = log.map(e =>
+      `[${e.when}] ${e.app} — ${e.result === 'pass' ? 'PASS' : 'FAIL'}\nLink: ${e.link}\nNotes: ${e.notes || '-'}\n`
+    ).join('\n');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => alert('Log copied — paste it into the chat.'),
+        () => { fallbackCopy(text); alert('Log copied (fallback) — paste it into the chat.'); }
+      );
+    } else {
+      fallbackCopy(text);
+      alert('Log copied (fallback) — paste it into the chat.');
     }
   }
 
   ids.forEach(id => document.getElementById(id).addEventListener('input', refreshPreview));
   load();
   refreshPreview();
+  renderLog();
 </script>
 </body>
 </html>
