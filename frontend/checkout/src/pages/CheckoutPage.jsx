@@ -337,7 +337,6 @@ export default function CheckoutPage() {
   const [copied, setCopied] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [launched, setLaunched] = useState(false); // customer opened a UPI app
   const [rotating, setRotating] = useState(false); // awaiting a replacement account
   const [rotateErr, setRotateErr] = useState('');
   const [amtCopied, setAmtCopied] = useState(false);
@@ -766,9 +765,13 @@ export default function CheckoutPage() {
 
   if (step !== STEP.PAYMENT || !order) return null;
 
-  const statusLine = launched
-    ? { cls: '', node: <><span className="co-dot" />Waiting for confirmation</> }
-    : { cls: 'neutral', node: <><span className="co-dot" />Waiting for payment</> };
+  // Always "waiting for payment". This used to flip to "waiting for
+  // confirmation" once a UPI app had been launched, which overstated what we
+  // know: opening an app is not evidence that any money moved, and the page
+  // has no signal that it did. Settlement is driven entirely by the
+  // receiver-side capture, never by an app launch or a browser return, so the
+  // status stays honest until the backend says otherwise.
+  const statusLine = { cls: 'neutral', node: <><span className="co-dot" />Waiting for payment</> };
 
   return (
     <>
@@ -837,8 +840,26 @@ export default function CheckoutPage() {
             </button>
             {rotateErr && <p className="co-appNote">{rotateErr}</p>}
 
-            <p className="co-sectionLabel">Pay with</p>
-            <UpiApps order={order} onLaunch={() => setLaunched(true)} />
+            {/*
+              "Pay with" app launchers. PhonePe and Paytm are shown — each
+              uses its own user-tested native route (phonepeNativeLink /
+              paytmCashWalletLink, utils/order.js), launched via a hidden
+              iframe, not the old generic-UPI-scheme redirect.
+
+              GPay is still NOT rendered (UpiApps.jsx's VISIBLE_APPS filter).
+              Its old app-proprietary-scheme button (tez://upi/pay) carries
+              generic UPI query params — the same shape that produced
+              "Payment failed as per UPI risk policy" in Paytm on a real
+              device, while paying the very same VPA by typing it into the app
+              by hand succeeded. A button whose only outcome is a failed
+              payment is worse than no button. It stays hidden until it has
+              its own verified native route.
+
+              Everything above and below this point is unchanged: the QR
+              still encodes a standard `upi://pay` intent for scanning, and
+              the UPI ID and exact amount still each have a copy button.
+            */}
+            <UpiApps order={order} disabled={!order?.upiId} />
 
             {/*
               "Watch how to deposit" is intentionally absent: utils/order.js only
@@ -875,7 +896,7 @@ export default function CheckoutPage() {
       <div className="co-cta">
         <div className="co-ctaInner">
           <button type="button" className="co-btn" onClick={() => setSheetOpen(true)}>
-            {launched ? 'I’ve completed payment' : 'Confirm Payment'}
+            Confirm Payment
             <span className="co-btnTimer">· {fmtTimer(remaining)}</span>
           </button>
         </div>
