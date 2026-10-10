@@ -29,7 +29,17 @@ jest.mock('../src/utils/logger', () => ({ info: () => {}, warn: () => {}, error:
 
 jest.mock('../src/services/smartMerge', () => ({
   // Records the settled order id instead of moving real money.
-  confirmOrder: async (order) => { mockSettled.push(order.id); },
+  //
+  // Returns the settled order, because that is the real contract: every exit
+  // from the production confirmOrder is `return order` / `return freshOrder`
+  // or a throw — it never resolves undefined. matchAndSettle reads
+  // `settled.status` to guard against reporting matched:true on an incomplete
+  // settle, so a mock resolving undefined made the engine throw before any
+  // assertion in this file could run.
+  confirmOrder: async (order) => {
+    mockSettled.push(order.id);
+    return Object.assign(order, { status: 'success' });
+  },
 }));
 
 jest.mock('../src/models', () => {
@@ -40,13 +50,19 @@ jest.mock('../src/models', () => {
     async update(fields) { Object.assign(o, fields); Object.assign(this, fields); return this; },
   });
   return {
-    // Faithful emulation of exactly the two queries the engine runs.
+    // Faithful emulation of exactly the queries the engine runs.
     PaymentDetail: {
       findAll: async ({ where }) => mockPds
         .filter((p) =>
           (!('ngo_device_id' in where) || p.ngo_device_id === where.ngo_device_id) &&
           (!('trader_id' in where) || p.trader_id === where.trader_id))
         .map((p) => ({ upi_id: p.upi_id, account_type: p.account_type, bank_name: p.bank_name })),
+      // traderUsesDeviceLinking() asks whether this trader links ANY account to
+      // a device, to decide between the trader-wide fallback and refusing. The
+      // real query is { trader_id, ngo_device_id: { [Op.ne]: null } }.
+      count: async ({ where }) => mockPds.filter((p) =>
+        (!('trader_id' in where) || p.trader_id === where.trader_id) &&
+        (!('ngo_device_id' in where) || p.ngo_device_id != null)).length,
     },
     Order: {
       ACTIVE_STATUSES: ['pending', 'checkout_open', 'claimed_paid', 'under_review'],
@@ -111,14 +127,44 @@ describe('matchingEngineV2 — device-scoped resolution (wrong-match regression)
     expect(settledOrderId).toBe(1002);
   });
 
-  test('fallback: a device with no linked UPI still settles via the trader-wide set (no stranded payment)', async () => {
+  // The trader-wide fallback is NOT unconditional. These two tests are the
+  // two halves of that rule, and the distinction is the whole point:
+  //
+  //   trader DOES link devices  -> a capture from an unlinked device is
+  //                                unattributable, so REFUSE (below)
+  //   trader links NO devices   -> the trader-wide set is the only path that
+  //                                has ever existed, so still settle
+  //
+  // This test used to assert that the first case settled trader-wide too, and
+  // was named "no stranded payment". 1cc2ac1 deliberately removed that: when a
+  // trader links devices, settling a capture from an unlinked device against
+  // whichever same-amount order happens to be open is a coin flip with a
+  // customer's money — it is what closed three wrong orders in BUG-41. The
+  // payment is not stranded, it is HELD: the capture is still stored and shown
+  // on the Notifications page for manual confirmation.
+  test('a capture from an unlinked device REFUSES when the trader links devices (BUG-41)', async () => {
     mockPds = [{ id: 1, trader_id: 1, upi_id: 'a@okaxis', ngo_device_id: 'DEV-A' }];
     mockOrders = [{ id: 2001, status: 'pending', amount_inr: 30, upi_id: 'a@okaxis', created_at: '2026-08-12T01:23:00Z', donor_submitted_utr: null }];
     const { result, settledOrderId } = await settle({
       deviceId: 'DEV-UNLINKED', traderId: 1, amount: 30, utr: '', eventTimestamp: EVENT_TIME, source: 'apk_notification',
     });
+    expect(result.matched).toBe(false);
+    expect(result.reason).toBe('device_not_linked_to_any_account');
+    // Nothing settled — the open ₹30 order on a@okaxis is left alone.
+    expect(settledOrderId).toBe(null);
+  });
+
+  test('fallback intact: a trader who links NO devices still settles trader-wide', async () => {
+    // Same shape as above, except this trader has no device on any account, so
+    // there is no device signal to be missing and nothing to disambiguate
+    // against. Refusing here would strand every payment such a trader takes.
+    mockPds = [{ id: 1, trader_id: 1, upi_id: 'a@okaxis', ngo_device_id: null }];
+    mockOrders = [{ id: 2002, status: 'pending', amount_inr: 30, upi_id: 'a@okaxis', created_at: '2026-08-12T01:23:00Z', donor_submitted_utr: null }];
+    const { result, settledOrderId } = await settle({
+      deviceId: 'DEV-UNKNOWN', traderId: 1, amount: 30, utr: '', eventTimestamp: EVENT_TIME, source: 'apk_notification',
+    });
     expect(result.matched).toBe(true);
-    expect(settledOrderId).toBe(2001);
+    expect(settledOrderId).toBe(2002);
   });
 
   // BUG-58 — a device backing MULTIPLE sibling accounts must NOT settle by time

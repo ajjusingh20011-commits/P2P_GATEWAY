@@ -19,6 +19,10 @@
 const mockEvents = [];
 const mockAdminEmits = [];
 let mockSettleImpl = async () => ({});
+// The order the locked re-read (db.Order.findByPk) hands back. makeOrder()
+// registers each fresh order here so production and the test operate on one
+// object rather than two copies that silently diverge.
+let mockCurrentOrder = null;
 
 jest.mock('../src/utils/logger', () => ({ info: () => {}, warn: () => {}, error: () => {} }));
 
@@ -41,7 +45,23 @@ jest.mock('../src/websocket', () => ({
 }));
 
 jest.mock('../src/models', () => ({
-  Order: { ACTIVE_STATUSES: ['pending', 'checkout_open', 'claimed_paid', 'under_review'] },
+  // confirmOrder now does its work inside a transaction, re-reading the order
+  // under SELECT ... FOR UPDATE so a concurrent settle can't race it. The mock
+  // has to provide that or the function throws before any assertion runs.
+  //
+  // `transaction` just invokes the callback: these tests are about ORDERING
+  // (settle before success) and failure propagation, not about isolation,
+  // which only a real database can demonstrate. The callback's throw still
+  // propagates, which is what the failure test depends on.
+  sequelize: {
+    transaction: async (fn) => fn({ LOCK: { UPDATE: 'UPDATE' } }),
+  },
+  Order: {
+    ACTIVE_STATUSES: ['pending', 'checkout_open', 'claimed_paid', 'under_review'],
+    // The locked re-read returns the SAME object the test built, so the
+    // assertions on `order.status` still observe what production wrote.
+    findByPk: async () => mockCurrentOrder,
+  },
   Transaction: { update: async () => {} },
   PaymentDetail: { increment: async () => {} },
   Trader: { increment: async () => {}, findByPk: async () => ({ balance_usdt: 100 }) },
@@ -49,7 +69,7 @@ jest.mock('../src/models', () => ({
 
 const smartMerge = require('../src/services/smartMerge');
 
-const makeOrder = () => ({
+const makeOrder = () => (mockCurrentOrder = {
   id: 42,
   uuid: 'order-uuid-42',
   gateway_order_id: 'gw-42',
