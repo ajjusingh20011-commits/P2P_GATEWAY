@@ -292,6 +292,7 @@ async function me(req, res, next) {
       const merchant = await db.Merchant.findOne({ where: { user_id: user.id } });
       data.business_name = merchant ? merchant.business_name : null;
       data.balance_usdt = merchant ? Number(merchant.balance_usdt) : 0;
+      data.is_demo = merchant ? !!merchant.is_demo : false;
     }
 
     return res.json({ success: true, data: { user: data } });

@@ -9,6 +9,7 @@ const Joi = require('joi');
 const { Op } = require('sequelize');
 
 const db = require('../models');
+const config = require('../config');
 const { ok, created, fail, asyncHandler, pagination } = require('../utils/http');
 const authService = require('../services/authService');
 const smartMerge = require('../services/smartMerge');
@@ -385,6 +386,46 @@ const createMerchant = asyncHandler(async (req, res) => {
 
   // Return the secret once at creation.
   return created(res, { merchant: { id: result.merchant.id, business_name: value.business_name, api_key, api_secret } });
+});
+
+/* -------------------- POST /merchants/create-demo -------------------------- */
+// One-click demo merchant: random email/password, real row (so it can log
+// in), is_demo: true. Still gets a real-shaped api_key/api_secret like any
+// other merchant (createMerchantFull does the same) — it's just inert,
+// rejected by apiKeyAuth's is_demo check below. Credentials are shown once,
+// same discipline as a real merchant's.
+const createDemoMerchant = asyncHandler(async (req, res) => {
+  const crypto = require('crypto');
+  // NOT @demo.maxpay.test — Joi's string().email() (authController.js's
+  // login validator, shared by every panel) checks the TLD against the real
+  // IANA list, and .test is a reserved RFC 2606 special-use TLD that's
+  // deliberately never on it. That silently locked every demo merchant out
+  // of login with a generic "must be a valid email" 400. demo.maxpaylab.com
+  // is a subdomain of this product's own real registered domain (see the
+  // frontend/landing commit) and passes the same validator.
+  const email = `demo-${crypto.randomBytes(4).toString('hex')}@demo.maxpaylab.com`;
+  const password = crypto.randomBytes(9).toString('base64').replace(/[+/=]/g, '').slice(0, 12);
+  const api_key = genApiKey();
+  const api_secret = genApiSecret();
+
+  const result = await db.sequelize.transaction(async (t) => {
+    const user = await db.User.create(
+      { email, password_hash: await authService.hashPassword(password), role: 'merchant', status: 'active' },
+      { transaction: t }
+    );
+    const merchant = await db.Merchant.create(
+      { user_id: user.id, business_name: 'Demo Merchant', api_key, api_secret, is_demo: true },
+      { transaction: t }
+    );
+    return { user, merchant };
+  });
+
+  emitToAdmin('merchant:created', { merchant_id: result.merchant.id, business_name: 'Demo Merchant', is_demo: true });
+  return created(res, {
+    merchant: { id: result.merchant.id, business_name: 'Demo Merchant', email, is_demo: true },
+    credentials: { email, password },
+    login_url: `${config.frontend.merchant}/login`,
+  });
 });
 
 const updateMerchant = asyncHandler(async (req, res) => {
@@ -1684,6 +1725,7 @@ module.exports = {
   listMerchants,
   createMerchant,
   createMerchantFull,
+  createDemoMerchant,
   updateMerchant,
   updateMerchantFees,
   listOrders,

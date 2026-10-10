@@ -34,6 +34,7 @@ async function createOrder(merchant, body = {}) {
   if (!customerRef) throw typedErr(400, 'missing_customer_ref', 'customer_ref is required');
   if (!['FTD', 'STD'].includes(depositTypeIn)) throw typedErr(400, 'invalid_deposit_type', 'deposit_type must be FTD or STD');
   if (!merchant || merchant.is_active === false) throw typedErr(403, 'merchant_inactive', 'Merchant account is not active');
+  if (merchant.is_demo) throw typedErr(403, 'merchant_is_demo', 'Demo merchants cannot create real orders');
 
   // ---- duplicate merchant_order_id (per merchant) ----
   if (body.merchant_order_id) {

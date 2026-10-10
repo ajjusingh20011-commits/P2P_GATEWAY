@@ -22,6 +22,12 @@ module.exports = (sequelize) => {
       balance: { type: DataTypes.DECIMAL(20, 8), allowNull: false, defaultValue: 0 },
       commission_rate: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0 },
       is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+      // Demo merchant — see migration 20261010000001. Gates every money-moving
+      // action server-side (orderService.createOrder, payoutController.create,
+      // apiKeyAuth, merchantController.regenerateApiCredentials); never itself
+      // read by routing/settlement, which never see a demo merchant's activity
+      // because none of it reaches the orders/payout_requests tables.
+      is_demo: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
 
       // Fee configuration + settled USDT balance.
       payin_fee_percent: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 5.0 },

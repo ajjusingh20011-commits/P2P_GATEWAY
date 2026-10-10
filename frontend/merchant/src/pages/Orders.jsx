@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, Badge, Button, Tabs, Pagination, PageHeader, Modal, Input, Select } from '../components/ui';
 import { IconPlus, IconCopy, IconCheck, IconExport } from '../components/icons';
-import { orders as seedOrders, inr, usdt, checkoutUrl } from '../utils/mock';
+import { orders as seedOrders, inr, usdt, checkoutUrl, CHECKOUT_ORIGIN } from '../utils/mock';
 import { merchantApi } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 // Backend order-listing is capped at 100/page (see backend's pagination()
 // helper) — loop up to this many pages so filters/tabs/CSV export operate on
@@ -370,6 +371,8 @@ async function fetchAllOrders() {
 }
 
 export default function Orders() {
+  const { user } = useAuth();
+  const isDemo = !!user?.is_demo;
   const [list, setList] = useState(seedOrders);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('all');
@@ -465,8 +468,43 @@ export default function Orders() {
     return order;
   };
 
+  // Demo merchant: pure client-side simulation, no backend call at all. The
+  // checkout link points at the real checkout app's demo branch
+  // (CheckoutPage.jsx's `?demo=1` handling) — same real countdown/confirm/
+  // success flow, driven entirely by URL params instead of a real order.
+  const createDemoOrder = (body) => {
+    const fakeId = `DEMO-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const amountInr = Number(body.amount_inr) || 0;
+    const checkoutParams = new URLSearchParams({
+      demo: '1',
+      amount: String(amountInr),
+      ref: body.customer_ref || fakeId,
+      merchant: user?.businessName || user?.business_name || 'Demo Store',
+      id: fakeId,
+    });
+    const demoCheckoutUrl = `${CHECKOUT_ORIGIN}/?${checkoutParams.toString()}`;
+    const order = mapOrder({
+      uuid: fakeId,
+      gateway_order_id: fakeId,
+      merchant_order_id: body.merchant_order_id || null,
+      amount_inr: amountInr,
+      customer_ref: body.customer_ref,
+      deposit_type: body.deposit_type,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+      checkout_url: demoCheckoutUrl,
+    });
+    order.isDemo = true;
+    order.expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    // Not persisted anywhere real — never call loadOrders() after this, or
+    // the next real fetch wipes it straight back out of the list.
+    setList((l) => [order, ...l]);
+    return order;
+  };
+
   // v2 create — sends customer_ref, deposit_type and merchant_order_id.
   const createOrder = async (body) => {
+    if (isDemo) return { ok: true, order: createDemoOrder(body) };
     try {
       const res = await merchantApi.createOrder(body);
       const d = res.data.data;
@@ -562,7 +600,10 @@ export default function Orders() {
                     style={{ color: 'var(--text)', borderTop: '1px solid var(--cardborder)' }}
                     onClick={() => setDetailOrder(o)}
                   >
-                    <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>{o.gatewayOrderId || String(o.id).slice(0, 8)}</td>
+                    <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>
+                      {o.gatewayOrderId || String(o.id).slice(0, 8)}
+                      {o.isDemo && <Badge color="violet" className="ml-1.5">DEMO</Badge>}
+                    </td>
                     <td className="px-4 py-3">
                       <div className="font-medium">{inr(o.amountInr)}</div>
                       {o.amountUsdt != null && <div className="text-xs" style={{ color: 'var(--muted)' }}>{usdt(o.amountUsdt)}</div>}

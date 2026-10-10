@@ -3,6 +3,7 @@ import { Card, Badge, Button, Input, Select, Tabs, Pagination, PageHeader, Modal
 import { IconExport, IconCopy } from '../components/icons';
 import { merchantApi } from '../services/api';
 import { inr, usdt } from '../utils/mock';
+import { useAuth } from '../context/AuthContext';
 
 /*
   Merchant Payout — create a payout request (send INR to a recipient) and
@@ -184,6 +185,8 @@ function PayoutDetailDrawer({ payout: p, open, onClose }) {
 }
 
 export default function Payouts() {
+  const { user } = useAuth();
+  const isDemo = !!user?.is_demo;
   const [form, setForm] = useState(EMPTY);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -248,11 +251,26 @@ export default function Payouts() {
     };
     setSubmitting(true);
     try {
-      await merchantApi.createPayout(body);
-      setMsg({ type: 'ok', text: 'Payout request created — it is now in the trader pool.' });
+      if (isDemo) {
+        // Pure client-side simulation — no backend call, never touches the
+        // real payout_requests table. Not persisted anywhere real, so don't
+        // call load() afterward or the next real fetch wipes it back out.
+        const fake = {
+          id: `demo-${Date.now()}`,
+          uuid: `DEMO-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+          ...body,
+          status: 'awaiting_processing',
+          created_at: new Date().toISOString(),
+          isDemo: true,
+        };
+        setRows((r) => [fake, ...r]);
+      } else {
+        await merchantApi.createPayout(body);
+      }
+      setMsg({ type: 'ok', text: isDemo ? 'Demo payout request created (simulated, not sent to any trader).' : 'Payout request created — it is now in the trader pool.' });
       setForm(EMPTY);
       setTab('all');
-      load();
+      if (!isDemo) load();
     } catch (err) {
       setMsg({ type: 'err', text: err.response?.data?.message || 'Could not create the request.' });
     } finally {
@@ -370,7 +388,10 @@ export default function Payouts() {
                   const created = fmtDateTime(r.created_at);
                   return (
                     <tr key={r.id} className="tf-row-hover cursor-pointer" style={{ borderTop: '1px solid var(--cardborder)' }} onClick={() => setDetail(r)}>
-                      <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>{short(r.uuid, r.id)}</td>
+                      <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>
+                        {short(r.uuid, r.id)}
+                        {r.isDemo && <Badge color="violet" className="ml-1.5">DEMO</Badge>}
+                      </td>
                       <td className="px-4 py-3">{r.recipient_name}</td>
                       <td className="px-4 py-3" style={{ textTransform: 'capitalize' }}>{r.payment_method}</td>
                       <td className="px-4 py-3 font-medium">{inr(r.amount_inr)}</td>

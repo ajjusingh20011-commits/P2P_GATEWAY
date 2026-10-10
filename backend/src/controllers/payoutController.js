@@ -56,6 +56,9 @@ const createSchema = Joi.object({
 const create = asyncHandler(async (req, res) => {
   const merchant = await currentMerchant(req, res);
   if (!merchant) return undefined;
+  // No existing is_active-style guard here to extend — demo merchants need a
+  // fresh check (see orderService.createOrder for the pay-in equivalent).
+  if (merchant.is_demo) return fail(res, 403, 'Demo merchants cannot create real payout requests');
   const { error, value } = createSchema.validate(req.body);
   if (error) return fail(res, 422, error.details[0].message);
   const row = await payoutService.createRequest(merchant.id, value);

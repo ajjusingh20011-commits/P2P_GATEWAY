@@ -32,6 +32,7 @@ function mapMerchant(m) {
     payinFeePercent: Number(m.payin_fee_percent) || 0,
     payoutFeePercent: Number(m.payout_fee_percent) || 0,
     isActive: m.is_active !== false,
+    isDemo: !!m.is_demo,
     status: m.is_active === false || m.user?.status === 'suspended' ? 'suspended' : 'active',
   };
 }
@@ -54,6 +55,12 @@ const STATUS_OPTIONS = [
   { value: 'all', label: 'All statuses' },
   { value: 'active', label: 'Active' },
   { value: 'suspended', label: 'Suspended' },
+];
+
+const TYPE_OPTIONS = [
+  { value: 'all', label: 'All types' },
+  { value: 'real', label: 'Real' },
+  { value: 'demo', label: 'Demo' },
 ];
 
 // "Edit" and "Set commission" were dead menu items (fn: () => {}) with no
@@ -135,12 +142,14 @@ function EditFeesModal({ merchant, onClose, onSaved }) {
 export default function Merchants() {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({ status: 'all', q: '' });
+  const [filters, setFilters] = useState({ status: 'all', type: 'all', q: '' });
   const [page, setPage] = useState(1);
   const [showAdd, setShowAdd] = useState(false);
   const [draft, setDraft] = useState({ businessName: '', email: '', password: '', payin_fee_percent: '5.00', payout_fee_percent: '2.00', webhook_url: '', daily_limit_inr: '1000000' });
   const [saving, setSaving] = useState(false);
   const [created, setCreated] = useState(null);
+  const [demoSaving, setDemoSaving] = useState(false);
+  const [demoCreated, setDemoCreated] = useState(null);
   const [feesFor, setFeesFor] = useState(null);
   const [confirming, setConfirming] = useState(null); // { merchant, deactivate: bool }
   const navigate = useNavigate();
@@ -189,6 +198,8 @@ export default function Merchants() {
     const q = filters.q.trim().toLowerCase();
     return list.filter((m) => {
       if (filters.status !== 'all' && m.status !== filters.status) return false;
+      if (filters.type === 'real' && m.isDemo) return false;
+      if (filters.type === 'demo' && !m.isDemo) return false;
       if (q && !m.businessName.toLowerCase().includes(q) && !m.email.toLowerCase().includes(q) && !String(m.id).includes(q)) return false;
       return true;
     });
@@ -224,18 +235,47 @@ export default function Merchants() {
     }
   };
 
+  // One click, no form — the backend generates the random email/password and
+  // a real-but-inert api_key/api_secret pair (adminController.createDemoMerchant).
+  const addDemoMerchant = async () => {
+    setDemoSaving(true);
+    try {
+      const data = await adminApi.createDemoMerchant();
+      setDemoCreated({
+        email: data?.credentials?.email,
+        password: data?.credentials?.password,
+        loginUrl: data?.login_url,
+      });
+      toast('Demo merchant created', 'success');
+      load();
+    } catch (err) {
+      toast(err.response?.data?.message || 'Failed to create demo merchant', 'error');
+    } finally {
+      setDemoSaving(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader
         title="Merchants"
         subtitle={`${filtered.length} of ${list.length} merchants`}
-        actions={<>{loading && <InlineLoader />}<Button onClick={() => setShowAdd(true)}><IconPlus className="h-4 w-4" /> Add Merchant</Button></>}
+        actions={
+          <>
+            {loading && <InlineLoader />}
+            <Button size="sm" variant="ghost" onClick={addDemoMerchant} disabled={demoSaving}>
+              <IconPlus className="h-3.5 w-3.5" /> {demoSaving ? 'Creating…' : 'Add Demo Merchant'}
+            </Button>
+            <Button onClick={() => setShowAdd(true)}><IconPlus className="h-4 w-4" /> Add Merchant</Button>
+          </>
+        }
       />
 
       <Card className="mb-4 p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <SearchInput value={filters.q} onChange={set('q')} placeholder="Search business, email, ID" className="sm:col-span-2" />
           <Select value={filters.status} onChange={set('status')} options={STATUS_OPTIONS} />
+          <Select value={filters.type} onChange={set('type')} options={TYPE_OPTIONS} />
         </div>
       </Card>
 
@@ -262,7 +302,10 @@ export default function Merchants() {
                     <AdminIdPopover rows={[{ label: 'Merchant ID', value: m.id }, { label: 'Email', value: m.email }]} />
                   </td>
                   <td className="px-4 py-3">
-                    <div className="font-medium text-[var(--text)]">{m.businessName}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-[var(--text)]">{m.businessName}</span>
+                      {m.isDemo && <Badge color="violet">DEMO</Badge>}
+                    </div>
                     <div className="text-xs text-[var(--muted)]">{m.email}</div>
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{maskKey(m.apiKey)}</td>
@@ -371,6 +414,32 @@ export default function Merchants() {
             <label className="mb-1.5 block text-xs uppercase tracking-wide text-[var(--muted)]">API Secret</label>
             <code className="block truncate rounded bg-[var(--hover)] px-3 py-2 font-mono text-xs text-[var(--muted)]">{created?.api_secret || '—'}</code>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!demoCreated}
+        onClose={() => setDemoCreated(null)}
+        size="md"
+        title="Demo merchant created"
+        subtitle="Save these credentials now — the password is shown only once"
+        footer={<Button onClick={() => setDemoCreated(null)}>Done</Button>}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-amber-400">Logs in on the real merchant panel in simulated mode — no real orders, payouts or API calls are possible for this account.</p>
+          {[
+            ['Email', demoCreated?.email],
+            ['Password', demoCreated?.password],
+            ['Login URL', demoCreated?.loginUrl],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <label className="mb-1.5 block text-xs uppercase tracking-wide text-[var(--muted)]">{label}</label>
+              <div className="flex items-center gap-2">
+                <code className="block flex-1 truncate rounded bg-[var(--hover)] px-3 py-2 font-mono text-xs text-[var(--muted)]">{value || '—'}</code>
+                <Button variant="ghost" size="sm" onClick={() => navigator.clipboard?.writeText(value || '')}>Copy</Button>
+              </div>
+            </div>
+          ))}
         </div>
       </Modal>
     </div>

@@ -3,11 +3,12 @@ import { Card, Badge, Button, PageHeader, Modal } from '../components/ui';
 import { IconEye, IconEyeOff, IconRefresh, IconCopy, IconCheck } from '../components/icons';
 import { apiCredentials as seed, maskKey } from '../utils/mock';
 import { merchantApi } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 // Design's walletBox chip (label + code + icon actions in one row), matching
 // MaxPayDesign's API-key card visual — the underlying action is still the
 // single real regenerate() call below (this system has no per-key rotation).
-function CredentialRow({ label, value, show, onToggleShow, onRegen }) {
+function CredentialRow({ label, value, show, onToggleShow, onRegen, regenDisabled }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     navigator.clipboard?.writeText(value);
@@ -29,7 +30,7 @@ function CredentialRow({ label, value, show, onToggleShow, onRegen }) {
       <button type="button" className="tf-hbtn" onClick={copy} aria-label={`Copy ${label}`}>
         {copied ? <IconCheck className="h-4 w-4" /> : <IconCopy className="h-4 w-4" />}
       </button>
-      <Button variant="ghost" size="sm" onClick={onRegen}>
+      <Button variant="ghost" size="sm" onClick={onRegen} disabled={regenDisabled} title={regenDisabled ? "Demo merchants can't regenerate credentials" : undefined}>
         <IconRefresh className="h-4 w-4" /> Regenerate
       </Button>
     </div>
@@ -58,6 +59,8 @@ Response 201:
 }`;
 
 export default function ApiCredentials() {
+  const { user } = useAuth();
+  const isDemo = !!user?.is_demo;
   const [creds, setCreds] = useState(seed);
   const [copiedCode, setCopiedCode] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -126,15 +129,21 @@ export default function ApiCredentials() {
               <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16, margin: 0 }}>API keys</h2>
               <p style={{ color: 'var(--muted)', fontSize: 12, margin: '4px 0 0' }}>Live keys — process real payments. Keep them secret.</p>
             </div>
-            <Badge color="green">Live</Badge>
+            <Badge color={isDemo ? 'violet' : 'green'}>{isDemo ? 'Demo' : 'Live'}</Badge>
           </div>
           <div className="mt-4 space-y-3">
-            <CredentialRow label="API Key" value={creds.apiKey} show={showKey} onToggleShow={() => setShowKey((v) => !v)} onRegen={() => setConfirmOpen(true)} />
-            <CredentialRow label="API Secret" value={creds.apiSecret} show={showSecret} onToggleShow={() => setShowSecret((v) => !v)} onRegen={() => setConfirmOpen(true)} />
+            <CredentialRow label="API Key" value={creds.apiKey} show={showKey} onToggleShow={() => setShowKey((v) => !v)} onRegen={() => setConfirmOpen(true)} regenDisabled={isDemo} />
+            <CredentialRow label="API Secret" value={creds.apiSecret} show={showSecret} onToggleShow={() => setShowSecret((v) => !v)} onRegen={() => setConfirmOpen(true)} regenDisabled={isDemo} />
           </div>
-          <p className="mt-4 rounded-lg border px-4 py-2.5 text-xs" style={{ borderColor: 'rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.1)', color: '#f59e0b' }}>
-            Regenerating rotates both the key and secret together and immediately invalidates the previous pair. Update your integration before regenerating in production.
-          </p>
+          {isDemo ? (
+            <p className="mt-4 rounded-lg border px-4 py-2.5 text-xs" style={{ borderColor: 'rgba(139,92,246,0.3)', background: 'rgba(139,92,246,0.1)', color: '#8b5cf6' }}>
+              Demo merchants can't regenerate credentials — these keys are real-shaped but never accepted by the API, server-side.
+            </p>
+          ) : (
+            <p className="mt-4 rounded-lg border px-4 py-2.5 text-xs" style={{ borderColor: 'rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.1)', color: '#f59e0b' }}>
+              Regenerating rotates both the key and secret together and immediately invalidates the previous pair. Update your integration before regenerating in production.
+            </p>
+          )}
         </Card>
 
         <Card className="overflow-hidden">

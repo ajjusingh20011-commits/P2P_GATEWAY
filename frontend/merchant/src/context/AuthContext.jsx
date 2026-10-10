@@ -27,6 +27,34 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
+  // /auth/login's response carries only id/email/role/status — no Merchant
+  // fields at all (see authController.publicUser). is_demo (and business_name/
+  // balance) only exist on /auth/me's role-specific enrichment, so pull that
+  // once right after persisting the session rather than touching the shared
+  // login response every panel uses. Best-effort: a failed enrichment call
+  // still leaves a usable (non-demo-aware) session rather than blocking login.
+  const enrichUser = async (baseUser, tokens) => {
+    // Persist BEFORE calling /auth/me: api.js's request interceptor reads
+    // accessToken from localStorage, so calling /auth/me first sends the
+    // request with no token, gets a real 401, and the response interceptor's
+    // global "any 401 -> clear + redirect to /login" handler fires and wipes
+    // the session this function was about to set up — a self-inflicted
+    // logout loop, not a backend issue. Session must exist in localStorage
+    // before the enrichment call goes out.
+    persistSession(baseUser, tokens);
+    setUser(baseUser);
+    try {
+      const me = await authApi.me();
+      const u = { ...baseUser, ...me.data.data.user };
+      persistSession(u, tokens);
+      setUser(u);
+      return u;
+    } catch (_) {
+      // Keep the base session — a failed enrichment call shouldn't block login.
+      return baseUser;
+    }
+  };
+
   // Authenticate against the backend as a merchant.
   const login = async (email, password) => {
     const res = await authApi.login(email, password);
@@ -36,18 +64,14 @@ export function AuthProvider({ children }) {
       return { requires2fa: true, tempToken: data.temp_token };
     }
     const { user: u, accessToken, refreshToken } = data;
-    persistSession(u, { accessToken, refreshToken });
-    setUser(u);
-    return u;
+    return enrichUser(u, { accessToken, refreshToken });
   };
 
   // Step 2 of a 2FA login: exchange the temp token + TOTP code for a session.
   const validate2fa = async (tempToken, code) => {
     const res = await authApi.twoFAValidate(tempToken, code);
     const { user: u, accessToken, refreshToken } = res.data.data;
-    persistSession(u, { accessToken, refreshToken });
-    setUser(u);
-    return u;
+    return enrichUser(u, { accessToken, refreshToken });
   };
 
   const logout = async () => {

@@ -81,6 +81,7 @@ export const adminApi = {
   listMerchants: (params) => api.get('/admin/merchants', { params }).then(unwrap),
   createMerchant: (payload) => api.post('/admin/merchants', payload).then(unwrap),
   createMerchantFull: (payload) => api.post('/admin/merchants/create', payload).then(unwrap),
+  createDemoMerchant: () => api.post('/admin/merchants/create-demo').then(unwrap),
   updateMerchant: (id, payload) => api.put(`/admin/merchants/${id}`, payload).then(unwrap),
   updateMerchantFees: (id, payload) => api.put(`/admin/merchants/${id}/fees`, payload).then(unwrap),
 

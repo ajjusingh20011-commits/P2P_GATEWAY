@@ -33,6 +33,15 @@ async function apiKeyAuth(req, res, next) {
       return res.status(403).json({ success: false, message: 'Merchant account is inactive', code: 'MERCHANT_INACTIVE' });
     }
 
+    // Defense-in-depth: a demo merchant's api_key/api_secret are real-shaped
+    // (createDemoMerchant generates them like any other merchant) but must
+    // never actually authenticate server-to-server — orderService.createOrder
+    // already rejects is_demo too, but this stops it before req.merchant is
+    // even attached, for every API-key route at once.
+    if (merchant.is_demo) {
+      return res.status(403).json({ success: false, message: 'Demo merchants cannot use API credentials', code: 'MERCHANT_IS_DEMO' });
+    }
+
     req.merchant = merchant;
     return next();
   } catch (err) {

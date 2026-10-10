@@ -175,6 +175,7 @@ const getApiCredentials = asyncHandler(async (req, res) => {
 const regenerateApiCredentials = asyncHandler(async (req, res) => {
   const merchant = await currentMerchant(req, res, { withSecret: true });
   if (!merchant) return undefined;
+  if (merchant.is_demo) return fail(res, 403, 'Demo merchants cannot regenerate API credentials');
 
   const api_key = genApiKey();
   const api_secret = genApiSecret();

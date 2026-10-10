@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'react-qr-code';
 import { STRINGS } from '../utils/i18n';
-import { getOrderIdFromUrl, upiLink, inr, fmtTimer, SUPPORT_WHATSAPP } from '../utils/order';
+import { getOrderIdFromUrl, getDemoParamsFromUrl, buildDemoOrder, upiLink, inr, fmtTimer, SUPPORT_WHATSAPP } from '../utils/order';
 import { fetchCheckout, claimPaid, markCheckoutOpened, cancelOrder, requestNewUpi, uploadReceipt } from '../services/api';
 import { useOrderSocket } from '../hooks/useOrderSocket';
 import { isJunkUtr } from '../utils/utrValidation';
@@ -155,10 +155,13 @@ function FootBar({ lang, setLang, open, setOpen }) {
   );
 }
 
-function Page({ children }) {
+function Page({ children, demo }) {
   return (
     <div className="co-page">
-      <div className="co-frame">{children}</div>
+      <div className="co-frame">
+        {demo && <div className="co-demoBanner">DEMO — simulated order, no real payment or order is created</div>}
+        {children}
+      </div>
     </div>
   );
 }
@@ -246,9 +249,9 @@ function UtrSheet({ t, utr, setUtr, utrError, busy, onSubmit, onNoProof, onClose
  * Every one of them keeps the SAME header timer and the same order context —
  * nothing is recreated when the screen changes.
  */
-function StatusPage({ t, tone, icon, title, sub, amount, rows, actions, note, extra, remaining, showTimer, onExit, lang, setLang, langOpen, setLangOpen }) {
+function StatusPage({ t, tone, icon, title, sub, amount, rows, actions, note, extra, remaining, showTimer, onExit, lang, setLang, langOpen, setLangOpen, demo }) {
   return (
-    <Page>
+    <Page demo={demo}>
       <Header t={t} remaining={remaining} showTimer={showTimer} onExit={onExit} />
       <div className="co-statePage">
         <div className="co-stateBody">
@@ -326,6 +329,8 @@ function ReceiptUpload({ status, fileName, error, onSelect, onRemove }) {
 /* ── Root ─────────────────────────────────────────────────────────────────── */
 export default function CheckoutPage() {
   const orderId = useMemo(() => getOrderIdFromUrl(), []);
+  const demoParams = useMemo(() => getDemoParamsFromUrl(), []);
+  const isDemo = !!demoParams;
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState(STEP.PAYMENT);
@@ -387,19 +392,30 @@ export default function CheckoutPage() {
   }, [orderId, applyOrder]);
 
   useEffect(() => {
+    if (isDemo) {
+      // Entirely local — no fetchCheckout, no markCheckoutOpened, no real
+      // order anywhere. Built once from the URL params the merchant panel
+      // encoded (CheckoutPage never talks to the backend in this branch).
+      setOrder(buildDemoOrder(demoParams));
+      setRemaining(demoParams ? 10 * 60 : 600);
+      setStep(STEP.PAYMENT);
+      setLoading(false);
+      return;
+    }
     if (!orderId) { setErrorMsg('No order ID found in URL'); setStep(STEP.ERROR); setLoading(false); return; }
     markCheckoutOpened(orderId).catch(() => {}).finally(load);
-  }, [orderId, load]);
+  }, [orderId, load, isDemo, demoParams]);
 
   // Poll while the payment/processing screens are live (unchanged, 3s).
+  // Never polls in demo mode — there's no real order for the server to report on.
   useEffect(() => {
-    if (!orderId) return undefined;
+    if (!orderId || isDemo) return undefined;
     if (![STEP.PAYMENT, STEP.PROCESSING, STEP.REVIEW, STEP.UNAVAILABLE].includes(step)) return undefined;
     const id = setInterval(() => {
       fetchCheckout(orderId).then(applyOrder).catch(() => {});
     }, 3000);
     return () => clearInterval(id);
-  }, [step, orderId, applyOrder]);
+  }, [step, orderId, applyOrder, isDemo]);
 
   // Countdown — ticks the server-provided `remaining`; each poll re-syncs it.
   useEffect(() => {
@@ -412,7 +428,7 @@ export default function CheckoutPage() {
     return () => clearInterval(id);
   }, [step, remaining]);
 
-  useOrderSocket(orderId, (status) => {
+  useOrderSocket(isDemo ? null : orderId, (status) => {
     if (status === 'success' || status === 'confirmed' || status === 'completed') { setTxnRef(utr); setStep(STEP.SUCCESS); }
     else if (status === 'failed') setStep(STEP.FAILED);
     else if (status === 'expired') setStep(STEP.EXPIRED);
@@ -540,15 +556,23 @@ export default function CheckoutPage() {
     setReceiptError('');
   }, []);
 
+  // Demo "I Paid" — same PAYMENT → PROCESSING → SUCCESS shape as the real
+  // flow's timing, but no claimPaid call: nothing exists server-side to call.
+  const demoConfirm = useCallback(() => {
+    setStep(STEP.PROCESSING);
+    setTimeout(() => setStep(STEP.SUCCESS), 3000);
+  }, []);
+
   const onCancel = useCallback(async () => {
     setCancelAsk(false);
+    if (isDemo) { exit(); return; }
     try {
       await cancelOrder(orderId);
       window.location.reload();
     } catch (e) {
       window.alert(e.message || 'This order can no longer be cancelled.');
     }
-  }, [orderId]);
+  }, [orderId, isDemo, exit]);
 
   /* ── Render ─────────────────────────────────────────────────────────────── */
 
@@ -608,6 +632,7 @@ export default function CheckoutPage() {
         remaining={remaining}
         showTimer
         onExit={exit}
+        demo={isDemo}
         {...langProps}
       />
     );
@@ -670,6 +695,7 @@ export default function CheckoutPage() {
         remaining={remaining}
         showTimer={false}
         onExit={exit}
+        demo={isDemo}
         {...langProps}
       />
     );
@@ -730,24 +756,29 @@ export default function CheckoutPage() {
           tone="warn"
           icon={I.clockBig()}
           title="Payment session expired"
-          sub="The payment window for this order has ended."
+          sub={isDemo ? 'This demo payment session has ended.' : 'The payment window for this order has ended.'}
           rows={[{ k: 'Order', v: orderRef }]}
           actions={
-            <>
-              {/* Late-payer recovery: claim-paid still accepts a UTR for an
-                  order the customer actually paid before the window closed. */}
-              <button type="button" className="co-btn ghost" onClick={() => setSheetOpen(true)}>
-                Already paid? Submit UTR
-              </button>
-              {order?.redirectUrl && <a className="co-btn" href={order.redirectUrl}>{t.returnMerchant}</a>}
-            </>
+            isDemo ? (
+              <button type="button" className="co-btn" onClick={exit}>Close demo</button>
+            ) : (
+              <>
+                {/* Late-payer recovery: claim-paid still accepts a UTR for an
+                    order the customer actually paid before the window closed. */}
+                <button type="button" className="co-btn ghost" onClick={() => setSheetOpen(true)}>
+                  Already paid? Submit UTR
+                </button>
+                {order?.redirectUrl && <a className="co-btn" href={order.redirectUrl}>{t.returnMerchant}</a>}
+              </>
+            )
           }
           remaining={0}
           showTimer={false}
           onExit={exit}
+          demo={isDemo}
           {...langProps}
         />
-        {sheetOpen && (
+        {!isDemo && sheetOpen && (
           <UtrSheet
             t={t}
             utr={utr}
@@ -775,7 +806,7 @@ export default function CheckoutPage() {
 
   return (
     <>
-      <Page>
+      <Page demo={isDemo}>
         <Header t={t} remaining={remaining} onExit={() => setCancelAsk(true)} />
 
         <div className="co-scroll">
@@ -834,11 +865,13 @@ export default function CheckoutPage() {
               </button>
             </div>
 
-            <button type="button" className="co-rotate" onClick={getNewUpi} disabled={rotating}>
-              {I.rotate()}
-              Get new UPI ID
-            </button>
-            {rotateErr && <p className="co-appNote">{rotateErr}</p>}
+            {!isDemo && (
+              <button type="button" className="co-rotate" onClick={getNewUpi} disabled={rotating}>
+                {I.rotate()}
+                Get new UPI ID
+              </button>
+            )}
+            {!isDemo && rotateErr && <p className="co-appNote">{rotateErr}</p>}
 
             {/*
               "Pay with" app launchers. PhonePe and Paytm are shown — each
@@ -867,13 +900,15 @@ export default function CheckoutPage() {
               point at and wiring it would fabricate a help resource.
             */}
 
-            <button
-              type="button"
-              className={`co-addUtr ${order.utrNumber || utr ? 'saved' : ''}`}
-              onClick={() => setSheetOpen(true)}
-            >
-              {order.utrNumber || utr ? <>{I.check()}UTR added</> : <>+ Add UTR / Reference number</>}
-            </button>
+            {!isDemo && (
+              <button
+                type="button"
+                className={`co-addUtr ${order.utrNumber || utr ? 'saved' : ''}`}
+                onClick={() => setSheetOpen(true)}
+              >
+                {order.utrNumber || utr ? <>{I.check()}UTR added</> : <>+ Add UTR / Reference number</>}
+              </button>
+            )}
 
             <div className={`co-status ${statusLine.cls}`}>{statusLine.node}</div>
 
@@ -895,14 +930,14 @@ export default function CheckoutPage() {
 
       <div className="co-cta">
         <div className="co-ctaInner">
-          <button type="button" className="co-btn" onClick={() => setSheetOpen(true)}>
-            Confirm Payment
+          <button type="button" className="co-btn" onClick={() => (isDemo ? demoConfirm() : setSheetOpen(true))}>
+            {isDemo ? 'I Paid' : 'Confirm Payment'}
             <span className="co-btnTimer">· {fmtTimer(remaining)}</span>
           </button>
         </div>
       </div>
 
-      {sheetOpen && (
+      {!isDemo && sheetOpen && (
         <UtrSheet
           t={t}
           utr={utr}

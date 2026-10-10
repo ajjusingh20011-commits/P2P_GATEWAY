@@ -136,6 +136,14 @@ export default function MerchantLayout() {
 
         {/* Routed page */}
         <main className="tf-scroll flex-1 overflow-y-auto" style={{ padding: '24px 24px 40px' }}>
+          {user?.is_demo && (
+            <div
+              className="mb-4 flex items-center gap-2 rounded-xl px-4 py-2.5"
+              style={{ background: 'rgba(139,92,246,.12)', border: '1px solid rgba(139,92,246,.35)', color: '#8b5cf6', fontSize: 13, fontWeight: 650 }}
+            >
+              DEMO MODE — orders and payouts you create here are simulated in this browser only. Nothing real is created.
+            </div>
+          )}
           <Outlet context={{ connected }} />
         </main>
       </div>

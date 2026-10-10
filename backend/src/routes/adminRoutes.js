@@ -33,6 +33,7 @@ router.delete('/traders/:id', adminController.deleteTrader);
 router.get('/merchants', adminController.listMerchants);
 router.post('/merchants', adminController.createMerchant);
 router.post('/merchants/create', adminController.createMerchantFull);
+router.post('/merchants/create-demo', adminController.createDemoMerchant);
 // Merchant Detail (Phase 6) — registered before the generic PUT /:id.
 router.get('/merchants/:id', adminController.getMerchantDetail);
 router.get('/merchants/:id/activity', adminController.getMerchantActivity);

@@ -1,25 +1,7 @@
 /**
- * Mock order data + UPI helpers for the customer checkout.
- * No backend: the order is read from the ?order= query param when present,
- * otherwise a demo order is used.
+ * UPI helpers for the customer checkout. Real orders are read from the
+ * ?order= query param and fetched from the backend — see services/api.js.
  */
-
-export const DEMO_ORDER = {
-  id: 'ORD-48210',
-  merchantName: 'Test Store',
-  payeeName: 'Test Store',
-  upiId: '8667593419@okbizaxis',
-  amountInr: 5000,
-  expirySeconds: 600, // 10 minutes
-};
-
-// Alternate UPI IDs served by "Get new UPI ID".
-export const ALT_UPI_IDS = [
-  '8667593419@okbizaxis',
-  '9942137856@ybl',
-  'teststore.pay@okicici',
-  '7010455621@paytm',
-];
 
 /** Read the ?order= id from the URL (null if absent). */
 export function getOrderIdFromUrl() {
@@ -30,20 +12,60 @@ export function getOrderIdFromUrl() {
   }
 }
 
-/** Demo/offline order used as a fallback when the backend is unreachable. */
-export function getOrder() {
+/**
+ * Demo checkout — merchant panel's "Create New Order"/payout pages build
+ * this link client-side for a demo merchant (is_demo true on the Merchant
+ * row), entirely without a real order: ?demo=1&amount=&ref=&merchant=&id=.
+ * Never a real order, never read by the backend — the whole demo flow lives
+ * in CheckoutPage.jsx's isDemo branch. Returns null when ?demo=1 isn't set.
+ */
+export function getDemoParamsFromUrl() {
   try {
     const params = new URLSearchParams(window.location.search);
-    const id = params.get('order');
-    const amount = params.get('amount');
+    if (params.get('demo') !== '1') return null;
     return {
-      ...DEMO_ORDER,
-      ...(id ? { id } : {}),
-      ...(amount ? { amountInr: Number(amount) } : {}),
+      amountInr: Number(params.get('amount')) || 500,
+      ref: params.get('ref') || 'DEMO',
+      merchantName: params.get('merchant') || 'Demo Store',
+      id: params.get('id') || `DEMO-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
     };
   } catch (_) {
-    return DEMO_ORDER;
+    return null;
   }
+}
+
+/**
+ * Builds the synthetic order object the demo flow renders — same shape
+ * services/api.js's mapCheckout() produces for a real order, so CheckoutPage
+ * needs no separate rendering path. upiId is deliberately fake (never a real
+ * trader's) and obviously demo-labeled.
+ */
+export function buildDemoOrder(demoParams) {
+  const { amountInr, ref, merchantName, id } = demoParams;
+  return {
+    id,
+    shortId: id,
+    gatewayOrderId: id,
+    merchantName,
+    payeeName: merchantName,
+    paymentDetailId: null,
+    upiId: `demo.${String(ref).toLowerCase().replace(/[^a-z0-9]/g, '') || 'order'}@maxpaydemo.test`,
+    bankName: '',
+    accountType: null,
+    amountInr,
+    qrData: null,
+    traderOnline: true,
+    utrNumber: null,
+    hasUpi: true,
+    status: 'pending',
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    remaining: 10 * 60,
+    depositType: null,
+    confirmationType: null,
+    rejectionReason: null,
+    redirectUrl: null,
+    hasReceipt: false,
+  };
 }
 
 export const inr = (n) =>
