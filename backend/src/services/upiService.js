@@ -34,8 +34,23 @@ function checkoutUrl(orderUuid) {
 function paymentPayload(order, paymentDetail) {
   const upiId = paymentDetail?.upi_id || null;
   const payeeName = paymentDetail?.account_name || 'Merchant';
+  // No `note`: buildUpiLink falls back to a generic "Payment".
+  //
+  // This used to pass `note: order.uuid`, which rendered the raw order UUID in
+  // the payer's banking app as the transaction note — an internal identifier
+  // the customer should never see, and the one a payer is most likely to
+  // mistake for something they need to keep. This is the QR's payload, i.e.
+  // the path that actually works, so it is what payers really read.
+  //
+  // Safe to change: `tn` is written here and in the checkout's own builder and
+  // read nowhere — not by matching, reconciliation, webhooks, support or
+  // dispute evidence. Settlement keys on {upi_id, amount} plus the UTR tier,
+  // device and platform; it never looks at the note.
+  //
+  // buildUpiLink's other caller (traderController's device-verification QR)
+  // passes its own note and is unaffected.
   const link = upiId
-    ? buildUpiLink({ upiId, payeeName, amountInr: order.amount_inr, note: order.uuid })
+    ? buildUpiLink({ upiId, payeeName, amountInr: order.amount_inr })
     : null;
   return {
     assigned_upi_id: upiId,
